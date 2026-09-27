@@ -1,0 +1,845 @@
+# MediQ DICOM Interoperability Profile
+
+**Project:** MediQ  
+**Product:** Patient-Controlled Medical Imaging Mobility SaaS  
+**Document Type:** DICOM Interoperability Profile / Implementation Contract  
+**Version:** v1.1  
+**Baseline Date:** 2026-09-26  
+**Scope:** CAPSTONE-P0 / Synthetic·Test DICOM  
+**Status:** APPROVED PROFILE — DOCUMENTED, NOT IMPLEMENTED / NOT TESTED  
+**Standards Baseline:** DICOM PS3.4, PS3.5, PS3.6, PS3.18 current online edition reviewed 2026-09-20
+
+---
+
+# 1. Executive Summary
+
+MediQ P0의 DICOM 상호운용성 목표는 다음 단일 Golden Path를 재현 가능하게 검증하는 것이다.
+
+```text
+Hospital A Test Orthanc
+  → authorized QIDO-RS Study discovery
+  → authorized WADO-RS metadata / instance retrieval
+  → MediQ opaque binary streaming and integrity evidence
+  → mandatory PACS Import preflight
+  → STOW-RS to Hospital B Test Orthanc
+  → destination QIDO-RS verification
+  → integrity VERIFIED / provenance / audit
+```
+
+P0 최소 검증 조합은 Classic single-frame CT 또는 MR Image Storage와 Explicit VR Little Endian이다. 첫 고정 Fixture는 Classic CT + Explicit VR Little Endian을 권고한다. 다른 SOP Class와 Transfer Syntax는 각 조합의 QIDO, WADO, STOW, Destination Verification 및 Viewer 시험이 통과하기 전까지 지원한다고 주장하지 않는다.
+
+MediQ Gateway는 P0에서 Pixel Data decoder, encoder 또는 transcoder가 아니다. DICOM Part 10 객체를 byte-preserving 방식으로 전달하고 Metadata/UID·크기·무결성만 필요한 범위에서 처리한다. Pixel decode/render는 OHIF/Cornerstone3D 또는 검증된 Source PACS rendered response가 담당한다.
+
+현재 Repository에는 Orthanc container, DICOMweb plugin configuration, Gateway code, Viewer code 및 실행 테스트가 없다. 따라서 본 문서의 모든 P0 기능 상태는 `DOCUMENTED`, 검증 상태는 `NOT RUN`이다.
+
+---
+
+# 2. Scope & Architecture Context
+
+## 2.1 적용 경계
+
+- 실제 환자정보가 없는 Synthetic/Test/De-identified DICOM만 사용한다.
+- Hospital A는 Source of Record인 Test PACS다.
+- Hospital B는 Destination Test PACS다.
+- MediQ Cloud는 Permanent PACS나 장기 DICOM Archive가 아니다.
+- Browser와 Mobile Client는 Orthanc/PACS를 직접 호출하지 않는다.
+- QIDO/WADO/STOW는 MediQ Backend의 인증·인가·동의·Grant·Tenant 검증 뒤에만 실행한다.
+- P0는 DICOMweb만 사용하며 DIMSE C-FIND/C-MOVE/C-STORE는 범위 밖이다.
+- Azure는 POST-MVP Deployment Profile이며 P0 상호운용성 PASS의 전제조건이 아니다.
+
+## 2.2 논리 구조
+
+```text
+Hospital User / Synthetic Patient
+              │
+              │ HTTPS + JWT + ViewerSession/Grant
+              ▼
+      MediQ API / Viewer Gateway
+              │
+              ├─ Authorization Policy
+              ├─ DICOMweb Adapter
+              ├─ Transfer Worker
+              ├─ Integrity / Provenance
+              └─ Audit
+              │
+       ┌──────┴──────┐
+       │             │
+       ▼             ▼
+Hospital A         Hospital B
+Test Orthanc       Test Orthanc
+QIDO/WADO          STOW/QIDO verify
+```
+
+## 2.3 성공 판정
+
+```text
+HTTP success only                         ≠ PASS
+Orthanc storage only                      ≠ Viewer PASS
+Gateway pass-through only                 ≠ Decode/Render support
+STOW response without instance review     ≠ Transfer complete
+STOW success without destination verify   ≠ Exchange complete
+Library capability                        ≠ MediQ support
+```
+
+---
+
+# 3. Current Implementation Baseline
+
+| 항목 | Repository Evidence | 상태 | 결론 |
+|---|---|---|---|
+| Docker Compose | 없음 | UNKNOWN | Orthanc A/B 기동 불가 |
+| Orthanc image/version | 문서에서 `1.13` 계열 선택만 존재 | DOCUMENTED | exact tag/digest 미확정 |
+| DICOMweb plugin | 선정 문서만 존재 | DOCUMENTED | plugin version/config 미확정 |
+| Orthanc A/B config | `infra/README.md` 예정 목록만 존재 | DOCUMENTED | 실제 파일 없음 |
+| DICOMweb Adapter | interface 계획만 존재 | DOCUMENTED | 구현 없음 |
+| QIDO/WADO/STOW | 요구사항/OpenAPI만 존재 | DOCUMENTED | 실행 증거 없음 |
+| Multipart parser/proxy | 없음 | UNKNOWN | Spike 필요 |
+| Viewer | OHIF 3.11 선택만 존재 | DOCUMENTED | 설치·연동 없음 |
+| Synthetic DICOM fixture | 없음 | UNKNOWN | SOP/Transfer Syntax 검증 불가 |
+| TLS/mTLS | `.env.example`의 HTTP placeholder만 존재 | DOCUMENTED | TLS runtime control 없음 |
+| Integration test | `tests/README.md`만 존재 | DOCUMENTED | 모든 Test `NOT RUN` |
+
+`.env.example`의 `http://localhost:8042`, `http://localhost:8043` 및 `orthanc/orthanc`는 local placeholder다. 이것은 TLS, 인증 또는 운영 보안 구현 증거가 아니며 P0 Acceptance 환경의 최종값으로 사용하지 않는다.
+
+---
+
+# 4. Status Taxonomy
+
+| 상태 | 의미 |
+|---|---|
+| `IMPLEMENTED` | 실제 데이터 경로에 코드와 설정이 존재함 |
+| `TESTED` | 지정 조합과 실패경로가 실제 환경에서 통과함 |
+| `DOCUMENTED` | 본 문서 또는 승인 기준에만 정의됨 |
+| `PLANNED` | 후속 범위에 구현 예정 |
+| `UNSUPPORTED` | 명시적으로 처리하지 않음 |
+| `UNKNOWN` | 설치·구성·시험 증거가 없어 확인 불가 |
+
+MediQ의 외부 지원 주장은 `TESTED` 조합에만 허용한다. `DOCUMENTED`는 구현 약속이지 현재 capability가 아니다.
+
+---
+
+# 5. DICOM Standards & References
+
+| 문서 | 적용 내용 |
+|---|---|
+| DICOM PS3.4 | Storage SOP Class와 Service Class |
+| DICOM PS3.5 | Data Encoding과 Transfer Syntax |
+| DICOM PS3.6 | SOP Class/Transfer Syntax UID Registry |
+| DICOM PS3.10 | DICOM File Format / Part 10 |
+| DICOM PS3.11 | Media Storage Application Profiles |
+| DICOM PS3.18 | QIDO-RS, WADO-RS, STOW-RS, Media Type, Multipart |
+| DICOM PS3.2 | 향후 정식 DICOM Conformance Statement 구조 |
+| IHE RAD PDI | Portable Media의 DICOM·Web Content·Basic Viewer 참고 구조 |
+
+본 문서는 학생 MVP의 구현 프로파일이며 상용 제품의 정식 DICOM Conformance Statement를 대체하지 않는다. 표준의 `current` URL은 변경될 수 있으므로 구현 시 사용한 edition을 테스트 Evidence에 고정한다.
+
+## 5.1 Legacy Portable Media Reference
+
+사용자가 제공한 의료영상 CD 예시는 `DICOMDIR`, 무확장자 DICOM 객체 저장영역, JPEG/HTML Web Content, Windows 내장 Viewer와 AutoRun 구성요소를 함께 포함한다. 비식별 구조 조사 결과와 MediQ 적용 경계는 `references/MEDICAL-IMAGE-CD-MEDIA-REFERENCE.md`에 기록한다.
+
+이 자료는 외부 참고자료이며 다음을 의미하지 않는다.
+
+- MediQ P0가 CD/DVD/USB Import를 지원한다는 주장
+- 해당 매체의 DICOM PS3.10 또는 IHE PDI Conformance 승인
+- 실제 환자 DICOM을 Synthetic/Test Fixture로 사용할 수 있다는 승인
+- 레거시 Viewer, AutoRun, HTA, ActiveX, EXE, DLL 또는 OCX의 재사용 승인
+
+P0의 규범 경로는 계속 QIDO-RS, WADO-RS, STOW-RS와 Destination Verification이다. Portable Media Import는 별도 Scope Decision과 Synthetic Fixture, Patient Reconciliation, Malware Handling, DICOM Validation 시험 없이는 구현하지 않는다.
+
+---
+
+# 6. SOP Class Support Profile
+
+## 6.1 P0 Core Profile
+
+| SOP Class | UID | Frame | QIDO | WADO | STOW | Viewer | Project State |
+|---|---|---|---|---|---|---|---|
+| CT Image Storage | `1.2.840.10008.5.1.4.1.1.2` | Classic single-frame | Required | Required | Required | Required fixture | DOCUMENTED |
+| MR Image Storage | `1.2.840.10008.5.1.4.1.1.4` | Classic single-frame | Required candidate | Required candidate | Required candidate | Required candidate | DOCUMENTED |
+
+P0 Release Gate는 최소 Classic CT 또는 MR 한 Study의 전체 Golden Path다. 범위를 명확히 하기 위해 첫 Fixture는 CT를 권고한다. MR까지 “지원”이라고 표시하려면 MR 조합을 별도로 통과해야 한다.
+
+## 6.2 Expansion Profile
+
+| SOP Class | UID | 특성 | 목표 범위 | 상태 |
+|---|---|---|---|---|
+| Enhanced CT Image Storage | `1.2.840.10008.5.1.4.1.1.2.1` | Multi-frame | P1 | PLANNED |
+| Enhanced MR Image Storage | `1.2.840.10008.5.1.4.1.1.4.1` | Multi-frame | P1 | PLANNED |
+| Computed Radiography Image Storage | `1.2.840.10008.5.1.4.1.1.1` | Single-frame | P1 candidate | PLANNED |
+| Digital X-Ray Image Storage — For Presentation | `1.2.840.10008.5.1.4.1.1.1.1` | Single-frame | P1 candidate | PLANNED |
+| Ultrasound Image Storage | `1.2.840.10008.5.1.4.1.1.6.1` | Single-frame | P1 candidate | PLANNED |
+| Secondary Capture Image Storage | `1.2.840.10008.5.1.4.1.1.7` | Single-frame | P1 candidate | PLANNED |
+
+다음 capability는 서로 독립적으로 판정한다.
+
+```text
+Orthanc accepts object
+Gateway retrieves object without corruption
+Destination Orthanc stores object
+Viewer decodes and renders object
+```
+
+Enhanced/Multi-frame, Presentation State, Structured Report, Segmentation, Video, Whole Slide Imaging은 P0에서 지원하지 않는다.
+
+---
+
+# 7. Transfer Syntax Profile
+
+## 7.1 용어
+
+| 용어 | 의미 |
+|---|---|
+| `PASS-THROUGH` | Pixel Data를 해석하지 않고 동일 byte representation을 전달 |
+| `DECODE` | 압축/encapsulated Pixel Data를 raw pixel로 해석 |
+| `ENCODE` | raw pixel을 특정 Transfer Syntax로 생성 |
+| `TRANSCODE` | 한 Transfer Syntax에서 다른 Syntax로 변환 |
+| `VIEWER-RENDER` | Viewer가 해당 Syntax를 화면에 표시 |
+| `UNSUPPORTED` | 요청·전달·표시를 지원하지 않음 |
+
+## 7.2 Transfer Syntax Matrix
+
+| Transfer Syntax | UID | Gateway P0 | Viewer P0 | Scope | 상태 |
+|---|---|---|---|---|---|
+| Implicit VR Little Endian | `1.2.840.10008.1.2` | PASS-THROUGH candidate | Validation required | P0 compatibility | DOCUMENTED |
+| Explicit VR Little Endian | `1.2.840.10008.1.2.1` | PASS-THROUGH core | Required fixture | P0 core | DOCUMENTED |
+| Deflated Explicit VR Little Endian | `1.2.840.10008.1.2.1.99` | No claim | No claim | P1 decision | PLANNED |
+| JPEG Baseline Process 1 | `1.2.840.10008.1.2.4.50` | PASS-THROUGH candidate | Decoder validation | P1 | PLANNED |
+| JPEG Lossless SV1 | `1.2.840.10008.1.2.4.70` | PASS-THROUGH candidate | Decoder validation | P1 | PLANNED |
+| JPEG 2000 Lossless | `1.2.840.10008.1.2.4.90` | PASS-THROUGH candidate | Decoder validation | P1 | PLANNED |
+| JPEG 2000 | `1.2.840.10008.1.2.4.91` | PASS-THROUGH candidate | Decoder validation | P1 | PLANNED |
+| RLE Lossless | `1.2.840.10008.1.2.5` | PASS-THROUGH candidate | Decoder validation | P1 | PLANNED |
+
+## 7.3 P0 결정
+
+- Gateway는 `DECODE`, `ENCODE`, `TRANSCODE` 지원을 주장하지 않는다.
+- P0 Fixture는 Explicit VR Little Endian을 사용한다.
+- Implicit VR Little Endian은 별도 Contract Test를 통과한 뒤 P0 compatibility로 승격한다.
+- WADO `Accept`와 반환 Part의 `transfer-syntax`를 기록·검증하되 raw token이나 Patient Metadata는 로그에 남기지 않는다.
+- Source와 Destination 사이에 Transcoding이 발생하면 원본 hash와 전송 object hash를 구분하고, 변환 정책·SOP Instance UID 처리 규칙이 승인되기 전에는 완료 처리하지 않는다.
+- P0 기본 경로는 Source representation 보존이다.
+
+---
+
+# 8. QIDO-RS Profile
+
+## 8.1 표준 Upstream 경로
+
+| Operation | Method | Relative URI | P0 |
+|---|---|---|---|
+| Search for Studies | GET | `/studies` | Required |
+| Search for Study Series | GET | `/studies/{StudyInstanceUID}/series` | Viewer Gate |
+| Search for Series Instances | GET | `/studies/{StudyInstanceUID}/series/{SeriesInstanceUID}/instances` | Viewer Gate |
+
+P0 응답은 `Accept: application/dicom+json`을 우선한다. XML Multipart는 P1 compatibility candidate다.
+
+## 8.2 검색 Key 정책
+
+| Key | P0 사용 | 제한 |
+|---|---|---|
+| `StudyInstanceUID` | Required | Exchange에 결합된 UID만 |
+| `PatientID` | Internal only | Hospital-local mapping 후 server-side 주입 |
+| `StudyDate` | Optional | Exchange 범위 내 보조 필터 |
+| `Modality` / `ModalitiesInStudy` | Optional | allowlisted 값 |
+| `AccessionNumber` | Not exposed | P1 결정 전 UI/API 금지 |
+| `StudyDescription` | Display only | 로그·검색 최소화 |
+| `SeriesInstanceUID` | Viewer internal | Session/Study binding 필수 |
+| `SOPInstanceUID` | Viewer/verification internal | 단독 권한 아님 |
+
+PatientName, 주민번호 또는 전체 병원 PatientID로 Tenant 간 검색하는 API는 만들지 않는다.
+
+## 8.3 Query Behavior
+
+- `limit`과 `offset`은 Adapter가 상한을 강제한다. 정확한 상한은 `OPEN DECISION`이다.
+- Fuzzy Matching은 P0에서 `UNSUPPORTED`다.
+- `includefield`는 Gateway allowlist로 제한한다.
+- Empty Result는 정상 `200` 빈 목록으로 처리하고 PACS 장애와 구분한다.
+- 응답 크기·항목 수가 정책 한도를 넘으면 fail closed하고 축소 query를 요구한다.
+- Character Set은 DICOM Specific Character Set을 존중하고 내부 JSON은 UTF-8로 처리한다. 비ASCII fixture로 별도 시험한다.
+- Browser가 raw QIDO endpoint를 호출하지 않는다. MediQ의 `GET /exchange-sessions/{sessionId}/studies`가 승인된 Projection만 반환한다.
+
+---
+
+# 9. WADO-RS Profile
+
+## 9.1 Upstream Operation
+
+| Operation | Method | Relative URI | Accept | P0 |
+|---|---|---|---|---|
+| Retrieve Study | GET | `/studies/{study}` | `multipart/related; type=application/dicom` | Transfer candidate |
+| Retrieve Series | GET | `/studies/{study}/series/{series}` | `multipart/related; type=application/dicom` | Viewer candidate |
+| Retrieve Instance | GET | `/studies/{study}/series/{series}/instances/{instance}` | `multipart/related; type=application/dicom` | Required |
+| Retrieve Study Metadata | GET | `/studies/{study}/metadata` | `application/dicom+json` | Viewer required |
+| Retrieve Series Metadata | GET | `/studies/{study}/series/{series}/metadata` | `application/dicom+json` | Viewer required |
+| Retrieve Instance Metadata | GET | `/studies/{study}/series/{series}/instances/{instance}/metadata` | `application/dicom+json` | Optional |
+| Retrieve Frames | GET | `.../instances/{instance}/frames/{frameList}` | `multipart/related; type=application/octet-stream` | Validation Gate |
+| Retrieve Rendered Frame | GET | `.../frames/{frameList}/rendered` | `image/jpeg` or negotiated image type | Fallback candidate |
+
+## 9.2 MediQ External Contract
+
+현재 `OPENAPI.yaml`은 다음 MediQ-controlled path만 정의한다.
+
+```text
+GET /exchange-sessions/{sessionId}/studies
+GET /viewer-sessions/{viewerSessionId}/studies/{studyRefId}/instances/{sopInstanceUid}
+GET /viewer-sessions/{viewerSessionId}/studies/{studyRefId}/instances/{sopInstanceUid}/frames/{frameNumber}
+```
+
+이 경로는 DICOMweb 표준 endpoint 자체가 아니라 authorization-protected application projection이다. Instance 응답은 단일 `application/dicom`, frame 응답은 `image/jpeg`로 정규화한다. OHIF가 요구하는 Study/Series/Instance metadata facade는 현재 OpenAPI에 완전하지 않으므로 구현 전에 계약을 보완해야 한다.
+
+## 9.3 Retrieval Rules
+
+- PACS endpoint와 credential은 Backend에서만 주입한다.
+- ViewerSession, Actor, Tenant, PatientReference, Source Hospital, Study, Grant, Consent, expiry를 매 요청 검증한다.
+- Study/Series 전체를 메모리에 적재하지 않고 Instance 또는 bounded chunk 단위로 streaming한다.
+- upstream `Content-Type`, boundary, DICOM UID, payload length 한도와 hash를 검증한다.
+- 취소 signal과 backpressure를 upstream까지 전달한다.
+- Source PACS 장애 시 Cloud 영구 Copy로 우회하지 않는다.
+- Partial WADO response는 완전한 성공으로 처리하지 않는다.
+
+---
+
+# 10. STOW-RS Profile
+
+## 10.1 Request
+
+| 항목 | P0 규칙 |
+|---|---|
+| Method | `POST` |
+| Target | Hospital B allowlisted DICOMweb `/studies` 또는 `/studies/{StudyInstanceUID}` |
+| Content-Type | `multipart/related; type="application/dicom"; boundary=...` |
+| Part Content-Type | `application/dicom` |
+| Payload | 승인된 Study의 Part 10 Instance |
+| Batch | bounded instance count/bytes; 값은 Size Policy 적용 |
+
+## 10.2 Mandatory Preflight
+
+```text
+Authentication PASS
+Tenant Isolation PASS
+ExchangeSession valid
+Consent ACTIVE and PACS_IMPORT allowed
+TransferGrant ACTIVE and study:pacs-transfer
+Recipient/Destination binding PASS
+Destination PatientMapping VALID
+Study/Package/Source binding PASS
+Destination endpoint allowlisted
+TLS certificate validation PASS
+Integrity/provenance context created
+```
+
+하나라도 실패하면 STOW-RS를 호출하지 않는다.
+
+## 10.3 Response and Completion
+
+| Response | 처리 |
+|---|---|
+| `200 OK` | 전체 저장 후보. Response Module과 Destination Verification 후에만 완료 |
+| `202 Accepted` | 일부 Instance warning/failure 가능. Partial로 처리하고 상세 파싱·검증 |
+| `400 Bad Request` | 요청 형식 실패, 자동 retry 금지 |
+| `409 Conflict` | UID/SOP/상태 충돌 가능, 자동 retry 금지 |
+| `415 Unsupported Media Type` | Syntax/Media Type 불일치, 자동 retry 금지 |
+| timeout/connection loss | 결과 불명. Destination Verification 전 blind retry 금지 |
+
+STOW HTTP 응답만으로 `COMPLETED`를 반환하지 않는다. 다음 조건을 모두 만족해야 한다.
+
+```text
+Expected Instance set == Destination verified Instance set
+Integrity status == VERIFIED
+Provenance status == COMPLETED
+Audit contains PACS_TRANSFER_COMPLETED
+```
+
+---
+
+# 11. Rendered Frame Profile
+
+## 11.1 Path Comparison
+
+| 항목 | Path A: PACS Rendered Image | Path B: Original DICOM + Viewer Decode |
+|---|---|---|
+| CPU | PACS/Server 사용 | Browser/Viewer 사용 |
+| Network | 보통 작음 | 원본 크기 |
+| 원본 보존 | 화면 결과만 전달 | 원본 representation 전달 |
+| Window/Level | server parameter 의존 | Viewer interactive 처리 |
+| 압축 호환성 | PACS decoder 의존 | Viewer decoder 의존 |
+| Multi-frame | PACS 구현 의존 | Viewer 구현 의존 |
+| Cache 위험 | rendered PHI image | DICOM object/metadata |
+| P0 역할 | fallback/thin-client candidate | OHIF primary candidate |
+
+## 11.2 P0 결정
+
+- OHIF의 기본 방향은 Path B다.
+- MediQ frame endpoint의 `image/jpeg` Path A는 fallback/validation 대상이다.
+- Rendered JPEG를 원본 DICOM 또는 진단 품질과 동일하다고 주장하지 않는다.
+- Window Center/Width, frame list, output media type은 allowlist와 numeric bound를 적용한다.
+- Frame Number는 1-based DICOMweb 의미를 유지하고 존재하지 않는 frame은 `404`/safe error로 처리한다.
+- Multi-frame 객체는 P1이며 P0 support claim에서 제외한다.
+
+---
+
+# 12. Multipart HTTP Rules
+
+## 12.1 적용 위치
+
+| 흐름 | Multipart |
+|---|---|
+| QIDO JSON response | 사용하지 않음 |
+| QIDO XML response | `multipart/related` 가능, P0 비사용 |
+| WADO Study/Series/Instance set | `multipart/related; type="application/dicom"` |
+| WADO Frames | `multipart/related; type="application/octet-stream"` 또는 negotiated compressed type |
+| STOW request | `multipart/related; type="application/dicom"` |
+| MediQ normalized single Instance response | 단일 `application/dicom` |
+| MediQ rendered frame response | 단일 `image/jpeg` |
+
+## 12.2 Parser/Writer Invariants
+
+- Header parameter에서 boundary를 엄격히 추출하고 body와 일치시키며 길이 상한을 둔다.
+- DICOM binary를 문자열로 변환하지 않는다.
+- 각 Part의 `Content-Type`을 검증한다.
+- CRLF, closing boundary, truncated body, missing part를 검증한다.
+- Part ordering에 권한 또는 성공 판정을 의존하지 않고 SOP Instance UID로 추적한다.
+- `Content-Length`가 있으면 실제 byte 수와 비교한다. 없으면 bounded chunked streaming을 허용한다.
+- parser error, unexpected media type, 초과 크기에서 즉시 중단하고 부분 객체를 삭제한다.
+- 전체 body buffering 대신 streaming parser/serializer를 우선한다.
+- Framework helper를 사용하더라도 binary integrity와 backpressure를 Contract Test한다.
+
+직접 만든 ad-hoc 문자열 split parser는 금지한다. 사용할 library가 대용량 stream과 malformed multipart를 안전하게 처리하지 못하면 검증된 streaming parser 또는 bounded temporary file pipeline을 선택한다.
+
+---
+
+# 13. Timeout Policy
+
+현재 구현값은 모두 `UNKNOWN`이다. 아래 값은 작은 Synthetic P0 환경의 초기 `PROPOSED VALUE`이며 benchmark와 장애주입 후에만 `VALIDATED VALUE`로 승격한다.
+
+| 구간 | Timeout Type | Current | Proposed | 근거/실패 처리 |
+|---|---|---:|---:|---|
+| Browser → MediQ metadata API | Total | UNKNOWN | 30 s | 취소 후 safe error |
+| Browser → Viewer Instance | Response idle | UNKNOWN | 60 s | 해당 Instance 실패, Session 유지 여부 재검증 |
+| MediQ → Orthanc A/B | Connection | UNKNOWN | 5 s | upstream unavailable |
+| MediQ → Orthanc A/B | TLS handshake | UNKNOWN | 10 s | certificate/TLS failure, no retry by default |
+| QIDO | Response header | UNKNOWN | 15 s | bounded GET retry 가능 |
+| QIDO | Total | UNKNOWN | 30 s | failure Audit |
+| WADO Instance | Response header | UNKNOWN | 30 s | body 시작 전 retry 판단 |
+| WADO Instance | Read idle | UNKNOWN | 60 s | partial object 폐기 |
+| WADO Instance | Total per instance | UNKNOWN | 120 s | hash incomplete, retry policy 적용 |
+| STOW batch | Response header | UNKNOWN | 30 s | 결과 불명 상태 구분 |
+| STOW batch | Write/Read idle | UNKNOWN | 60 s | destination verify before retry |
+| STOW batch | Total | UNKNOWN | 180 s | operation FAILED/UNKNOWN, not complete |
+| Transfer Worker | Total job | UNKNOWN | 15 min | cancel/verification/purge |
+| PostgreSQL statement | Statement | UNKNOWN | 10 s | DB error, external transfer와 분리 |
+| PostgreSQL transaction | Transaction | UNKNOWN | 30 s | long DB transaction 금지 |
+| Azure ingress | Platform limit | N/A | OPEN DECISION | POST-MVP profile에서 검증 |
+
+Timeout은 환경변수로 설정하되 무제한 또는 0을 허용하지 않는다. `Total`만 두지 않고 connection, header, idle, operation deadline을 구분한다.
+
+---
+
+# 14. Retry & Idempotency Policy
+
+| Operation | Retry | Proposed Policy | Retryable | Non-retryable |
+|---|---|---|---|---|
+| QIDO GET | 제한적 허용 | 총 2회, 250 ms base full-jitter, 2 s cap | connect reset, timeout, 408, 429, 502, 503, 504 | 400, 401, 403, 404 |
+| WADO GET | 조건부 허용 | body byte 수신 전 1회; partial body는 폐기 후 Instance 단위 재시작 | transient network/5xx | auth, scope, UID mismatch, media type error |
+| STOW POST | blind retry 금지 | timeout/응답 유실 시 Destination QIDO verify 후 missing Instance만 판단 | 검증된 미수신 Instance | 400, 409, 415, auth/mapping/destination failure |
+
+## 14.1 STOW Lost Response
+
+```text
+STOW request sent
+  → response lost
+  → mark outcome UNKNOWN, never COMPLETED
+  → revalidate Consent/Grant/expiry/destination
+  → Destination QIDO verification by expected SOP Instance UID set
+  → all present: verify integrity/provenance, no resend
+  → subset missing: retry missing set only under same Transfer Operation context
+  → cannot verify: fail closed and require operator decision
+```
+
+## 14.2 Idempotency Invariants
+
+- Transfer Operation ID와 request fingerprint를 Session/Grant/Study/Destination에 binding한다.
+- 같은 idempotency key에 다른 payload나 destination이 오면 거부한다.
+- Authorization retry와 network retry를 분리한다.
+- 만료/취소된 Grant를 retry 명목으로 재사용하지 않는다.
+- Token reissue는 새 Authorization Decision이며 자동 전송 재개가 아니다.
+- Duplicate Instance를 무조건 성공으로 간주하지 않고 destination의 SOP UID와 integrity evidence를 확인한다.
+
+제시된 횟수와 backoff는 `PROPOSED`이며 장애주입 시험 전에는 확정 운영값이 아니다.
+
+---
+
+# 15. Maximum Object & Transfer Size
+
+현재 구현 한도는 `UNKNOWN`이다. 다음은 학생 P0의 메모리·디스크 고갈을 방지하기 위한 초기 Guardrail이다.
+
+| 항목 | Proposed P0 Limit | 상태 | 초과 시 |
+|---|---:|---|---|
+| Maximum DICOM Instance Size | 64 MiB | OPEN DECISION | retrieval/store 거부 + Audit |
+| Maximum Study Size | 2 GiB | OPEN DECISION | 전송 전 거부 |
+| Maximum Series Count | 64 | OPEN DECISION | bounded error |
+| Maximum Instance Count | 2,000 | OPEN DECISION | bounded error |
+| Maximum STOW Multipart Batch | 100 instances 또는 256 MiB 중 먼저 도달 | OPEN DECISION | 다음 batch 분할 |
+| Maximum Concurrent Transfer | 2 | OPEN DECISION | queue/backpressure |
+| Temporary Storage per Exchange | 2 GiB | OPEN DECISION | fail closed/purge |
+| Temporary Storage per Environment | 10 GiB | OPEN DECISION | admission control |
+| Maximum Transfer Duration | 15 min | OPEN DECISION | cancel/verify/purge |
+
+이 값은 DICOM 표준의 제한이 아니라 MediQ P0 운영 정책 후보다. `MEDIQ-DICOM-001` spike에서 실제 CT fixture, 메모리 high-water mark, throughput, disk spill과 Orthanc response를 측정하여 낮추거나 높인다.
+
+## 15.1 Memory/Storage Rules
+
+- Study 전체를 Buffer/Blob 한 개로 메모리에 적재하지 않는다.
+- Node Web Streams와 backpressure를 사용한다.
+- 임시 파일이 필요하면 Tenant/Session/Study binding, encryption at rest, size quota, TTL과 purge evidence를 적용한다.
+- PostgreSQL에 DICOM binary를 저장하지 않는다.
+- Transfer 완료·실패·취소·TTL 만료 시 임시 객체를 제거한다.
+
+---
+
+# 16. Orthanc Configuration
+
+## 16.1 Current vs Target
+
+| 항목 | Current | P0 Target |
+|---|---|---|
+| Orthanc Version | 설치 증거 없음 | 1.13 계열 exact patch pin |
+| Docker Image | 없음 | official image exact tag + digest |
+| DICOMweb Plugin | 없음 | image-compatible exact version |
+| DICOMweb Root | 없음 | `/dicom-web/` |
+| Hospital A | 없음 | QIDO/WADO source role |
+| Hospital B | 없음 | STOW destination + QIDO verify role |
+| HTTP Auth | placeholder credential만 존재 | server-side test secret, no browser exposure |
+| TLS | 없음 | reverse proxy 또는 Orthanc-supported TLS boundary |
+| mTLS | 없음 | P0 SHOULD / Production recommended |
+| Storage | 없음 | disposable test volume + quota |
+
+## 16.2 Required DICOMweb Section
+
+```json
+{
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/"
+  }
+}
+```
+
+이는 목표의 최소 예시다. exact image/plugin에서 schema를 검증한 뒤 사용한다.
+
+## 16.3 Security/Deployment Rules
+
+- Orthanc HTTP interface를 공용 인터넷 또는 Browser에 노출하지 않는다.
+- `RemoteAccessAllowed`가 필요하면 isolated Compose network와 인증 경계 안에서만 사용한다.
+- Hospital A/B credential은 각각 분리하고 `.env` 또는 secret store에서 주입한다.
+- 기본 `orthanc/orthanc` credential은 Acceptance profile에서 금지한다.
+- DICOMweb server가 Orthanc HTTP server의 authentication/HTTPS 설정을 공유한다는 점을 구성 시험으로 확인한다.
+- TLS termination 위치가 Reverse Proxy라면 proxy→Orthanc 구간과 forwarded header trust를 명시한다.
+- Source/Destination endpoint는 Registry allowlist에서만 선택한다.
+- Test storage는 재생성 가능해야 하며 운영 데이터가 섞이지 않아야 한다.
+
+---
+
+# 17. Orthanc Capability Matrix
+
+현재 실행 인스턴스가 없으므로 실제 capability는 모두 `UNKNOWN`이다. 괄호는 목표 역할이며 지원 판정이 아니다.
+
+| Capability | Hospital A | Hospital B | MediQ Gateway | Viewer |
+|---|---|---|---|---|
+| QIDO-RS | UNKNOWN (target source) | UNKNOWN (target verify) | UNKNOWN (target proxy/project) | UNKNOWN |
+| WADO-RS | UNKNOWN (target source) | UNKNOWN (not required) | UNKNOWN (target stream) | UNKNOWN |
+| STOW-RS | UNKNOWN (seed optional) | UNKNOWN (target destination) | UNKNOWN (target client) | UNSUPPORTED |
+| Retrieve Metadata | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+| Retrieve Frames | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+| Rendered Frame | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+| Multipart | UNKNOWN | UNKNOWN | UNKNOWN | UNSUPPORTED as parser |
+| JPEG | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+| JPEG 2000 | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+| Multi-frame | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+
+Orthanc 공식 plugin 기능과 특정 image/config의 활성 capability는 다르다. Compose 기동 후 endpoint별 Contract Test로 이 표를 갱신한다.
+
+---
+
+# 18. Viewer Compatibility
+
+## 18.1 Selected Viewer
+
+```text
+Viewer: OHIF 3.11
+Rendering: Cornerstone3D through OHIF
+Data Source: MediQ Viewer Gateway only
+Direct Orthanc/PACS URL: prohibited
+Fallback: custom Cornerstone3D viewer after failed spike
+```
+
+## 18.2 Compatibility Matrix
+
+| Capability | OHIF Requirement/Use | MediQ Current Contract | 상태 |
+|---|---|---|---|
+| Study List | QIDO or application projection | Exchange study list 있음 | DOCUMENTED |
+| Series List | QIDO/metadata | public facade 불완전 | OPEN DECISION |
+| Instance List/Metadata | DICOMweb metadata | public facade 불완전 | OPEN DECISION |
+| Original Instance | WADO-RS style retrieval | normalized `application/dicom` endpoint | DOCUMENTED |
+| Frame | frame retrieval | normalized `image/jpeg` endpoint | DOCUMENTED |
+| Explicit VR LE CT | decoder/render | fixture 없음 | UNKNOWN |
+| Explicit VR LE MR | decoder/render | fixture 없음 | UNKNOWN |
+| Compressed Syntax | codec dependent | 시험 없음 | UNKNOWN |
+| Multi-frame | viewer/data source dependent | P1 | PLANNED |
+| Window/Level | metadata + pixel decode | OHIF target | DOCUMENTED |
+
+OHIF가 DICOMweb을 공식 지원한다는 사실만으로 MediQ Viewer가 동작한다고 간주하지 않는다. ViewerSession header injection, metadata facade, token refresh, CORS, no-store, progressive retrieval 및 revoke/expiry를 실제 Browser E2E로 검증해야 한다.
+
+---
+
+# 19. Security Interoperability
+
+## 19.1 Request Chain
+
+```text
+Authentication
+  → Tenant/Actor binding
+  → ExchangeSession validation
+  → PatientReference/Study binding
+  → Consent validation
+  → Authorization Decision
+  → Action-specific Grant validation
+  → Hospital/Destination allowlist
+  → TLS certificate validation
+  → DICOMweb operation
+  → Integrity / Provenance / Audit
+```
+
+## 19.2 Required Controls
+
+- `study:view`, `study:download`, `study:pacs-transfer`를 독립 검증한다.
+- QIDO 결과는 요청 Exchange와 PatientReference 범위로 제한한다.
+- ViewerSession ID, URL, DICOM UID는 단독 credential이 아니다.
+- Browser→Orthanc, Viewer→unprotected PACS, Hospital B→Hospital A direct access를 금지한다.
+- Endpoint URL은 user input을 직접 사용하지 않고 Hospital Registry allowlist로 resolve한다.
+- DNS rebinding, private address substitution, redirect를 제한해 SSRF를 방지한다.
+- TLS 인증서 검증을 우회하지 않는다. P0 mTLS는 SHOULD이며 미적용만으로 전체 P0를 실패시키지 않는다.
+- PACS Basic credential 또는 client certificate는 server-side secret로만 관리한다.
+- 로그와 Audit에 Pixel Data, multipart body, raw token, password, private key를 남기지 않는다.
+- DICOM metadata는 Synthetic이라도 최소 수집·표시하며 production PHI와 같은 경로 보호를 적용한다.
+- 임시 객체와 response는 `Cache-Control: private, no-store` 정책을 적용한다.
+
+## 19.3 Local TLS Gap
+
+현재 `.env.example`은 HTTP localhost를 사용하므로 `SEC-TLS-001` Acceptance를 만족하지 않는다. 초기 개발 bootstrap에는 사용할 수 있지만 P0 Security PASS 전에 다음 중 하나를 구현하고 인증서 검증 시험을 통과해야 한다.
+
+1. Compose 내부 Reverse Proxy가 MediQ↔Orthanc TLS를 종료하는 Profile
+2. 검증된 Orthanc HTTPS configuration
+
+`verify=false` 또는 신뢰범위를 알 수 없는 CA 설치는 통과 근거가 아니다.
+
+---
+
+# 20. Error Handling
+
+| Failure | Gateway Result | Retry | Audit/State |
+|---|---|---|---|
+| QIDO empty | 정상 empty list | 불필요 | success/empty |
+| QIDO timeout/5xx | `DICOMWEB_FAILURE` | bounded GET retry | failure + correlation |
+| WADO wrong Content-Type | upstream protocol error | no | partial 삭제, failure |
+| WADO truncated multipart | integrity/protocol failure | Instance policy | incomplete, not success |
+| Unsupported SOP Class | explicit unsupported | no | failure |
+| Unsupported Transfer Syntax | explicit unsupported | no blind transcode | failure |
+| STOW 202 partial | partial outcome | verify missing only | not complete |
+| STOW 409/415 | conflict/media type | no | failed |
+| STOW timeout | unknown outcome | destination verify first | unknown/not complete |
+| Destination verify mismatch | verification failure | policy decision | failed |
+| Integrity mismatch | `INTEGRITY_FAILURE` | no automatic complete | failed |
+| Invalid certificate | TLS failure | no insecure fallback | security Audit |
+| Wrong Tenant/Scope/Destination | authorization denied | no | DENY, no upstream call |
+
+Client에는 safe error code와 Correlation ID만 제공한다. Orthanc URL, credential, raw response body와 stack trace는 반환하지 않는다.
+
+---
+
+# 21. Interoperability Test Matrix
+
+모든 테스트는 Synthetic DICOM만 사용하며 현재 상태는 `NOT RUN`이다.
+
+| Test ID | SOP Class | Transfer Syntax | Operation | Expected Result | Status |
+|---|---|---|---|---|---|
+| DICOM-INT-001 | CT Image Storage | Explicit VR LE | QIDO Study | authorized Study 발견 | NOT RUN |
+| DICOM-INT-002 | CT Image Storage | Explicit VR LE | WADO Metadata | DICOM JSON/UID 일치 | NOT RUN |
+| DICOM-INT-003 | CT Image Storage | Explicit VR LE | WADO Instance | binary/hash/Content-Type PASS | NOT RUN |
+| DICOM-INT-004 | CT Image Storage | Explicit VR LE | OHIF Render | Window/Level, scroll render | NOT RUN |
+| DICOM-INT-005 | CT Image Storage | Explicit VR LE | STOW Hospital B | all Instance response 확인 | NOT RUN |
+| DICOM-INT-006 | CT Image Storage | Explicit VR LE | Destination QIDO | expected Instance set 존재 | NOT RUN |
+| DICOM-INT-007 | CT Image Storage | Explicit VR LE | End-to-end | Integrity/Provenance/Audit PASS | NOT RUN |
+| DICOM-INT-008 | MR Image Storage | Explicit VR LE | Full path | 별도 지원 판정 | NOT RUN |
+| DICOM-INT-009 | CT Image Storage | Implicit VR LE | Full path | compatibility 판정 | NOT RUN |
+| DICOM-INT-010 | Enhanced CT | Explicit VR LE | Multi-frame | P1 expected deferred | NOT RUN |
+| DICOM-INT-011 | CT | JPEG Baseline | WADO/View/STOW | P1 decoder/pass-through 판정 | NOT RUN |
+| DICOM-INT-012 | CT | JPEG 2000 Lossless | WADO/View/STOW | P1 decoder/pass-through 판정 | NOT RUN |
+| DICOM-MP-001 | CT | Explicit VR LE | Valid multipart | 모든 Part byte-identical | NOT RUN |
+| DICOM-MP-002 | CT | Explicit VR LE | Invalid boundary | reject, no partial success | NOT RUN |
+| DICOM-MP-003 | CT | Explicit VR LE | Missing/truncated part | reject, cleanup | NOT RUN |
+| DICOM-MP-004 | CT | Explicit VR LE | Unexpected Content-Type | reject | NOT RUN |
+| DICOM-RES-001 | CT | Explicit VR LE | QIDO timeout | bounded retry then fail | NOT RUN |
+| DICOM-RES-002 | CT | Explicit VR LE | WADO interruption | incomplete object discarded | NOT RUN |
+| DICOM-RES-003 | CT | Explicit VR LE | STOW response loss | verify before retry, no duplicate | NOT RUN |
+| DICOM-RES-004 | CT | Explicit VR LE | STOW partial success | missing set identified, not complete | NOT RUN |
+| DICOM-SEC-001 | CT | Explicit VR LE | Invalid/expired certificate | DENY, no insecure fallback | NOT RUN |
+| DICOM-SEC-002 | CT | Explicit VR LE | Wrong Hospital/Tenant | no QIDO/WADO/STOW call | NOT RUN |
+| DICOM-SEC-003 | CT | Explicit VR LE | Wrong/expired Scope | DENY + Audit | NOT RUN |
+| DICOM-SEC-004 | CT | Explicit VR LE | Consent revoked | subsequent retrieval/transfer DENY | NOT RUN |
+| DICOM-PERF-001 | CT | Explicit VR LE | 2 GiB boundary fixture | memory ceiling/backpressure verified | NOT RUN |
+
+## 21.1 Evidence Required
+
+- Orthanc A/B image tag, digest, plugin version과 effective configuration
+- Fixture manifest: SOP Class UID, Transfer Syntax UID, Study/Series/Instance count, size, hash
+- Request/response headers with secrets and PHI redacted
+- Per-instance STOW response interpretation
+- Destination expected/actual UID set
+- Source/transfer/destination hash evidence
+- Viewer screenshot/trace without PACS endpoint leakage
+- memory high-water mark, duration, retry count
+- Audit and Provenance correlation
+
+---
+
+# 22. P0 / P1 / P2 Scope
+
+## 22.1 P0 — MVP Required
+
+- Orthanc A/B pinned containers and DICOMweb plugin
+- Classic single-frame CT or MR fixture; first fixture CT 권고
+- Explicit VR Little Endian
+- authorized QIDO Study
+- WADO Metadata/Instance streaming
+- OHIF render for the selected fixture
+- STOW multipart store to Hospital B
+- partial response parsing, destination verification, integrity, provenance, audit
+- bounded timeout, safe retry, duplicate prevention
+- TLS and certificate validation
+
+## 22.2 P1 — Expanded Interoperability
+
+- CT/MR 둘 다 지원 claim
+- Implicit VR LE full matrix
+- JPEG/JPEG Lossless/JPEG 2000/RLE
+- Enhanced CT/MR와 Multi-frame
+- CR/DX/US/Secondary Capture
+- rendered frame parameter profile와 broader OHIF codec validation
+
+## 22.3 P2 / Productionization
+
+- 이종 PACS Vendor별 Conformance Statement 대조
+- 기관별 Capability Negotiation
+- DIMSE bridge가 필요한 기관 지원
+- 대규모 Transfer tuning, resume protocol, queue scaling
+- mTLS/VPN/Private Link deployment profile
+- 정식 DICOM Conformance Statement와 규제 검토
+
+---
+
+# 23. Open Decisions
+
+| ID | 결정 항목 | 권고 | 차단 범위 |
+|---|---|---|---|
+| DICOM-DEC-001 | Exact Orthanc image/plugin tag+digest | 1.13 계열의 검증 가능한 official image pin | 환경 전체 |
+| DICOM-DEC-002 | 첫 P0 Fixture | Classic CT + Explicit VR LE | Golden Path |
+| DICOM-DEC-003 | MR을 같은 P0 Gate에 포함할지 | CT PASS 후 일정/평가 기준으로 결정 | 지원 claim |
+| DICOM-DEC-004 | OHIF metadata facade | MediQ-controlled DICOMweb projection 추가 | Viewer |
+| DICOM-DEC-005 | Path A/B Viewer | Path B primary, rendered Path A fallback | Viewer |
+| DICOM-DEC-006 | Timeout values | 제안값으로 fault injection 후 확정 | Reliability |
+| DICOM-DEC-007 | Size/concurrency limits | 제안값으로 memory/disk benchmark 후 확정 | Performance |
+| DICOM-DEC-008 | STOW batch/idempotency contract | operation ID + expected Instance manifest | Transfer retry |
+| DICOM-DEC-009 | Local TLS termination | reverse proxy profile 우선 검토 | Security PASS |
+| DICOM-DEC-010 | Compressed Syntax | P1 조합별 decoder/pass-through 시험 | Expanded support |
+
+---
+
+# 24. Acceptance Criteria
+
+다음 조건을 모두 충족해야 P0 DICOM Interoperability를 PASS로 판정한다.
+
+1. Orthanc A/B와 DICOMweb plugin의 exact version/config가 재현된다.
+2. Synthetic Fixture manifest가 SOP Class/Transfer Syntax/UID/count/hash를 가진다.
+3. QIDO 결과가 Exchange/Tenant/Patient 범위를 벗어나지 않는다.
+4. WADO는 전체 Study buffering 없이 선택 Instance를 온디맨드 전달한다.
+5. Multipart valid/invalid/truncated 시험이 모두 기대대로 동작한다.
+6. 선택 Fixture를 OHIF가 MediQ Gateway 경유로 렌더링한다.
+7. Browser network trace에 PACS endpoint/credential이 없다.
+8. PACS Import preflight 실패 시 STOW 요청이 0건이다.
+9. STOW partial/timeout/duplicate 시나리오에서 잘못된 완료가 없다.
+10. Hospital B의 expected Instance set과 실제 수신 set이 일치한다.
+11. Integrity VERIFIED, Provenance COMPLETED, Audit correlation이 연결된다.
+12. timeout, size, concurrency와 memory ceiling의 검증값이 기록된다.
+13. TLS/certificate validation과 Wrong Tenant/Scope/Consent negative test가 PASS한다.
+14. 각 SOP Class × Transfer Syntax 조합은 자체 Test가 PASS한 경우에만 지원으로 표시된다.
+
+현재 모든 조건은 `NOT RUN`이며 문서 작성만으로 PASS 상태가 되지 않는다.
+
+---
+
+# 25. Final Decision Table
+
+| 항목 | P0 지원 범위 | 구현 상태 | 검증 상태 | 비고 |
+|---|---|---|---|---|
+| SOP Class | Classic CT 또는 MR single-frame; first CT 권고 | DOCUMENTED | NOT RUN | 조합별 지원 claim |
+| Transfer Syntax | Explicit VR Little Endian core | DOCUMENTED | NOT RUN | Implicit VR LE는 compatibility test |
+| QIDO-RS | Study required; Series/Instance Viewer Gate | DOCUMENTED | NOT RUN | Browser raw QIDO 금지 |
+| WADO-RS | Metadata + Instance stream; Frame gate | DOCUMENTED | NOT RUN | no full-study memory buffer |
+| STOW-RS | bounded multipart to Hospital B | DOCUMENTED | NOT RUN | 200/202/partial 파싱 |
+| Rendered Frame | JPEG fallback candidate | DOCUMENTED | NOT RUN | Path B OHIF primary |
+| Multipart | streaming parse/write | DOCUMENTED | NOT RUN | malformed negative tests 필수 |
+| Timeout | 계층별 proposed values | OPEN DECISION | NOT RUN | fault injection 후 확정 |
+| Retry | QIDO/WADO bounded; STOW verify-before-retry | DOCUMENTED | NOT RUN | blind STOW retry 금지 |
+| Maximum Size | 64 MiB instance / 2 GiB study proposal | OPEN DECISION | NOT RUN | benchmark 후 확정 |
+| Orthanc | A/B 1.13-family + DICOMweb plugin target | DOCUMENTED | NOT RUN | exact image/plugin 미정 |
+| Viewer | OHIF 3.11 via MediQ Gateway | DOCUMENTED | NOT RUN | metadata facade gap |
+
+---
+
+# 26. References
+
+## 26.1 Project Baseline
+
+- `PROJECT-CHARTER.md`
+- `CAPSTONE-MVP-BOUNDARY.md`
+- `PRODUCT-BASELINE.md`
+- `REQUIREMENTS.md`
+- `SECURITY-REQUIREMENTS.md`
+- `DOMAIN-MODEL.md`
+- `SYSTEM-ARCHITECTURE.md`
+- `TECH-STACK-DECISION.md`
+- `DATA-FLOW.md`
+- `OPENAPI.yaml`
+- `THREAT-MODEL.md`
+- `ACCEPTANCE-TESTS.md`
+- `IMPLEMENTATION-PLAN.md`
+- `P0-WEB-UI-UX-SPEC.md`
+- `REPOSITORY-BASELINE-AUDIT.md`
+- `references/MEDICAL-IMAGE-CD-MEDIA-REFERENCE.md`
+
+## 26.2 Official Technical Sources
+
+- [DICOM PS3.4 — Service Class Specifications](https://dicom.nema.org/medical/dicom/current/output/html/part04.html)
+- [DICOM PS3.5 — Data Structures and Encoding](https://dicom.nema.org/medical/dicom/current/output/html/part05.html)
+- [DICOM PS3.6 — Registry of DICOM UIDs](https://dicom.nema.org/medical/dicom/current/output/chtml/part06/chapter_a.html)
+- [DICOM PS3.10 — Media Storage and File Format for Media Interchange](https://dicom.nema.org/medical/dicom/current/output/html/part10.html)
+- [DICOM PS3.11 — Media Storage Application Profiles](https://dicom.nema.org/medical/dicom/current/output/html/part11.html)
+- [DICOM PS3.18 — Web Services](https://dicom.nema.org/medical/dicom/current/output/html/part18.html)
+- [IHE Radiology Technical Framework Volume 1 — Portable Data for Imaging](https://www.ihe.net/uploadedFiles/Documents/Radiology/IHE_RAD_TF_Vol1.pdf)
+- [Orthanc DICOMweb Plugin](https://orthanc.uclouvain.be/book/plugins/dicomweb.html)
+- [Orthanc Official Docker Images](https://orthanc.uclouvain.be/book/users/docker-orthancteam.html)
+- [OHIF 3.11 DICOMweb Data Source](https://docs.ohif.org/3.11/configuration/datasources/dicom-web/)
+
+# Hospital Prior Comparison P1 Interoperability Amendment — 2026-09-27
+
+관련 과거 영상 비교는 기존 DICOMweb 경계를 다음과 같이 재사용한다.
+
+- 후보 Metadata 검색은 Backend QIDO-RS Adapter가 수행하며 Browser가 PACS Endpoint를 직접 호출하지 않는다.
+- 검색 범위는 Tenant, Hospital, MediQ Patient Reference, Exchange/Source Scope에 binding한다.
+- 같은 Patient Reference의 모든 Study를 자동 허용하지 않고 후보·선택·Open 단계에서 Study별 `study:view`를 재검증한다.
+- 비교 Pixel은 허용 Study 집합에 binding된 Short-lived Comparison Viewer Session을 통해 WADO-RS로 온디맨드 전달한다.
+- Transfer Syntax/Codec 지원은 기존 Capability Matrix를 따르며 지원되지 않는 조합은 안전하게 실패한다.
+- Side-by-side 표시는 임상적 동일성·진단·변화 판정을 의미하지 않는다.
+- 비교 기능은 STOW-RS, PACS Import 상태 또는 Source of Record를 변경하지 않는다.
+
+현재 QIDO Projection과 Multi-study Viewer Session API는 GAP이며 `MEDIQ-HCW-PR-001~002` Ticket 전에는 구현 완료로 간주하지 않는다.

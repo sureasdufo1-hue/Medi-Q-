@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "mediq.health-preview.v1.1",
+  "fixtureVersion": "1.1.0",
+  "scenarioId": "HHP-DEMO-CHECKUP-LAB-001",
+  "sourceMode": "SYNTHETIC",
+  "providerMode": "MOCK",
+  "patientReference": "TEST-PATIENT-001",
+  "generatedAt": "2026-09-26T00:00:00Z",
+  "sourceOrganization": {
+    "display": "TEST 대학병원",
+    "identifier": "TEST-ORG-UNIVERSITY-001"
+  },
+  "records": [
+    {
+      "recordRef": "TEST-CHECKUP-2026-001",
+      "recordType": "HEALTH_CHECKUP",
+      "title": "종합 건강검진 (합성)",
+      "observedAt": "2026-08-14T09:00:00+09:00",
+      "items": [
+        { "code": "DEMO-BP", "display": "혈압", "valueDisplay": "118/76 mmHg" },
+        { "code": "DEMO-GLUCOSE", "display": "공복혈당", "value": 92, "unit": "mg/dL", "referenceRangeText": "합성 제공기관 참고범위: 70–99" },
+        { "code": "DEMO-BMI", "display": "체질량지수", "value": 22.4, "unit": "kg/m²" }
+      ]
+    },
+    {
+      "recordRef": "TEST-LAB-PANEL-2026-001",
+      "recordType": "LAB_OBSERVATION",
+      "title": "일반 혈액검사 (합성)",
+      "observedAt": "2026-08-14T09:20:00+09:00",
+      "items": [
+        { "code": "DEMO-WBC", "display": "백혈구 수", "value": 5.8, "unit": "10³/µL", "referenceRangeText": "합성 제공기관 참고범위: 4.0–10.0" },
+        { "code": "DEMO-HGB", "display": "혈색소", "value": 14.2, "unit": "g/dL", "referenceRangeText": "합성 제공기관 참고범위: 12.0–16.0" },
+        { "code": "DEMO-PLT", "display": "혈소판 수", "value": 248, "unit": "10³/µL", "referenceRangeText": "합성 제공기관 참고범위: 150–400" }
+      ]
+    },
+    {
+      "recordRef": "TEST-ANTIBODY-2026-001",
+      "recordType": "ANTIBODY_OBSERVATION",
+      "title": "B형간염 표면항체 검사 (합성)",
+      "observedAt": "2026-08-14T09:30:00+09:00",
+      "items": [
+        {
+          "code": "DEMO-ANTI-HBS",
+          "display": "B형간염 표면항체",
+          "value": 128.4,
+          "unit": "mIU/mL",
+          "referenceRangeText": "합성 제공기관 참고범위: 10 이상",
+          "sourceInterpretationText": "합성 원문 판정: 반응성"
+        }
+      ],
+      "relatedRecordRefs": ["TEST-IMAGING-CHEST-CT-001"]
+    }
+  ],
+  "restrictions": {
+    "diagnosticUse": false,
+    "clinicianShare": false,
+    "pacsImport": false,
+    "externalNetworkCall": false
+  },
+  "disclaimer": "CAPSTONE SYNTHETIC DEMO DATA — NOT A REAL MEDICAL RECORD OR INTERPRETATION"
+}

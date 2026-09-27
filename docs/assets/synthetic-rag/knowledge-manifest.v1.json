@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "mediq.synthetic-rag-manifest.v1",
+  "packId": "MEDIQ-RAG-DEMO-KB",
+  "packVersion": "1.0.0",
+  "status": "DEMO_ACTIVE",
+  "classification": "SYNTHETIC_DEMO",
+  "createdAt": "2026-09-26T00:00:00+09:00",
+  "effectiveFrom": "2026-09-26T00:00:00+09:00",
+  "reviewDueAt": "2026-12-31T23:59:59+09:00",
+  "runtimePolicy": {
+    "allowedSourceModes": ["SYNTHETIC"],
+    "allowedProviderModes": ["MOCK"],
+    "externalRetrievalAllowed": false,
+    "externalGenerationAllowed": false,
+    "clinicalUseAllowed": false,
+    "trainingUseAllowed": false
+  },
+  "documents": [
+    {
+      "documentId": "KB-DEMO-MEDIQ-001",
+      "documentVersion": "1.0.0",
+      "title": "MediQ 합성 검사 화면 설명 가이드",
+      "language": "ko-KR",
+      "sourceTier": "K0-DEMO",
+      "path": "sources/mediq-synthetic-explanation-guide.md",
+      "contentHash": "sha256:70d819730c25838f0a837ab37448c986d0c12b6ab844c9ee4edcc7e7246e27db",
+      "allowedIntents": [
+        "EXPLAIN_FIELD",
+        "EXPLAIN_REFERENCE_TEXT",
+        "PREPARE_CLINICIAN_QUESTIONS",
+        "EXPLAIN_PROVENANCE",
+        "EXPLAIN_LIMITATION"
+      ],
+      "forbiddenUses": [
+        "DIAGNOSE",
+        "INTERPRET_DISEASE",
+        "MEDICATION_ADVICE",
+        "TREATMENT_PLAN",
+        "EMERGENCY_TRIAGE",
+        "IMAGE_FINDING",
+        "PREDICT_OUTCOME"
+      ],
+      "chunkIds": [
+        "CHUNK-DEMO-001",
+        "CHUNK-DEMO-002",
+        "CHUNK-DEMO-003",
+        "CHUNK-DEMO-004",
+        "CHUNK-DEMO-005",
+        "CHUNK-DEMO-006"
+      ],
+      "reviewState": {
+        "product": "APPROVED_FOR_DEMO",
+        "clinical": "NOT_REVIEWED",
+        "privacy": "APPROVED_FOR_SYNTHETIC_DEMO",
+        "security": "APPROVED_FOR_LOCAL_FIXTURE",
+        "accessibility": "REVIEW_REQUIRED",
+        "legalLicense": "INTERNAL_SYNTHETIC_CONTENT"
+      }
+    }
+  ]
+}
