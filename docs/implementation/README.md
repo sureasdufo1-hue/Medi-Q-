@@ -82,6 +82,9 @@ PowerShell에서 다음 명령으로 기록을 생성한다.
 
 | Ticket | 분류 | 제목 | 상태 | 보고서 |
 |---|---|---|---|---|
+| `MEDIQ-ENV-002` | `CAPSTONE-P0` | API·Worker·Web npm workspace 구조 정렬 | `PASS` (Ticket 범위) | [Implementation Report](MEDIQ-ENV-002/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-ENV-002/TEST-EVIDENCE.md) |
+| `MEDIQ-ENV-003` | `CAPSTONE-P0` | PostgreSQL·Orthanc Compose 기준선 | `PASS` (config 범위) | [Implementation Report](MEDIQ-ENV-003/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-ENV-003/TEST-EVIDENCE.md) |
+| `MEDIQ-ENV-004` | `CAPSTONE-P0` | PostgreSQL startup·health·network 연결 | `PASS` (DB 환경 범위) | [Implementation Report](MEDIQ-ENV-004/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-ENV-004/TEST-EVIDENCE.md) |
 | `MEDIQ-GOV-001` | `CAPSTONE-P0` | 구현·실행·문서화 단일 작업 Gate | `TESTED` | [Implementation Report](MEDIQ-GOV-001/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-GOV-001/TEST-EVIDENCE.md) |
 | `MEDIQ-DOC-001` | `CAPSTONE-P1` | 합성 건강정보 연계 Preview 문서 기준선 | `TESTED` | [Implementation Report](MEDIQ-DOC-001/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-DOC-001/TEST-EVIDENCE.md) |
 | `MEDIQ-DOC-002` | `CAPSTONE-P1` | 환자 경험 기능 1–9 문서 기준선 | `TESTED` | [Implementation Report](MEDIQ-DOC-002/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-DOC-002/TEST-EVIDENCE.md) |

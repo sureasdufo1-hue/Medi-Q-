@@ -13,7 +13,11 @@ Hospital PACS는 의료영상의 Source of Record이며, MediQ Cloud에는 영�
 - 데이터: Synthetic / Test / De-identified 데이터만 사용
 - Production 배포 및 실제 환자 데이터: 현재 범위 밖
 
+**제출 마감: 2026-10-05.** Repository workspace와 Compose 기준선을 마련했고, PostgreSQL 18.6의 startup·health·재시작·내부 network 인증 연결까지 Ticket 범위에서 검증했습니다. Test Orthanc, schema/migration, API/Worker/Web 제품 코드와 P0 테스트는 아직 미구현·미실행이므로 실제 의료영상 교환은 검증 전입니다. 일별 작업은 [프로젝트 점검 및 10월 5일 실행 계획표](docs/P0-EXECUTION-SCHEDULE.md)를 따릅니다. 팀 가용 시간은 미확정이며, P0 완료는 실제 Acceptance 증거로 판정합니다.
+
 ## 문서 시작점
+
+개발 착수 시 [P0 개발 착수 가이드](docs/P0-DEVELOPER-BASELINE.md)에서 필수 구현 기준·첫 환경 Ticket·계약 공백·시험 증거 작성법을 확인합니다. 날짜별 작업과 진척은 [실행 계획표](docs/P0-EXECUTION-SCHEDULE.md)에서 관리합니다.
 
 1. [프로젝트 차터](docs/PROJECT-CHARTER.md)
 2. [MVP 경계](docs/CAPSTONE-MVP-BOUNDARY.md)
@@ -75,6 +79,8 @@ scripts/           개발 및 검증 자동화 스크립트
 data/              로컬 테스트 데이터 위치 (Git 미추적)
 ```
 
+API, Worker, Web은 root의 npm Workspaces로 관리한다. 현재 package manifest는 저장소 구조와 ESM 경계만 선언하며 애플리케이션 코드·의존성·실행 스크립트는 후속 Ticket에서 추가한다.
+
 ## 개발 원칙
 
 - P0 E2E를 P1 Mobile Secure Vault보다 우선한다.
@@ -118,9 +124,13 @@ Ticket
 
 ## 시작 전 체크
 
-- [ ] 문서 기준선 승인
+- [x] Git 기준 커밋 확인 (`4308003`, 2026-09-28 점검)
+- [x] 필수 기준 문서 등록 확인 (29/29, 계약 공백·충돌은 실행 계획표 참조)
+- [x] 제출 마감일 확정 (2026-10-05, 시각 미확정)
+- [ ] 담당자·개인별 가용 시간 배정
+- [ ] 충돌 Ticket ID와 P0 API·Acceptance 참조 정리
 - [ ] Docker 및 Test Orthanc 실행 확인
 - [ ] Synthetic DICOM Dataset 준비
 - [ ] 로컬 환경변수 설정 (`.env.example` 참고)
-- [ ] API/Web/Worker 기술 스택 확정
-- [ ] 첫 번째 P0 수직 슬라이스 정의
+- [ ] 선정 스택의 실제 설치·버전 고정·상호운용 검증
+- [ ] 첫 번째 보안 검증 포함 PACS Import 수직 슬라이스 실행

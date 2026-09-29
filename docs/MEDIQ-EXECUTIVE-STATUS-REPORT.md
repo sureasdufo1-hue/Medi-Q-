@@ -1,84 +1,45 @@
-# MediQ 개발 현황 보고서
+# MediQ 개발 현황 및 제출 계획 보고서
 
-**보고일:** 2026-09-15  
-**보고 대상:** 상급자 / 프로젝트 의사결정권자  
-**프로젝트 단계:** Capstone Technical MVP  
-**현재 판정:** P0 구현 착수 전 — 기술적 준비 단계
+**보고일:** 2026-09-28
 
-## 1. 한 줄 요약
+**제출 마감:** 2026-10-05 (사용자 지정, 시각 미확정)
 
-MediQ의 목표와 구현 기준은 공식 문서로 정리 완료했으나, 현재 저장소에는 아직 실행 코드·Test PACS 환경·DB·테스트가 없어 실제 의료영상 교환 E2E 검증은 시작 전입니다. 다음 최우선 과제는 재현 가능한 Test 환경 구축입니다.
+**현재 단계:** P0 로컬 DB 환경 구성 / PostgreSQL 검증 완료, Orthanc·제품 서비스 미실행
 
-## 2. 프로젝트 목표
+**현재 판정:** `CAPSTONE TECHNICAL READINESS = BLOCKED`
 
-환자의 동의를 기반으로 Hospital A의 CT/MRI를 MediQ가 안전하게 중계하여 Hospital B가 승인된 범위에서 Web Viewer로 조회하거나, DICOM으로 다운로드하거나, PACS로 수신하도록 구현합니다.
+## 현재 상황
 
-```text
-Hospital A Test Orthanc
-        ↓ DICOMweb
-      MediQ
-  Consent + Authorization
-  Scoped Transfer Grant
-        ↓
-Hospital B Test Orthanc
-  Viewer / Download / STOW-RS Import
-```
+MediQ는 환자 동의를 바탕으로 병원 A의 영상을 병원 B가 열람·다운로드·PACS 반입하도록 중계하는 시스템이다. 목표와 보안 기준, 화면 목업은 준비되어 있다. npm workspace와 PostgreSQL/Test Orthanc Compose 구성을 만들었고 PostgreSQL은 healthcheck·재시작·내부망 인증 연결을 검증했다. Orthanc, DB schema/migration, 제품 코드·제품 테스트는 아직 없어 실제 의료영상 교환 검증은 시작 전이다.
 
-## 3. 현재까지 완료된 사항
+| 영역 | 9월 28일 확인 결과 |
+|---|---|
+| Git | 기준 커밋 `4308003` 존재, 원격 main 일치. 점검 시작 시 clean |
+| 개발 도구 | Docker Engine·Compose·Node·npm 실행 가능 |
+| 문서·목업 | 필수 문서 존재, 정적 목업·문서화 스크립트 기록 존재 |
+| 환경·제품 구현 | Node/npm workspace·Compose config, PostgreSQL 18.6 running/healthy. Orthanc 미기동, Migration·API/Worker/Web 제품 코드 없음 |
+| P0 검증 | 제품 테스트·실제 A→MediQ→B 전송 증거 없음 |
+| 계획 차단점 | Ticket 의미 중복, Consent/Viewer/전송 상태 API 공백, 일부 시험 참조 오류 |
 
-- 프로젝트 Charter와 P0/P1 범위 확정
-- Product, Requirements, Security, Domain, Data, ERD 문서화
-- System Architecture, Data Flow, OpenAPI Contract 작성
-- Threat Model과 Acceptance Test 기준 등록
-- AI Agent 작업 규칙(`AGENTS.md`) 등록
-- Repository Baseline Audit 완료
-- 실제 환자·운영 병원 데이터 없이 진행하는 원칙 확정
+## 10월 5일까지의 실행 계획
 
-## 4. 현재 상태
+| 일정 | 핵심 산출물·완료 기준 |
+|---|---|
+| 9/28 | 담당·가용 시간 배정, Ticket 정리, Test Orthanc A/B·PostgreSQL·Synthetic CT 환경 구성 |
+| 9/29 | QIDO/WADO/STOW·무결성 기술 Spike, 핵심 API 계약·버전 결정 |
+| 9/30 | Patient Mapping·Exchange·Consent·Authorization·Grant 및 거부 경로 검증 |
+| 10/1 | 보안 검증 포함 첫 PACS Import E2E, 목적지 확인·Integrity·Provenance·Audit |
+| 10/2 | 병원·Synthetic Patient Cloud Viewer, Download, 권한·만료/철회 검증 |
+| 10/3 | P0 전체 통합·보안·장애·복구 시험과 시연 리허설 |
+| 10/4 | 기능 동결, 결함 수정·재시험, 깨끗한 환경 재현·제출 후보 확정 |
+| 10/5 | 동일 제출 후보의 최종 재현, 자료·증거·한계 확인 및 제출 |
 
-| 영역 | 상태 | 의미 |
-|---|---|---|
-| 기준 문서 | 완료 | 개발 판단 기준 확정 |
-| 저장소 구조 | 초기 구성 | API/Worker/Web/Infra/Test 영역만 준비 |
-| Docker/Orthanc A·B | 미구축 | 실제 DICOM 흐름 실행 불가 |
-| PostgreSQL/DB Migration | 미구축 | 도메인 데이터 저장 불가 |
-| 핵심 업무 로직 | 미구현 | Mapping/Consent/Grant 미구현 |
-| DICOMweb/STOW-RS | 미구현 | 기관 간 영상 전송 불가 |
-| 보안 통제 | 미구현 | Authorization/Tenant/Audit 검증 불가 |
-| 자동화 테스트 | 미구현 | PASS 증거 생성 불가 |
+팀원 수·가용 시간은 미확정이며 위 일정은 역할별 병렬 작업을 전제로 한 압축 목표다. 현 상태에서 전체 P0를 7일 안에 검증해야 하므로 일정 위험이 매우 높다. 10월 1일 핵심 E2E, 10월 3일 전체 시험을 중간 점검점으로 삼고 실패/미실행 항목을 매일 보고한다.
 
-**종합 판정: `CAPSTONE TECHNICAL READINESS = BLOCKED`**
+## 완료 판정과 우선순위
 
-## 5. 주요 리스크
+P0는 Viewer·Download·PACS Import와 관련 보안·증거 Gate를 실제로 통과해야 완료다. STOW 성공 응답 또는 목업 화면만으로 완료를 주장하지 않는다. 미달 시 제출물에 검증된 기능·미검증·미구현·계획을 구분하고 P0 PASS 표기를 보류한다.
 
-- 구현보다 문서 범위가 앞서 있어 Scope Expansion 위험이 있음
-- Test PACS와 DB가 없으면 이후 기능을 통합 검증할 수 없음
-- Consent, Authorization, Tenant Isolation을 나중에 추가하면 보안 구조 재작업 가능성이 큼
-- 아직 Git 초기 commit이 없어 재현 가능한 기준점이 없음
+Mobile Vault·QR·RAG·환자/병원 편의 확장·클라우드 배포는 후속으로 유지한다. 첫 실행은 상세 계획의 `MEDIQ-ENV-002~010` 환경 묶음이며, Compose 자체는 `MEDIQ-ENV-003`이다. 코드·설정 작업은 Ticket별 구현 보고서와 실제 테스트 증거를 같은 작업에서 남긴다.
 
-## 6. 다음 실행 과제
-
-### `MEDIQ-ENV-002 — Reproducible P0 Test Environment 구축`
-
-1. Hospital A/B Test Orthanc 구성
-2. PostgreSQL 개발 인스턴스 구성
-3. Docker health check 및 네트워크/볼륨 경계 설정
-4. Synthetic DICOM seed와 실행 문서 작성
-5. 실제 환자정보·운영 Credential 유입 방지 확인
-6. 초기 Git baseline commit 생성
-
-**완료 판단 기준:** `docker compose config`, Orthanc A/B health check, PostgreSQL health check, Synthetic fixture seed가 모두 실제 실행 증거와 함께 PASS.
-
-## 7. 의사결정 요청
-
-- P0 E2E 완료 전까지 Mobile Secure Vault(P1)를 후순위로 유지
-- 개발·검증 환경은 Synthetic/Test 데이터만 사용
-- `MEDIQ-ENV-002`를 다음 공식 개발 Ticket으로 승인
-- 환경 구축 후 `MEDIQ-DATA-001`(DB Migration 및 P0 Table) 착수
-
-## 최종 보고
-
-현재 프로젝트는 **기획·설계 기준선은 준비되었고, 구현은 아직 시작 전인 상태**입니다. 프로젝트 실패가 아니라 정상적인 Foundation 단계이며, 다음 목표는 기능 추가가 아니라 재현 가능한 Test 환경 확보입니다.
-
-**근거 문서:** [Repository Baseline Audit](REPOSITORY-BASELINE-AUDIT.md)
-
+**상세 근거:** [실행 계획표](P0-EXECUTION-SCHEDULE.md) · [현재 감사 상태](REPOSITORY-BASELINE-AUDIT.md) · [구현 기록](implementation/README.md)

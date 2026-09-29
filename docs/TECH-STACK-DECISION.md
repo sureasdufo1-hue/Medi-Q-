@@ -7,7 +7,7 @@
 **Decision Date:** 2026-09-20  
 **Primary Scope:** CAPSTONE-P0  
 **Decision Status:** ACCEPTED FOR P0 SCAFFOLDING  
-**Implementation Status:** DOCUMENTED — NOT IMPLEMENTED / NOT TESTED
+**Implementation Status:** npm workspace + Postgres/Orthanc Compose configuration IMPLEMENTED / CONFIG-TESTED; application code and container runtime NOT IMPLEMENTED / NOT TESTED
 
 ---
 
@@ -115,12 +115,13 @@ P0에서는 다음을 도입하지 않는다.
 
 # 4. Current Technology Baseline
 
-2026-09-20 저장소 조사 결과는 다음과 같다.
+2026-09-20 최초 저장소 조사에서는 모두 미구현이었다. 2026-09-28 `MEDIQ-ENV-002` 이후의 현재 상태는 다음과 같다.
 
 | 항목 | 실제 상태 | 분류 |
 |---|---|---|
-| `package.json` / lockfile | 없음 | UNKNOWN |
-| Node/TypeScript Runtime | 없음 | UNKNOWN |
+| `package.json` / lockfile | Root + API/Worker/Web npm workspace manifests 및 lockfile; 오프라인 clean install 확인 | WORKSPACE IMPLEMENTED / TESTED; 앱 dependency 없음 |
+| Local infra image references | PostgreSQL `18.6-bookworm` and Orthanc Team `26.9.1`, both manifest-digest pinned in `infra/docker-compose.yml` | CONFIG-DEFINED / container startup not tested |
+| Node/TypeScript Runtime | Node.js `v24.18.0` 실행 확인; TypeScript 앱/compiler 설정 없음 | TOOL AVAILABLE; APP NOT IMPLEMENTED |
 | Backend Framework | 없음 | UNKNOWN |
 | Frontend Framework | 없음 | UNKNOWN |
 | ORM/Migration | 없음 | UNKNOWN |
@@ -776,9 +777,9 @@ SBOM/license inventory
 
 ```text
 TECHNOLOGY DECISION: ACCEPTED FOR P0 SCAFFOLDING
-CURRENT IMPLEMENTATION: NONE
-CURRENT TEST EVIDENCE: NONE
-NEXT TICKET: MEDIQ-ENV-002
+CURRENT IMPLEMENTATION: ENV-002 workspace; ENV-003 Compose config; ENV-004 PostgreSQL runtime only (no product service/schema)
+CURRENT TEST EVIDENCE: ENV-002/003/004 scoped; see docs/implementation/README.md
+NEXT TICKET: MEDIQ-ENV-005 Hospital A Test Orthanc
 AZURE DEPLOYMENT: POST-MVP RECOMMENDATION
 MOBILE NATIVE STACK: DEFINED FOR CAPSTONE-P1 BY ADR-0018
 MOBILE CAPSULE FORMAT: DEFINED FOR CAPSTONE-P1 BY ADR-0019; CRYPTO/DEVICE VALIDATION PENDING

@@ -12,6 +12,16 @@
 
 ---
 
+# 0. 현재 실행 일정 — 2026-09-28 점검
+
+사용자가 지정한 제출 마감은 **2026-10-05**다. 일별 작업·역할·의존성·시험 증거와 지연 대응은 [P0-EXECUTION-SCHEDULE.md](P0-EXECUTION-SCHEDULE.md)를 따른다. 10월 4일은 기능 동결·검증, 10월 5일은 재현·제출 목표일이며 팀 가용 시간은 미확정이다.
+
+이 일정은 P0 성공조건을 변경하지 않는다. 실제 구현은 환경 → 기술 Spike·계약 → Mapping/Consent/Authorization/Grant → PACS Import·Verification/Integrity/Provenance/Audit → Viewer/Download → 전체 회귀시험 순으로 통합한다. Audit·보안시험은 해당 코드 작성 시점부터 수행한다. P1·클라우드 구현은 이번 마감 일정에 배정하지 않는다.
+
+§9~22의 상세 P0 Ticket 정의를 일정 매핑의 기본으로 사용한다. 과거 감사의 광의 `MEDIQ-ENV-002`는 환경 묶음이며, 개별 실행 기록은 `MEDIQ-ENV-002~010`으로 구분한다. 후속 Azure Track의 `MEDIQ-DB-001`/`MEDIQ-AUD-001` 중복 등은 실행 계획표 §5의 미해결 항목이다. 해당 후속 작업은 ID와 참조를 정리한 뒤 착수한다. 본문 BACKLOG/NOT_STARTED는 초기 상태표이며 실제 완료는 [구현 기록](implementation/README.md)과 시험 증거로만 갱신한다.
+
+---
+
 # 1. Purpose
 
 본 문서는 지금까지 승인된 MediQ 설계를 실제 개발 가능한 **Phase / Ticket / Acceptance Gate**로 변환한다.
@@ -175,43 +185,13 @@ Code
 
 ## 2.2 Repository Implementation Status
 
-현재 본 문서 작성 시점에서는 실제 MediQ Repository의:
+2026-09-28에 Git·파일 트리·실행 도구를 재점검했다. 로컬 HEAD와 원격 main은 `4308003d19d929df1828dd162a9c886045d605a3`이며 점검 시작 시 작업 트리는 clean이었다.
 
-```text
-Directory Tree
-Source Code
-Docker Files
-Migration
-Orthanc Configuration
-Automated Tests
-Legacy Asset Placement
-```
+제품 API/Worker/Web 소스, package/lockfile, Compose, Migration, Orthanc 설정 및 제품 자동화 테스트는 없다. 문서, 정적 HTML 목업, 합성 UI 자산, 구현 기록 생성 스크립트와 해당 시험 기록은 존재한다. 따라서 저장소 전체에 실행 가능한 파일이 전혀 없다고 표현하지 않는다.
 
-을 직접 검증하지 않았다.
+Docker Client/Server 29.8.0, Compose v5.5.1, Node v24.18.0, npm 11.16.0은 실제 실행 확인했다. 도구 실행은 프로젝트 환경 또는 제품 보안 검증의 PASS가 아니다.
 
-따라서 다음을 임의로 주장하지 않는다.
-
-```text
-ALREADY IMPLEMENTED
-PASS
-DONE
-```
-
-초기 Ticket 상태는 원칙적으로:
-
-```text
-BACKLOG
-```
-
-으로 시작하며, `MEDIQ-ENV-001 Repository Baseline Audit` 실행 후 다음 중 하나로 재분류한다.
-
-```text
-ALREADY_IMPLEMENTED
-PARTIAL
-MISSING
-LEGACY_REUSABLE
-BLOCKED
-```
+P0 제품 작업 상태는 `NOT STARTED / NOT RUN`, Capstone Technical Readiness는 `BLOCKED`다. 기존 감사의 10개 요약 역량과 전체 Acceptance Test 수를 혼동하지 않는다. 현재 관찰·제약·명령은 [실행 계획표](P0-EXECUTION-SCHEDULE.md)에 기록했다.
 
 ---
 

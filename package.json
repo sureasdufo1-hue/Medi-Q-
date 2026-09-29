@@ -1,0 +1,16 @@
+{
+  "name": "mediq",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11 <12"
+  },
+  "workspaces": [
+    "services/api",
+    "services/worker",
+    "web"
+  ]
+}
