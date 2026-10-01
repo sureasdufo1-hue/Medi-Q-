@@ -104,6 +104,45 @@ const EVENT_RULES: Readonly<Record<string, EventRule>> = Object.freeze({
     resourceRequired: true,
     reasonCodes: ["PATIENT_MAPPING_INVALID"],
   },
+  PACS_SOURCE_CAPTURE_STARTED: {
+    resourceType: "STUDY",
+    result: "ALLOW",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [null],
+  },
+  PACS_SOURCE_CAPTURED: {
+    resourceType: "STUDY",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [null],
+  },
+  PACS_SOURCE_CAPTURE_DENIED: {
+    resourceType: "STUDY",
+    result: "DENY",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [
+      "AUTHORIZATION_DENIED",
+      "OPERATION_NOT_CAPTUREABLE",
+      "PATIENT_MAPPING_INVALID",
+      "SOURCE_PATIENT_ID_MISMATCH",
+      "SOURCE_METADATA_INVALID",
+    ],
+  },
+  PACS_SOURCE_CAPTURE_FAILED: {
+    resourceType: "STUDY",
+    result: "FAILURE",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [
+      "SOURCE_READ_FAILED",
+      "SOURCE_CAPTURE_CANCELLED",
+      "SOURCE_CAPTURE_DEADLINE",
+      "SOURCE_CAPTURE_PERSISTENCE_FAILED",
+    ],
+  },
 });
 
 const ALLOWED_KEYS = new Set([

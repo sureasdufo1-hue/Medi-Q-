@@ -129,3 +129,41 @@ Status: PARTIAL
 |---|---|---|
 | 2026-10-01 | `PARTIAL` | Recommendation/Acceptance first; bounded canonical stream-hash sub-gate implemented and tested; integration prerequisites remain open |
 | 2026-10-02 | `PARTIAL` | `INT-001-DEC-002` and DB Acceptance recorded first; operation-bound PENDING persistence sub-gate passed DB-008 scratch; authorized retrieval and full integrity remain open |
+| 2026-10-02 | `PARTIAL` | `INT-001-DEC-003` and 14 Acceptance cases accepted before implementation. Authorized synthetic source-capture service work started; no implementation result claimed yet |
+
+## 13. Authorized Source-Capture Sub-gate — In Progress
+
+Decision and Acceptance were recorded first in `INT-001-DEC-003` and `TC-INT-001-CAP-001~014`. The implementation scope for this continuation is internal-only and synthetic/Test-only: operation-derived scope, exact fenced `PACS_IMPORT` authorization, destination PatientMapping / per-instance PatientID equality, configured A-only HTTPS WADO, bounded sequential hash with the 30-minute total deadline, fixed minimized Audit events, atomic pending evidence + success Audit, and exact permanent runtime column grants. There will be no HTTP/OpenAPI route, B call/STOW, operation state transition, destination verification, or full-P0 claim.
+
+Before code changes, this record was opened against the approved recommendation. The implementation has started and its mocked API-level tests pass; all database privilege, RLS, and live Orthanc Acceptance cases remain unverified. No CAP case is marked PASS yet.
+
+### 13.1 Implemented in this checkpoint
+
+- `AuthorizationGatedOperationExecutor.executeWithResolvedSessionFence` resolves server-owned scope inside the verified Tenant transaction, then acquires the shared Session fence and evaluates the exact Authorization context.
+- `PostgresSourceCaptureScopeRepository` derives operation → Session → Study reference → package bindings from the Tenant-visible operation graph.
+- `AuthorizedSourceCaptureService` is registered as an internal provider only. It enforces the Test A → Test B binding, `PACS_IMPORT`, `CREATED` operation state, destination PatientMapping, Study/Series/Instance count checks, per-instance PatientID equality, bounded sequential hash, a fixed 30-minute total deadline, and a second fenced authorization/mapping check before pending evidence + success Audit.
+- Source-capture Audit event/result/reason combinations are allowlisted. No HTTP route, OpenAPI change, STOW call, B-side write, operation state transition or destination verification was added.
+- New unit tests cover the executor transaction/fence sequence, mocked source-capture allow/deny/failure/concurrency and audit allowlist. API build and the 34-file/584-test API suite pass.
+
+### 13.2 Not yet verified / remaining
+
+- The exact permanent runtime column-grant migration for `integrity_evidence` and `study_references` has not been created. Until it is applied, the least-privilege runtime role may reject the service's required reads/writes; the new path is not DB-ready.
+- No disposable PostgreSQL/RLS integration has exercised the full source-capture service, authorization re-evaluation, Audit/evidence transaction atomicity, or final runtime privilege inventory.
+- No live Test Orthanc A retrieval, B zero-write proof, or active-transaction-during-WADO integration test has run. Current service-level tests use mocks and do not prove real DICOM interoperability or CAP-014.
+- Acceptance `TC-INT-001-CAP-001~014` therefore remain `PLANNED`; this implementation checkpoint is `PARTIAL`, not PASS. Next work is the least-privilege grant migration + DB tests, then Test Orthanc A/B integration before any broader PACS coordinator work.
+
+## 14. 현재 체크포인트 판정
+
+```text
+Ticket: MEDIQ-INT-001
+Scope: INT-001-DEC-003 authorized synthetic source-capture service sub-gate
+Changed: server-derived operation scope; resolved-session-fence executor; A-only WADO capture and bounded hashing; destination mapping checks; fixed Audit events; pending evidence + Audit application transaction; mocked API tests; synchronized implementation records
+Not changed: grant migration; live PostgreSQL/RLS verification; live Orthanc verification; HTTP/OpenAPI; STOW; destination verification; full A→B flow
+Security impact: fail-closed authorization and scope checks are implemented at service level; runtime least-privilege compatibility and real source boundary are not yet demonstrated
+Tests executed: `npm run test:api -- --reporter=dot` — API build passed; 34 files / 584 tests passed
+Tests not executed: final migration/catalog inventory; full-service PostgreSQL/RLS atomicity; Test Orthanc A retrieval and B zero-write; full P0 E2E
+Evidence: TEST-EVIDENCE.md
+Implementation record: IMPLEMENTATION-REPORT.md
+Remaining risks: missing permanent runtime grants; mocked rather than real DB/PACS path; CAP cases not yet passed
+Status: PARTIAL
+```

@@ -28,6 +28,11 @@ export type AuthorizationContextFactory = (
   identity: VerifiedActorTenantContext,
 ) => unknown;
 
+export type ResolvedAuthorizationContextFactory = (
+  identity: VerifiedActorTenantContext,
+  transactionClient: PoolClient,
+) => unknown;
+
 export type ProtectedOperation<T> = (
   context: AuthorizationContext,
   transactionClient: PoolClient,
@@ -48,9 +53,8 @@ function matchesVerifiedIdentity(
 }
 
 /**
- * Internal fail-closed orchestration boundary. This class is deliberately not
- * registered in a Nest module or connected to an HTTP/PACS operation until
- * trusted evidence resolution and the corresponding Acceptance gates exist.
+ * Internal fail-closed orchestration boundary. It has no HTTP route; PACS
+ * callers must use server-resolved scope and a separately accepted effect gate.
  */
 export class AuthorizationGatedOperationExecutor {
   constructor(
@@ -67,7 +71,7 @@ export class AuthorizationGatedOperationExecutor {
     return this.executeInternal(
       principal,
       tenantCandidate,
-      createContext,
+      (identity) => createContext(identity),
       operation,
       false,
     );
@@ -83,6 +87,22 @@ export class AuthorizationGatedOperationExecutor {
     return this.executeInternal(
       principal,
       tenantCandidate,
+      (identity) => createContext(identity),
+      operation,
+      true,
+    );
+  }
+
+  /** Resolves persisted resource scope in the same verified Tenant transaction before fencing. */
+  async executeWithResolvedSessionFence<T>(
+    principal: VerifiedAuthenticationPrincipal,
+    tenantCandidate: string,
+    createContext: ResolvedAuthorizationContextFactory,
+    operation: ProtectedOperation<T>,
+  ): Promise<T> {
+    return this.executeInternal(
+      principal,
+      tenantCandidate,
       createContext,
       operation,
       true,
@@ -92,7 +112,7 @@ export class AuthorizationGatedOperationExecutor {
   private async executeInternal<T>(
     principal: VerifiedAuthenticationPrincipal,
     tenantCandidate: string,
-    createContext: AuthorizationContextFactory,
+    createContext: ResolvedAuthorizationContextFactory,
     operation: ProtectedOperation<T>,
     useSessionFence: boolean,
   ): Promise<T> {
@@ -107,8 +127,9 @@ export class AuthorizationGatedOperationExecutor {
         async (identity, transactionClient) => {
           let candidate: unknown;
           try {
-            candidate = createContext(identity);
-          } catch {
+            candidate = await createContext(identity, transactionClient);
+          } catch (error) {
+            if (error instanceof ProtectedOperationUnavailableError) throw error;
             throw new AuthorizationDeniedError();
           }
 

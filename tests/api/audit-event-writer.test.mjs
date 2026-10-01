@@ -49,6 +49,12 @@ describe("AuditEvent", () => {
       ["GRANT_CREATED", "TRANSFER_GRANT", "SUCCESS", null],
       ["GRANT_REVOKED", "TRANSFER_GRANT", "SUCCESS", null],
       ["PACS_TRANSFER_FAILED", "STUDY", "FAILURE", "PATIENT_MAPPING_INVALID"],
+      ["PACS_SOURCE_CAPTURE_STARTED", "STUDY", "ALLOW", null],
+      ["PACS_SOURCE_CAPTURED", "STUDY", "SUCCESS", null],
+      ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "AUTHORIZATION_DENIED"],
+      ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "SOURCE_PATIENT_ID_MISMATCH"],
+      ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_READ_FAILED"],
+      ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_DEADLINE"],
     ];
 
     for (const [action, resourceType, result, reasonCode] of allowed) {
@@ -63,6 +69,7 @@ describe("AuditEvent", () => {
     ["resource mismatch", { action: "CONSENT_APPROVED", resourceType: "EXCHANGE_SESSION" }],
     ["GRANT_DENIED resource mismatch", { action: "GRANT_DENIED", resourceType: "TRANSFER_GRANT", result: "DENY", reasonCode: "GRANT_ISSUE_DENIED" }],
     ["unknown reason", { action: "PACS_TRANSFER_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "free text" }],
+    ["source capture free-form failure reason", { action: "PACS_SOURCE_CAPTURE_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "upstream patient TEST-PHI" }],
     ["GRANT_DENIED free-form reason", { action: "GRANT_DENIED", result: "DENY", reasonCode: "policy detail" }],
     ["missing required session", { exchangeSessionId: null }],
     ["non-UUID actor", { actorId: "TEST-ACTOR" }],

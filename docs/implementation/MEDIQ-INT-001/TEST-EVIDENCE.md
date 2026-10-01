@@ -6,7 +6,7 @@
 | 제목 | Bounded source manifest and pending evidence persistence foundation |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — hash and pending persistence sub-gates PASS; authorized product source capture NOT RUN |
+| 결과 | `PARTIAL` — hash and prior pending-persistence sub-gates PASS; authorized source-capture API unit/build tests PASS; DB privilege/RLS and Test Orthanc capture NOT RUN |
 
 ## 1. 검증 환경
 
@@ -188,3 +188,21 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 - PASS를 주장할 수 있는 범위: canonical streaming hash primitive and operation-bound `SOURCE_CAPTURE/PENDING` persistence/schema/RLS/exact scratch-grant regression only
 - No PASS claim for source authenticity, PACS retrieval, business Authorization/PatientMapping/Consent/Grant, permanent runtime grant, Audit/Provenance atomicity, destination comparison, transfer completion, or A→B E2E.
 - 실제 환자정보, 운영 Credential, Secret 및 운영 DICOM을 증거에 포함하지 않는다.
+
+## 8. Authorized Source-Capture Sub-gate — Current Checkpoint
+
+`INT-001-DEC-003` and 14 Acceptance cases were recorded before code changes. The internal source-capture service, resolved authorization/session-fence executor path, Audit allowlist, and mocked API tests are implemented. This section records only tests actually run; mocked tests do not satisfy PostgreSQL/RLS or live Test Orthanc Acceptance.
+
+| Verification | Command/evidence | Actual result | Status |
+|---|---|---|---|
+| API build + complete API regression, including new source-capture/executor/Audit unit tests | `npm run test:api -- --reporter=dot` | Exit 0; TypeScript API build passed; 34 test files / 584 tests passed | `PASS` — API/unit scope only |
+| Focused authorization, Audit, source-capture test invocation via direct `npx vitest` | `npx vitest run tests/api/authorized-source-capture.test.mjs tests/api/authorization-gated-operation.test.mjs tests/api/audit-event-writer.test.mjs --reporter=dot --maxWorkers=1` | Did not start: external npx cache failed to resolve `@jridgewell/sourcemap-codec`; repository-owned `npm run test:api` subsequently ran the full suite successfully | `TOOLING ERROR` — no test result |
+| Exact permanent runtime privilege migration/catalog inventory, RLS and atomicity | Planned: `./scripts/test-db-008-full-schema.ps1` after adding the migration | Not run; required migration is not yet present | `NOT RUN` |
+| Real Test Orthanc A WADO retrieval, B zero-write and no open DB transaction during WADO | Planned test-only integration using synthetic A/B and disposable PostgreSQL | Not run; current service tests use a mocked DICOM gateway | `NOT RUN` |
+
+### Current boundary
+
+- New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
+- `TC-INT-001-CAP-001~014` remain `PLANNED`; no source-capture Acceptance case is marked PASS.
+- The permanent runtime grant migration is outstanding. The new service is internal-only and not reachable through HTTP, but it is not ready for least-privilege runtime execution until the exact grants are added and validated.
+- No STOW, B write, destination verification or full A→B E2E was run or claimed.

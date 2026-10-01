@@ -114,6 +114,58 @@ describe("AuthorizationGatedOperationExecutor", () => {
     );
   });
 
+  it("resolves the persisted context with the verified Tenant transaction before taking the shared fence", async () => {
+    const { executor, transactionClient, policy, context } = setup();
+    const resolveContext = vi.fn(async (verifiedIdentity, client) => {
+      expect(verifiedIdentity).toEqual(identity);
+      expect(client).toBe(transactionClient);
+      await client.query("SELECT synthetic_scope");
+      return context;
+    });
+    const operation = vi.fn(async () => "synthetic-resolved-scope-result");
+
+    await expect(
+      executor.executeWithResolvedSessionFence(
+        principal,
+        identity.tenantId,
+        resolveContext,
+        operation,
+      ),
+    ).resolves.toBe("synthetic-resolved-scope-result");
+
+    expect(resolveContext).toHaveBeenCalledOnce();
+    expect(transactionClient.query).toHaveBeenNthCalledWith(1, "SELECT synthetic_scope");
+    expect(transactionClient.query).toHaveBeenNthCalledWith(
+      2,
+      "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+      [context.exchangeSessionId],
+    );
+    expect(transactionClient.query.mock.invocationCallOrder[1]).toBeLessThan(
+      policy.evaluate.mock.invocationCallOrder[0],
+    );
+    expect(policy.evaluate.mock.invocationCallOrder[0]).toBeLessThan(
+      operation.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps context resolution failures fail-closed without invoking authorization or the protected callback", async () => {
+    const { executor, policy } = setup();
+    const operation = vi.fn();
+
+    await expect(
+      executor.executeWithResolvedSessionFence(
+        principal,
+        identity.tenantId,
+        () => {
+          throw new ProtectedOperationUnavailableError();
+        },
+        operation,
+      ),
+    ).rejects.toBeInstanceOf(ProtectedOperationUnavailableError);
+    expect(policy.evaluate).not.toHaveBeenCalled();
+    expect(operation).not.toHaveBeenCalled();
+  });
+
   it("TC-PACS-001-FENCE-004 fails closed when the Session fence cannot be acquired", async () => {
     const { executor, transactionClient, policy } = setup();
     transactionClient.query.mockRejectedValueOnce(new Error("private lock detail"));
