@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DATA-MODEL.md`
-**Version:** v1.3 Synthetic Health Data Preview Amendment
+**Version:** v1.5 Durable PACS Transfer Operation Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Target RDBMS:** PostgreSQL
@@ -296,6 +296,10 @@ MediQ를 사용하는 조직의 상위 논리단위.
 | created_at        | TIMESTAMPTZ  | NOT NULL         |
 | updated_at        | TIMESTAMPTZ  | NOT NULL         |
 
+## organization_type
+
+조직 분류를 나타내는 확장 가능한 코드다. 이 값은 lifecycle status가 아니며, 현재 P0에는 유한 허용값 목록을 두지 않는다. 따라서 DB CHECK는 적용하지 않는다. 향후 카탈로그/API 검증을 추가할 때는 별도 승인 기준과 Acceptance를 정의한다.
+
 ## Status
 
 ```text
@@ -400,6 +404,31 @@ DEVELOPMENT
 
 현재 P0에서는 Production Hospital을 등록하지 않는다.
 
+## status
+
+```text
+ACTIVE
+SUSPENDED
+INACTIVE
+```
+
+```text
+CHECK status IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')
+```
+
+## Registry Ownership Consistency
+
+Hospital의 Tenant와 Organization은 동일한 Tenant Registry 행의 소유 관계를 따라야 한다.
+
+```text
+UNIQUE tenants(tenant_id, organization_id)
+FK hospitals(tenant_id, organization_id)
+  → tenants(tenant_id, organization_id)
+ON DELETE RESTRICT
+```
+
+기존 개별 FK도 유지한다. 이 복합 FK는 Registry 관계의 구조적 일관성을 강제하며 Runtime Authorization을 대신하지 않는다.
+
 ## Index
 
 ```text
@@ -451,6 +480,8 @@ UNIQUE (
 
 P0에서는 Hospital별 Endpoint Type당 하나의 활성 Endpoint를 기본으로 한다.
 
+`enabled`는 서버 측 Connector가 Registry metadata를 후보 설정으로 사용할 수 있는지 나타낸다. `true`여도 접근권한, Tenant authorization, endpoint reachability, DICOM capability 또는 제품 readiness를 증명하지 않는다. 실제 요청은 allowlisted Registry resolution, 인증·인가, Consent/Grant, action/scope, destination 및 integrity preflight를 별도로 통과해야 한다. 검증되지 않은 capability는 `enabled=false`로 유지한다.
+
 ## Index
 
 ```text
@@ -488,6 +519,33 @@ MediQ에 접근하는 User 또는 Service Identity에 대한 Application-level R
 USER
 SERVICE
 ```
+
+P0 Synthetic Patient approval은 기존 schema에 환자 인증 table을 추가하지 않는다. 테스트 OIDC issuer가 서명한 `mediq_patient_ref_id` claim과 동일 tenant의 active `USER` Actor (`hospital_id IS NULL`)를 함께 확인하고, claim을 Session/Consent의 server-owned `patient_ref_id`와 대조한다. 이 synthetic token claim은 실제 환자 신원 검증이나 법적 Consent 증거가 아니다.
+
+## status
+
+```text
+ACTIVE
+SUSPENDED
+INACTIVE
+```
+
+```text
+CHECK status IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')
+```
+
+## Registry Ownership Consistency
+
+`hospital_id`가 NULL이 아니면 Actor의 Tenant와 Hospital의 Tenant가 일치해야 한다.
+
+```text
+UNIQUE hospitals(tenant_id, hospital_id)
+FK actors(tenant_id, hospital_id)
+  → hospitals(tenant_id, hospital_id)
+ON DELETE RESTRICT
+```
+
+`hospital_id = NULL`은 Tenant-level Actor로 허용하며, 기존 단일 FK와 Tenant FK도 유지한다. 이 복합 FK는 인증·인가 또는 Tenant RLS를 대체하지 않는다.
 
 ## UNIQUE
 
@@ -550,6 +608,8 @@ INDEX status
 
 실제 주민등록번호 등은 저장하지 않는다.
 
+CAPSTONE-P0 애플리케이션에서 생성·조회하는 코드는 `PAT-001-DEC-001`에 따라 `MQ-TEST-` synthetic namespace만 허용한다. 이 prefix는 identity verification 또는 환자 본인 확인을 의미하지 않는다.
+
 ---
 
 # 13. patient_mappings
@@ -570,6 +630,8 @@ MediQ PatientReference와 Hospital-local Patient ID를 연결한다.
 | validated_at     | TIMESTAMPTZ  | NULLABLE     |
 | created_at       | TIMESTAMPTZ  | NOT NULL     |
 | updated_at       | TIMESTAMPTZ  | NOT NULL     |
+
+`validated_at`은 schema상 NULLABLE이다. 그러나 PACS Mandatory Preflight에 후보로 제출되는 mapping은 `status = VALID`와 non-null `validated_at`을 모두 만족해야 하며, 불일치는 Domain/Application validation에서 거부한다. 이 Ticket은 DB migration/CHECK constraint를 추가하지 않는다.
 
 ## Status
 
@@ -612,10 +674,11 @@ INDEX status
 
 # 14. Patient Mapping DB Rule
 
-PACS Import 가능한 Mapping:
+PACS Preflight에서 mapping 적격성을 만족하는 최소 조건:
 
 ```text
 status = VALID
+AND validated_at IS NOT NULL
 ```
 
 Application Invariant:
@@ -624,11 +687,21 @@ Application Invariant:
 UNVERIFIED
 AMBIGUOUS
 REVOKED
+VALID with validated_at = NULL
+binding mismatch
+missing or multiple candidate
 
-→ PACS_IMPORT DENY
+→ Mapping eligibility DENY
 ```
 
-이는 FK만으로 표현할 수 없으므로 Application Service와 Acceptance Test에서도 검증한다.
+Mapping eligibility `VALID`만으로 PACS_IMPORT 권한을 부여하지 않는다. Consent, Authorization, TransferGrant, destination binding, expiry, integrity/provenance 및 Mandatory Preflight는 별도로 평가해야 한다. 이 mapping 상태 조건은 단순 FK만으로 표현되지 않으므로 Application Service와 Acceptance Test에서도 검증한다. DB-level status/validated_at consistency constraint는 mapping write workflow를 설계할 때 별도 Ticket/decision으로 검토한다.
+
+## P0 Source Mapping Boundary — MEDIQ-PAT-002
+
+- P0 mapping은 `MQ-TEST-*` PatientReference와 `^TEST-[A-Z0-9]+(?:-[A-Z0-9]+)*$` 형식(최대 128자)의 합성 Hospital Local Patient ID만 사용한다. 실제 환자번호, 이름, 생년월일 등은 허용하지 않는다.
+- 이 입력 검증은 DB-003 schema를 변경하지 않는다. `PAT-002-DEC-002`는 합성 P0 내부 reader에 한해 `mediq_runtime`의 기존 승인 8개 컬럼 `SELECT`를 허용한다. Reader는 활성 IAM-002 `USER` membership, same-tenant transaction, exact verified Hospital 일치를 확인한 뒤 같은 `PoolClient`에서 조회하며, mismatch는 query 전에 거부한다. 이 migration은 write 권한 또는 HTTP/API route를 열지 않는다. broader business/API 권한은 별도 Acceptance와 권한 결정 전까지 닫는다.
+- Tenant는 `patient_mappings.hospital_id → hospitals.tenant_id` 관계로 도출한다. Client가 보낸 Tenant ID는 사용하지 않는다. RLS의 row visibility는 Actor의 Hospital membership 또는 행위 권한을 뜻하지 않는다.
+- P0에서 `VALID`는 합성 테스트 fixture의 상태만 나타낸다. 실제 환자 identity proof, PACS Import 허가 또는 다른 병원에서의 열람 권한으로 해석하지 않는다.
 
 ---
 
@@ -647,6 +720,7 @@ MediQ의 핵심 Business Transaction / Workflow Entity.
 | source_hospital_id      | UUID         | FK, NOT NULL |
 | destination_hospital_id | UUID         | FK, NOT NULL |
 | requester_actor_id      | UUID         | FK, NOT NULL |
+| idempotency_key         | UUID         | NOT NULL     |
 | purpose                 | VARCHAR(255) | NOT NULL     |
 | state                   | VARCHAR(32)  | NOT NULL     |
 | created_at              | TIMESTAMPTZ  | NOT NULL     |
@@ -678,6 +752,19 @@ source_hospital_id
 <>
 destination_hospital_id
 ```
+
+## Idempotency
+
+```text
+UNIQUE (requester_actor_id, idempotency_key)
+```
+
+The API requires a client-generated UUID `Idempotency-Key`. It is stored only
+to make Exchange creation retry-safe and is not an authorization credential.
+The key is scoped to the verified requester Actor and is never reused for a
+different normalized request. Exact duplicate retries resolve to the original
+Session; same-key/different-request attempts conflict. Correlation IDs remain
+separate observability metadata.
 
 P0는 Hospital-to-Hospital Exchange를 기본으로 한다.
 
@@ -879,6 +966,7 @@ Authorization 결과 생성되는 제한된 실행권한 Metadata.
 | recipient_tenant_id   | UUID        | FK, NOT NULL |
 | recipient_hospital_id | UUID        | FK, NOT NULL |
 | recipient_actor_id    | UUID        | FK, NULLABLE |
+| idempotency_key       | UUID        | NULLABLE; unique partial Tenant/Actor/key for issue API |
 | imaging_package_id    | UUID        | FK, NULLABLE |
 | status                | VARCHAR(20) | NOT NULL     |
 | issued_at             | TIMESTAMPTZ | NOT NULL     |
@@ -1170,6 +1258,7 @@ Source → MediQ → Destination 구간의 무결성 검증 Metadata.
 | Column                   | Type         | Constraint   |
 | ------------------------ | ------------ | ------------ |
 | integrity_id             | UUID         | PK           |
+| operation_id             | UUID         | FK, NULLABLE |
 | exchange_session_id      | UUID         | FK, NOT NULL |
 | package_id               | UUID         | FK, NOT NULL |
 | study_ref_id             | UUID         | FK, NULLABLE |
@@ -1182,6 +1271,8 @@ Source → MediQ → Destination 구간의 무결성 검증 Metadata.
 | status                   | VARCHAR(20)  | NOT NULL     |
 | verified_at              | TIMESTAMPTZ  | NULLABLE     |
 | created_at               | TIMESTAMPTZ  | NOT NULL     |
+
+`operation_id` references `pacs_transfer_operations.operation_id` with `ON DELETE RESTRICT`. A partial unique index on `(operation_id, verification_stage)` prevents duplicate stage evidence for a transfer operation while leaving older/non-operation evidence nullable. `SOURCE_CAPTURE` requires an operation, Study, algorithm `SHA256-MANIFEST-V1`, canonical `sha256:<64 lowercase hex>` digest and positive source object count. Its initial status is `PENDING`; destination fields and `verified_at` must be NULL. These constraints record a source manifest only and do not prove authorization or destination equality.
 
 ---
 
@@ -1232,6 +1323,8 @@ Application Invariant:
 Integrity = FAILED
 → PACS Transfer must not become COMPLETED
 ```
+
+The runtime role has no persistent privilege on `integrity_evidence` at this checkpoint. A future authorized capture path must obtain exact column grants only after authorization, mapping, reauthorization and atomic Audit integration are acceptance-tested. The INT-001 persistence sub-gate temporarily grants the exact columns in a disposable DB and restores the pre-run runtime inventory (209) before cleanup.
 
 ---
 
@@ -1395,6 +1488,7 @@ AUTHORIZATION_GRANTED
 AUTHORIZATION_DENIED
 
 GRANT_CREATED
+GRANT_REVOKED
 GRANT_DENIED
 
 VIEWER_OPENED
@@ -1694,6 +1788,8 @@ P0 권장:
 
 > **VARCHAR + CHECK Constraint**
 
+Registry status의 승인 허용값은 `organizations.status = ACTIVE/INACTIVE`, `tenants.status = ACTIVE/SUSPENDED/INACTIVE`, `hospitals.status = ACTIVE/SUSPENDED/INACTIVE`, `actors.status = ACTIVE/SUSPENDED/INACTIVE`다. `organization_type`은 확장 코드이므로 고정 CHECK를 두지 않는다.
+
 이유:
 
 ```text
@@ -1714,7 +1810,11 @@ organizations.organization_code
 
 tenants.tenant_code
 
+tenants(tenant_id, organization_id) — composite FK reference key
+
 hospitals.hospital_code
+
+hospitals(tenant_id, hospital_id) — composite FK reference key
 
 actors(tenant_id, external_subject)
 
@@ -2012,6 +2112,16 @@ Session → CONSENTED
 Audit CONSENT_APPROVED
 ```
 
+## Consent Withdrawal
+
+```text
+Consent UPDATE → WITHDRAWN
++ withdrawn_at / updated_at
++ Audit CONSENT_WITHDRAWN
+```
+
+The transaction uses the same Session advisory lock as request/approval, changes no ExchangeSession or TransferGrant row, and does not delete/retract data already delivered outside MediQ. Grant issuance must re-read Consent under the same lock before it can create a Grant.
+
 ---
 
 ## Grant Issuance
@@ -2095,7 +2205,7 @@ Duplicate Study inside same Package
 
 이는 Unique Constraint로 보호한다.
 
-동일 PACS Transfer의 중복 실행 방지는 향후 Transfer Operation ID 또는 Idempotency 설계에서 구체화한다.
+`PACS-007-DEC-001`에 따른 durable operation ledger는 아래의 `MEDIQ-PACS-007` amendment로 추가되었다. 그 ledger만으로 Authorization 또는 STOW 허가가 생기지는 않는다.
 
 ---
 
@@ -2549,13 +2659,25 @@ ACCEPTANCE-TESTS.md
 
 > **DB는 PK·FK·UNIQUE·CHECK를 통해 구조적 무결성을 보장하고, Consent/Grant 범위·Tenant Authorization·Patient Mapping 검증·Session State Transition 등 복수 Entity에 걸친 Business Invariant는 Application Layer와 Acceptance Test에서 강제한다.**
 
+## P0 Object Authorization Interpretation — `AUT-003-DEC-001`
+
+DB-005가 `transfer_grants.imaging_package_id`를 nullable로 정의하더라도 P0 object-level access에서는 null을 Session 전체 허용으로 확대 해석하지 않는다. Grant에는 정확한 Package binding을 요구한다. Consent package가 null인 것은 Session-level consent로 해석하되, Grant가 별도로 특정한 Package에 한해서만 허용한다.
+
+GRT-003 issue API는 P0에서 `recipient_actor_id`와 `imaging_package_id`를 실제 값으로 저장하고 Actor-scoped `idempotency_key`를 함께 기록한다. 기존 내부/레거시 Grant 행의 `idempotency_key`는 NULL로 남을 수 있다. 멱등성 키는 재시도 식별용일 뿐 접근 권한이나 Grant 조회용 bearer 값이 아니다.
+
+`recipient_actor_id`가 null인 TransferGrant는 `recipient_tenant_id`와 `recipient_hospital_id`가 지정한 Hospital-wide grant로 해석하되, 매 요청에서 IAM-002의 active Actor/Tenant/Hospital membership 및 정확한 Hospital 일치를 확인해야 한다. Actor ID가 있으면 그 Actor로 더 좁힌다. P0에는 workforce role/capability가 아직 없어 이 의미는 synthetic/test workflow에 한정한다.
+
+Authorization Context가 `SERIES` 또는 `INSTANCE`를 가리키는 경우 Storage/PACS resolver가 해당 내부 resource ID의 parent Study와 Package 관계를 동일 Exchange/Patient/Source 범위로 증명해야 한다. 현재 `study_references` schema 밖의 관계가 확인되지 않으면 거부하며 DICOM UID 자체를 권한 식별자로 사용하지 않는다.
+
+Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pair 일치는 이 원칙의 구조적 무결성 항목으로 복합 FK가 강제한다. 접근권한과 보호 Resource의 Tenant Authorization은 계속 Application Layer에서 별도로 검증한다.
+
 > **Audit, Provenance, Integrity와 같은 Security Evidence는 일반 Business Entity의 삭제로 자동 Cascade 삭제되지 않아야 한다.**
 
 ---
 
 # Viewer Persistence Amendment — 2026-09-15
 
-P0 17-table baseline은 유지한다. Viewer 개정만으로 새 영구 Table을 추가하지 않는다.
+현재 승인된 P0 baseline은 PACS-007 amendment를 포함한 18개 persistent table이다. Viewer 개정만으로 새 영구 Table을 추가하지 않는다.
 
 ## P0 Persistence Mapping
 
@@ -2569,7 +2691,7 @@ P0 17-table baseline은 유지한다. Viewer 개정만으로 새 영구 Table을
 
 별도의 `viewer_sessions` 또는 `temporary_imaging_objects` Table은 다음 조건을 모두 만족할 때만 후속 Migration으로 제안한다.
 
-1. 기존 17개 Table과 runtime session store로 Acceptance Criteria를 충족할 수 없다.
+1. 기존 18개 Table과 runtime session store로 Acceptance Criteria를 충족할 수 없다.
 2. Tenant/Grant/Study binding과 purge evidence를 DB constraint로 강화할 명확한 필요가 있다.
 3. `DATA-MODEL.md`, `ERD.md`, Migration, OpenAPI, Acceptance Test가 함께 갱신된다.
 
@@ -2581,7 +2703,7 @@ P1 Mobile Vault의 DICOM Binary는 모바일 기기의 암호화 Local Storage�
 
 # P1 Mobile Security Logical Data Amendment — 2026-09-15
 
-P0 PostgreSQL 17-table baseline과 현재 Migration은 변경하지 않는다. P1 구현 Ticket에서 Schema Change Gate를 통과할 때 다음 최소 Metadata를 정규화한다.
+P0 PostgreSQL 18-table baseline과 현재 Migration은 변경하지 않는다. P1 구현 Ticket에서 Schema Change Gate를 통과할 때 다음 최소 Metadata를 정규화한다.
 
 ## devices 후보 필드
 
@@ -2705,3 +2827,67 @@ Data invariants:
 - 삭제가 Audit/Provenance Evidence를 Cascade 삭제하지 않도록 한다.
 
 실제 Schema는 `MEDIQ-HCW-*` 구현 Ticket에서 Domain, ERD, OpenAPI, Migration과 Acceptance를 함께 승인한다.
+
+---
+
+# P0 Database Access and Tenant RLS Amendment — 2026-09-30
+
+## Runtime privilege model
+
+The application runtime role is not a table/schema owner and receives no business-table access by default. Each approved implementation Ticket grants only the exact column/table operations it needs; broad `PUBLIC` and default grants are prohibited. Runtime DDL, ownership changes, `TRUNCATE`, and migration-ledger access remain denied.
+
+## Tenant RLS model
+
+Tenant-owned or Tenant-participating rows are protected with PostgreSQL RLS (`ENABLE` + `FORCE`). A row with direct `tenant_id` uses that value. Related rows without the column derive participation only through their approved owner relationship: Hospital for registry/mapping rows, or ExchangeSession for Consent, Grant, Imaging, Integrity, Provenance, and Audit-linked data. An A↔B session may be visible to its two participating Tenants for workflow continuity; the row-visibility exception does not grant an action. Tenant C remains excluded.
+
+Tenant context is server-derived from verified identity and set transaction-locally by a backend transaction wrapper. Missing or invalid context is fail-closed, and context must not survive commit/rollback or connection-pool reuse. The context is not trusted from client input. RLS is defense-in-depth, not business Authorization or protection against arbitrary SQL under the same runtime login; see `DB-009-DEC-001` and `SEC-DB-006`.
+
+For P0 Actor resolution, a request Tenant value is only an untrusted membership-selection candidate. Within a transaction-local RLS scope, the backend must match the exact configured OIDC issuer and verified `external_subject` to an `ACTIVE` Actor in the candidate Tenant, and require the Tenant and optional owning Hospital to be `ACTIVE`. Only the Registry match may populate the immutable Actor/Tenant/Hospital context; the candidate alone never authorizes work. `actors.external_subject` is scoped to one configured P0 issuer; multi-issuer identity requires a separately reviewed issuer+subject model.
+
+## Global synthetic PatientReference exception
+
+`patient_refs` remains a globally shared canonical namespace because a single MediQ reference may link hospital-local mappings across Tenant boundaries. In CAPSTONE-P0 it stores only `MQ-TEST-*` synthetic codes; a database CHECK and the domain validator must enforce the same grammar. Its limited runtime access is approved-column `SELECT` and `INSERT` only, without update/delete/truncate or a public route. It is intentionally not Tenant-RLS protected. This does not authorize real patient identity, demographics, unrestricted lookup, or production use. Before any such expansion, revise Domain/Data/ERD, identity and privacy controls, and Acceptance as a separately approved scope decision.
+
+## Ticket gate
+
+`MEDIQ-DB-009` implements the P0 explicit `patient_refs` column grant, synthetic-code CHECK and 16 Tenant policies; its database privilege/RLS Acceptance and PAT-001 synthetic runtime integration passed on disposable PostgreSQL. `IAM-002-DEC-001` separately authorizes only the Actor/Tenant/Hospital resolver columns needed for authenticated membership lookup. `PAT-002-DEC-002` adds one narrow exception: eight `patient_mappings` columns are readable only by an internal path with verified active USER membership and exact Hospital match; it does not enable mapping writes or a route. Other Tenant-scoped business routes and image operations remain prohibited until object/action Authorization and their individual grants/Acceptance pass. Acceptance is tracked in `ACCEPTANCE-TESTS.md` as `TC-DB-009-*`, `TC-IAM-002-*` and `TC-PAT-002-*`.
+
+---
+
+# P0 Durable PACS Transfer Operation Amendment — 2026-10-01
+
+`PACS-007-DEC-001` and `MEDIQ-PACS-007` add `pacs_transfer_operations` as the 18th approved P0 product table. It stores only durable operation/control metadata; it is not a transfer permission or DICOM payload store.
+
+| Column | Type / nullability | Purpose |
+|---|---|---|
+| `operation_id` | UUID, PK | Internal operation identifier |
+| `tenant_id` | UUID, FK → `tenants` | Owning Tenant and RLS key |
+| `exchange_session_id` | UUID, FK → `exchange_sessions` | Exchange boundary |
+| `study_ref_id` | UUID, FK → `study_references` | Single Study boundary |
+| `actor_id` | UUID, FK → `actors` | Verified initiator reference |
+| `idempotency_key` | UUID | Actor/Tenant-scoped request key |
+| `request_digest` | VARCHAR(64) | Canonical semantic fingerprint; raw Consent/Grant/action request is not stored here |
+| `state` | VARCHAR(32) | Durable transfer operation state |
+| `version` | INTEGER, default 0 | Optimistic CAS version |
+| `reason_code` | VARCHAR(64), nullable | Minimized state reason |
+| `source_object_count` | INTEGER, nullable | Source count metadata |
+| `destination_object_count` | INTEGER, nullable | Destination verification count metadata |
+| `created_at`, `updated_at` | timestamptz | State lifecycle timestamps |
+| `stow_started_at` | timestamptz, nullable | Dispatch claim timestamp; no STOW is enabled by this table |
+
+Unique keys are `(exchange_session_id, study_ref_id)` and `(tenant_id, actor_id, idempotency_key)`. The table also checks state/version/digest/count/timestamp consistency and completed-count consistency. A trigger enforces initial `CREATED/version=0`, immutable operation binding, one-step version increments and the approved transition graph; direct SQL cannot skip the `PREFLIGHT_PASSED` state before `STOW_STARTED`. This transition-order check does not prove the underlying Mandatory Preflight facts were actually validated; only a future trusted coordinator may advance after checking them.
+
+The runtime role receives only 15 `SELECT`, 15 `INSERT`, and 7 `UPDATE` column privileges for this table, with no `DELETE`, table-wide, `PUBLIC`, default, DDL or `TRUNCATE` access. RLS is enabled and forced. A Tenant row is visible only under transaction-local matching Tenant context and valid Actor/Session owner bindings. At the PACS-007 checkpoint the full inventory was 183 column privileges across 18 product tables; after migration `0020_lazy_magneto.sql`, the current verified inventory is 209 (see `MEDIQ-PROV-001/TEST-EVIDENCE.md`).
+
+Audit state-change metadata is written in the caller's same Tenant transaction. A failed Audit insert must roll the operation mutation back. `RESULT_UNKNOWN` is durable and cannot be retried or transitioned back to dispatch. This schema does not implement the future bounded read-only reconciliation resolver.
+
+
+## P0 Operation-bound Provenance Amendment — 2026-10-01
+
+`PROV-001-DEC-001` adds nullable `provenance_records.operation_id` referencing `pacs_transfer_operations.operation_id` with `ON DELETE RESTRICT`, plus a partial unique index for non-null operation IDs. Every `PACS_IMPORT` row must have `operation_id`, `destination_hospital_id`, and `study_ref_id`; non-PACS rows remain nullable for compatibility. A PACS operation has at most one Provenance record.
+
+The runtime writer derives Session, Package, Study, Source Hospital and Destination Hospital by joining the persisted PACS operation to ExchangeSession and StudyReference under the verified Tenant transaction. It accepts no patient/hospital/package/study identity or result status from a request. It creates only `PENDING` rows for operation states `CREATED` or `PREFLIGHT_PASSED`; exact operation replay returns the same row. It has exact 13-column `SELECT` and 13-column `INSERT`, no `UPDATE`/`DELETE`, and Forced Tenant RLS. This increments the expected runtime column-privilege inventory from 183 to 209; the live catalog is the final evidence.
+
+This record contains metadata only: it adds no DICOM payload, Hospital-local Patient ID, PACS endpoint credential, raw PACS response, or DEK/KEK. It is not authorization or evidence that dispatch, receipt, integrity, or audit completed. The current catalog count and operation binding are verified by the disposable DB-008 gate.
+
+`PENDING` is bookkeeping and does not claim that PACS transfer started, succeeded, or passed integrity. Operation dispatch, Audit atomicity, source/destination hashes, verification and terminal Provenance transitions remain later gates.

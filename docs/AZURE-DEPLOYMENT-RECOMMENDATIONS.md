@@ -274,8 +274,8 @@ RLS는 Tenant Isolation의 defense-in-depth 후보로 권고하지만 애플리�
 | MEDIQ-CLOUD-005 | POST-MVP | Test Orthanc Connectivity PoC | MEDIQ-CLOUD-002 |
 | MEDIQ-CLOUD-006 | POST-MVP | Azure E2E 및 Security Negative Test | MEDIQ-CLOUD-003~005 |
 | MEDIQ-CONN-001 | PRODUCTIONIZATION | Hospital-side Outbound Connector/VPN 결정 | 실제 기관 협의 |
-| MEDIQ-DB-001 | POST-MVP | PostgreSQL RLS 설계·Migration·Pool Isolation Test | Core DB 안정화 |
-| MEDIQ-AUD-001 | PRODUCTIONIZATION | Audit Hash Chain/WORM/SIEM | P0 Audit PASS |
+| MEDIQ-RLS-001 | POST-MVP | PostgreSQL RLS 설계·Migration·Pool Isolation Test | Core DB 안정화 |
+| MEDIQ-AUD-HARDEN-001 | PRODUCTIONIZATION | Audit Hash Chain/WORM/SIEM | P0 Audit PASS |
 
 평가 요구로 Azure가 필수가 되면 Ticket 분류를 조용히 변경하지 않고 `CAPSTONE-MVP-BOUNDARY.md`의 Scope Decision을 먼저 개정한다.
 

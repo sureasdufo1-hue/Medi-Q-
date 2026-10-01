@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `REQUIREMENTS.md`
-**Version:** v1.8 Synthetic Patient Explanation RAG Amendment
+**Version:** v1.10 PACS Import Identity and Retry Preconditions
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Status:** Approved Baseline
@@ -316,7 +316,7 @@ Hospital Local ID
 MediQ Patient Reference
 ```
 
-**Acceptance:** `TC-PAT-001-PLANNED`
+**Acceptance:** `TC-PAT-001-DOM-001~002`, `TC-PAT-001-PER-001~003`, `TC-PAT-001-SEC-001`
 **Traceability:** Product Baseline → Patient Reference
 
 ---
@@ -328,7 +328,11 @@ MediQ Patient Reference
 
 시스템은 Source Hospital의 Local Patient ID와 MediQ Patient Reference 간 Mapping을 유지해야 한다.
 
-**Acceptance:** `TC-PAT-002-PLANNED`
+P0에서는 합성 `MQ-TEST-*` PatientReference와 `^TEST-[A-Z0-9]+(?:-[A-Z0-9]+)*$` 형식(총 128자 이하)의 합성 Hospital Local Patient ID만 사용한다. Mapping은 해당 Hospital에 속한 관계로 저장하며, Tenant는 Hospital Registry 관계에서 도출한다. 요청이 전달한 Tenant/Actor/Hospital 값은 권한 근거가 아니다. `VALID` 상태는 P0 합성 fixture에서 명시적으로 승인된 매핑 상태일 뿐 실제 환자 본인확인이나 의료기관 대조를 의미하지 않는다.
+
+이 요구사항은 저장소 구현을 의미하며 인증·인가 없는 공개 CRUD API를 허용하지 않는다. `PAT-002-DEC-002`에 따라 `mediq_runtime`에는 기존 승인 8개 컬럼의 `SELECT`만 부여하고, 활성 IAM-002 `USER` membership의 verified Tenant/Hospital transaction 안에서 같은 Hospital mapping을 읽는 내부 경로만 허용한다. 요청 Hospital이 verified Hospital과 다르면 mapping query 전에 거부하고 조회에는 verified Hospital ID를 사용한다. 이 제한은 mapping read에만 해당하며 PatientMapping write, role-based administration, Controller/API route, 실제 환자정보·영상 열람 또는 PACS 행위는 허용하지 않는다. 별도 HTTP/API Gate가 통과하기 전까지 Tenant-bound route는 금지한다. `VALID` 상태나 이 mapping read 자체는 환자 신원 증명, 임상 동일인 판정 또는 영상 업무 Authorization이 아니다.
+
+**Acceptance:** `TC-PAT-002-GATE-001`, `TC-PAT-002-DOM-001~002`, `TC-PAT-002-PER-001~002`, `TC-PAT-002-TEN-001~002`, `TC-PAT-002-SEC-001~003`
 
 ---
 
@@ -337,9 +341,9 @@ MediQ Patient Reference
 **Classification:** CAPSTONE-P0
 **Priority:** MUST
 
-PACS_IMPORT 수행 시 MediQ Patient Reference와 Destination Hospital Local Patient ID의 Mapping을 확인할 수 있어야 한다.
+PACS_IMPORT을 위한 Mandatory Preflight에서 서버가 해석한 MediQ Patient Reference와 Destination Hospital의 binding에 맞는 PatientMapping 후보를 확인해야 한다. Mapping 자체가 `VALID`이고 검증 시각이 있어야 적격 판정을 받을 수 있다. 이 요구사항은 Consent·Authorization·TransferGrant 검증이나 Import 허가를 대체하지 않는다.
 
-**Acceptance:** `TC-PAT-003-PLANNED`
+**Acceptance:** `TC-PAT-003-DOM-001~008` (순수 Domain 판정만; HTTP·DB 조회·PACS Import는 별도 Gate)
 
 ---
 
@@ -359,7 +363,7 @@ Mapping Missing
 
 또는 명시적인 Mapping 절차를 요구해야 한다.
 
-**Acceptance:** `TC-PAT-004-PLANNED`
+**Acceptance:** `TC-PAT-003-DOM-002~006` (Domain denial only); `TC-PAT-004-PER-001~005` (mocked repository-to-domain denial only); `AT-SEC-012` PACS no-STOW integration remains pending under `MEDIQ-PACS-004`
 
 ---
 
@@ -383,7 +387,7 @@ Mapping Missing
 
 새로운 의료영상 교환 요청마다 고유한 Exchange Session을 생성해야 한다.
 
-**Acceptance:** `TC-EXC-001-PLANNED`
+**Acceptance:** `TC-EXC-001-DOM-001~002`; `AT-FUNC-001`; `TC-EXC-003-API-001~012`; `TC-EXC-003-DB-001~006`
 
 ---
 
@@ -403,7 +407,7 @@ state
 created_at
 ```
 
-**Acceptance:** `TC-EXC-002-PLANNED`
+**Acceptance:** `TC-EXC-001-DOM-001, TC-EXC-001-DOM-003~004`; `AT-FUNC-001`; `TC-EXC-003-API-001~012`
 
 ---
 
@@ -448,9 +452,10 @@ REJECTED
 EXPIRED
 REVOKED
 FAILED
+CANCELLED
 ```
 
-**Acceptance:** `TC-EXC-005-PLANNED`
+**Acceptance:** `TC-EXC-005-DOM-001~004`; API/persistence workflow enforcement remains gated and separately planned
 
 ---
 
@@ -465,6 +470,17 @@ FAILED
 
 ---
 
+## REQ-EXC-007 — Exchange 생성 재시도 멱등성
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Exchange 생성 API는 verified requester Actor에 묶인 필수 UUID `Idempotency-Key`를 받아야 한다. 같은 Actor와 key, 같은 요청의 재시도는 기존 Session 결과를 반환하고, 같은 key를 다른 요청 내용에 재사용하면 고정 Conflict로 거부해야 한다. Correlation ID는 idempotency 보장으로 취급하지 않는다.
+
+**Acceptance:** `TC-EXC-003-API-006~008`, `TC-EXC-003-DB-003~004`
+
+---
+
 # 10. Consent Requirements
 
 ## REQ-CON-001 — Consent Artifact
@@ -474,7 +490,7 @@ FAILED
 
 Consent를 단순 Boolean 값이 아닌 독립적인 Artifact로 관리해야 한다.
 
-**Acceptance:** `TC-CON-001-PLANNED`
+**Acceptance:** `TC-CON-001-DOM-001~002`, `TC-CON-001-DOM-008` (domain shape only; no consent/authorization approval)
 
 ---
 
@@ -496,7 +512,7 @@ status
 timestamp
 ```
 
-**Acceptance:** `TC-CON-002-PLANNED`
+**Acceptance:** `TC-CON-001-DOM-003~007` (context/action/resource/version/time shape only)
 
 ---
 
@@ -512,7 +528,7 @@ NO CONSENT
 → DENY
 ```
 
-**Acceptance:** `TC-CON-003-PLANNED`
+**Acceptance:** `TC-CON-008-AUT-001~003` verifies missing-Consent denial at the internal synthetic PostgreSQL evidence-reader→Authorization-gated operation boundary for the three P0 actions; it does not verify a Grant issuance API or product HTTP/image route. Grant-issuance denial remains a separate open gate. `TC-CON-004-API-001~010` covers only the synthetic technical approval state transition.
 
 ---
 
@@ -527,7 +543,7 @@ Consent Artifact는 최소한 동의 철회 상태를 표현할 수 있어야 �
 
 철회된 Consent를 근거로 신규 Grant를 발급해서는 안 된다.
 
-**Acceptance:** `TC-CON-004-PLANNED`
+**Acceptance:** `AT-FUNC-007`; `TC-CON-005-API-001~013` (synthetic claim-bound API and atomic Audit only); `TC-CON-008-AUT-004~006` verifies that a still-ACTIVE linked Grant cannot pass the internal protected-operation boundary after Consent withdrawal. Grant issuance and product HTTP/image paths remain separate gates; no legal-consent or remote-recall claim is made.
 
 ---
 
@@ -538,7 +554,20 @@ Consent Artifact는 최소한 동의 철회 상태를 표현할 수 있어야 �
 
 현재 Consent 기능은 Technical Workflow PoC로 취급하며 실제 법적 동의 효력 완료 상태로 표시해서는 안 된다.
 
-**Acceptance:** `TC-CON-005-PLANNED`
+**Acceptance:** `TC-CON-001-DOM-008` (technical artifact boundary only; UI/API legal consent status remains a separate gate)
+
+---
+
+## REQ-CON-006 — P0 Consent Allowed Action Boundary
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+P0 Authorization은 Consent의 `allowedActions`가 `VIEW`, `DOWNLOAD`, `PACS_IMPORT` 중 하나 이상의 고유하고 지원되는 값으로만 구성되었는지 확인해야 한다. 요청 Action은 Consent에 정확히 포함되어야 하며 Grant Scope는 `VIEW → study:view`, `DOWNLOAD → study:download`, `PACS_IMPORT → study:pacs-transfer`의 정확한 일대일 대응이어야 한다. `MOBILE_EXPORT`, 알 수 없는/중복 Action, 허용되지 않은 추가·불일치 Grant Scope가 evidence에 있으면 전체 Authorization 결과는 `DENY`한다.
+
+이 기준은 P0 pure policy의 동작이며 HTTP 보호 경로, Grant 발급 endpoint 또는 PACS side effect가 구현·검증되었음을 뜻하지 않는다.
+
+**Acceptance:** `TC-CON-006-AUTH-001~005` (pure Authorization policy only); HTTP/object integration remains `AT-SEC-003`.
 
 ---
 
@@ -563,7 +592,7 @@ Consent
 Grant
 ```
 
-**Acceptance:** `TC-AUT-001-PLANNED`
+**Acceptance:** `TC-AUT-001-CTX-001~005`
 
 ---
 
@@ -581,7 +610,7 @@ DENY
 
 중 하나로 결정되어야 한다.
 
-**Acceptance:** `TC-AUT-002-PLANNED`
+**Acceptance:** `TC-AUT-002-DD-001~006`
 
 ---
 
@@ -597,7 +626,29 @@ Uncertain Authorization
 → DENY
 ```
 
-**Acceptance:** `TC-AUT-003-PLANNED`
+**Acceptance:** `TC-AUT-004-APP-001~004` (application orchestration boundary) and `TC-AUT-004-FC-001~004` (HTTP/data/side-effect integration; separate and required before protected routes). The evaluator contract is separately `TC-AUT-002-DD-001~006`.
+
+---
+
+## REQ-AUT-004 — Object-Level Authorization
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+객체 식별자를 알고 있거나 Tenant RLS에서 행을 볼 수 있다는 사실만으로 업무 Resource를 허용하지 않는다. Actor, Tenant, Hospital, Session, Patient, Source/Destination, Consent, Grant, Resource/Package, Action/Scope, 상태 및 만료의 server-resolved binding이 모두 요청과 일치해야 한다. 증거가 없거나 서로 모순되면 `DENY`한다.
+
+**Acceptance:** `TC-AUT-003-OBJ-001~012` (pure policy contract); protected HTTP object-access `AT-SEC-003` remains an integration gate.
+
+---
+
+## REQ-AUT-005 — Trusted Authorization Evidence
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Authorization Policy의 Session, Consent/Action, TransferGrant/Scope, ImagingPackage 및 Resource facts는 서버 소유 persistence에서 검증된 Tenant transaction 안에서 조회해야 한다. Request body, query, header 또는 client-provided claims의 facts는 정책 근거로 신뢰하지 않는다. 조회 행이 없거나 binding이 불완전·모순되거나 조회에 실패하면 `DENY`한다. 현재 persistence가 parent binding을 증명하지 못하는 `SERIES`/`INSTANCE` 요청도 거부한다.
+
+**Acceptance:** `TC-AUT-005-DB-001~007` (synthetic PostgreSQL/runtime-role integration); protected HTTP/BOLA remains a separate gate.
 
 ---
 
@@ -610,7 +661,7 @@ Uncertain Authorization
 
 Transfer Grant는 Resource 및 Action Scope가 제한된 권한 객체여야 한다.
 
-**Acceptance:** `TC-GRT-001-PLANNED`
+**Acceptance:** `TC-GRT-001-DOM-001~010` (immutable synthetic P0 domain metadata only) and `TC-GRT-002-PER-001~008` (internal persistence/reconstitution only; scratch-only test privileges, no product issuance/Authorization claim)
 
 ---
 
@@ -627,7 +678,7 @@ study:download
 study:pacs-transfer
 ```
 
-**Acceptance:** `TC-GRT-002-PLANNED`
+**Acceptance:** `TC-GRT-001-DOM-005` (P0 scope shape) and `TC-GRT-002-PER-002/003` (persisted P0 scope round-trip only; no scope-to-action enforcement claim)
 
 ---
 
@@ -644,7 +695,9 @@ Hospital-B Grant
 → DENY
 ```
 
-**Acceptance:** `TC-GRT-003-PLANNED`
+**Acceptance:** `TC-GRT-003-API-001/003/004/005`; issue-time binding only. Protected operation authorization remains a separate Acceptance.
+
+P0 issuance must bind the Grant to the verified destination Tenant/Hospital/Actor and to the Session requester. Recipient identity is derived from the verified context and Session, never accepted from request-body values. A Hospital-wide/null-Actor Grant is not issued by this endpoint.
 
 ---
 
@@ -661,7 +714,7 @@ study:view
 → DENY
 ```
 
-**Acceptance:** `TC-GRT-004-PLANNED`
+**Acceptance:** `TC-GRT-005-AUTH-001~008` (pure shared object-authorization policy; see `GRT-005-DEC-001`; protected route and side-effect gates remain separate)
 
 ---
 
@@ -672,7 +725,7 @@ study:view
 
 만료된 Grant를 사용한 접근은 거부해야 한다.
 
-**Acceptance:** `TC-GRT-005-PLANNED`
+**Acceptance:** `TC-GRT-007-EXP-001~008` (PASS — strict server-time expiry policy and issuance cap; HTTP operation gates separate)
 
 ---
 
@@ -691,7 +744,35 @@ Password
 Hardware Key
 ```
 
-**Acceptance:** `TC-GRT-006-PLANNED`
+**Acceptance:** `TC-GRT-006-PAY-001~004` (PASS — domain and controller response allowlist only; no DICOM/key storage)
+
+---
+
+## REQ-GRT-007 — Consent-bound Grant issuance
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Grant 발급은 `CONSENTED`·유효 Session, 정확히 결속된 ACTIVE·미철회·미만료 Consent, Consent action의 P0 scope 대응, 유효한 동일 Patient/Source/Session ImagingPackage, 검증된 목적지 Hospital의 Session requester를 모두 확인해야 한다. Grant는 non-null exact Package와 recipient Actor에 binding한다. Recipient와 expiry는 서버가 결정하며 TTL은 30분 이하이고 Session/Consent 만료를 넘지 않는다. 동일 Idempotency-Key의 동일 request는 같은 Grant를 재응답하고, 다른 request의 key 재사용은 conflict다. Parent/Scope와 Audit은 한 transaction에서 처리한다.
+
+Grant 발급 성공 자체는 Viewer, Download 또는 PACS import 권한을 수행하지 않는다. 각 영상 작업은 이후 별도의 object/action Authorization 및 Preflight를 통과해야 한다.
+
+**Acceptance:** `TC-GRT-003-API-001~020`; `TC-GRT-003-DB-001~006`.
+
+**Execution evidence (2026-10-01):** All 26 scoped GRT-003 API/DB Acceptance cases passed. Verification: API 23 files/442 tests, API typecheck, migration consistency, DB-008 clean/reset-reapply signed-OIDC PostgreSQL/RLS integration twice (8/8 TAP each), exact runtime privilege inventory 144, and DB-002~007 regressions. This does not establish Viewer/Download/PACS operation authorization, revocation, or the full A→B E2E path; see [MEDIQ-GRT-003 evidence](implementation/MEDIQ-GRT-003/TEST-EVIDENCE.md).
+
+---
+
+## REQ-GRT-008 — Recipient-bound Grant revocation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+An ACTIVE TransferGrant must be revocable by its exact verified recipient USER Actor. The request must bind the authenticated Tenant, Hospital, Actor, route Session, and Grant; caller-supplied identity/state values are not authoritative. Revocation must remain available when Consent is withdrawn/expired, Session is terminal/expired, or the Grant expiry has elapsed, provided the Grant is still ACTIVE. It must set only `status=REVOKED` and server-generated `revoked_at`, preserve scopes and history, and write one success Audit atomically.
+
+Repeating a successful revocation is an idempotent no-op: preserve the original `revoked_at`, return the current Grant, and create no duplicate success Audit. Concurrent requests must create at most one state transition and one success Audit. Revocation of EXPIRED/CONSUMED Grant states is a fixed conflict. This metadata transition does not guarantee recall of offline copies or terminate already-running Viewer/Download/PACS operations; those operations require their own status revalidation/fencing.
+
+**Acceptance:** `TC-GRT-004-REV-API-001~012`; `TC-GRT-004-REV-DB-001~004`; `AT-FUNC-009`.
 
 ---
 
@@ -889,7 +970,9 @@ PACS Import에는 `study:pacs-transfer` Scope가 필요해야 한다.
 
 PACS Import 전 Destination Patient Mapping이 확인되어야 한다.
 
-**Acceptance:** `TC-PACS-003-PLANNED`
+P0 byte-preserving transfer additionally requires every source DICOM instance's validated PatientID to exactly equal the server-resolved destination mapping's `localPatientId`. If identity evidence is absent, malformed, inconsistent across instances, or mismatched, the transfer must be denied before STOW. P0 does not rewrite DICOM identity attributes and this rule does not establish real-world patient identity.
+
+**Acceptance:** `TC-PACS-004-MAP-001~003` (mapping eligibility); `TC-PACS-001-PID-001~002` (synthetic byte-preserving identity preflight); `TC-PACS-001-PID-003` and `AT-SEC-012` (coordinator no-STOW) remain NOT RUN.
 
 ---
 
@@ -900,7 +983,9 @@ PACS Import 전 Destination Patient Mapping이 확인되어야 한다.
 
 PACS Transfer의 성공 또는 실패 결과를 Session 및 Audit에서 확인할 수 있어야 한다.
 
-**Acceptance:** `TC-PACS-004-PLANNED`
+STOW response loss/timeout after a request may have started must be represented as an unknown outcome, not as success or safe-to-retry failure. The same semantic operation must not start a second STOW while its prior result remains unresolved; resolve it through read-only destination reconciliation.
+
+**Acceptance:** `TC-PACS-007-*` verifies durable operation state/idempotency and the unknown-outcome no-retry boundary; PACS coordinator/result delivery and destination reconciliation are still required for full REQ-PACS-004 acceptance.
 
 ---
 
@@ -1003,7 +1088,7 @@ ACCESS_DENIED
 SESSION_COMPLETED
 ```
 
-**Acceptance:** `TC-AUD-001-PLANNED`
+**Acceptance:** `TC-AUD-001-WRITER-001~009` covers the common metadata-only writer and current call paths; `TC-AUD-002-EVENT-001~008` covers only verified-Tenant Grant issue/revocation denials. `TC-CON-007-AUD-001~005` remains Consent-specific context evidence. Broader event completeness remains `TC-AUD-001-PLANNED` / `STC-AUD-001-PLANNED`.
 
 ---
 
@@ -1088,7 +1173,7 @@ Provenance 정보에서 해당 Transfer의 Integrity Verification 결과를 참�
 
 Bit-preserving P0 Test Scenario에서 Source와 Destination Imaging Object의 무결성을 검증할 수 있어야 한다.
 
-**Acceptance:** `TC-INT-001-PLANNED`
+**Acceptance:** `TC-INT-001-HASH-001~008` (hash primitive only; end-to-end Source→MediQ→Destination verification remains NOT RUN)
 
 ---
 
@@ -1367,17 +1452,31 @@ Mobile Secure Vault
 | REQ-SYS-001   | P0    | P0 Product Scope         | TC-SYS-001-PLANNED   |
 | REQ-SYS-002   | P0    | Data Boundary            | TC-DATA-001-PLANNED  |
 | REQ-ORG-001   | P0    | Hospital                 | TC-ORG-001-PLANNED   |
-| REQ-PAT-001   | P0    | Patient Reference        | TC-PAT-001-PLANNED   |
-| REQ-PAT-004   | P0    | Patient Mapping          | TC-PAT-004-PLANNED   |
-| REQ-EXC-001   | P0    | Exchange Session         | TC-EXC-001-PLANNED   |
-| REQ-EXC-005   | P0    | Session Lifecycle        | TC-EXC-005-PLANNED   |
-| REQ-CON-001   | P0    | Consent Artifact         | TC-CON-001-PLANNED   |
-| REQ-CON-003   | P0    | Consent Enforcement      | TC-CON-003-PLANNED   |
-| REQ-AUT-001   | P0    | Explicit Authorization   | TC-AUT-001-PLANNED   |
-| REQ-AUT-003   | P0    | Fail Closed              | TC-AUT-003-PLANNED   |
-| REQ-GRT-002   | P0    | Access Scope             | TC-GRT-002-PLANNED   |
-| REQ-GRT-003   | P0    | Recipient Binding        | TC-GRT-003-PLANNED   |
-| REQ-GRT-004   | P0    | Scope Enforcement        | TC-GRT-004-PLANNED   |
+| REQ-PAT-001   | P0    | Patient Reference        | TC-PAT-001-DOM-001~002 / PER-001~003 / SEC-001 |
+| REQ-PAT-002   | P0    | Source Patient Mapping   | TC-PAT-002-GATE-001 / DOM-001~002 / PER-001~002 / TEN-001~002 / SEC-001~003 |
+| REQ-PAT-003   | P0    | Destination Mapping     | TC-PAT-003-DOM-001~008 (domain only; no API/PACS claim) |
+| REQ-PAT-004   | P0    | Patient Mapping          | `TC-PAT-003-DOM-002~006` (domain); `TC-PAT-004-PER-001~005` (mocked persistence); `AT-SEC-012` pending PACS-004 |
+| REQ-EXC-001   | P0    | Exchange Session         | TC-EXC-001-DOM-001~002 / AT-FUNC-001 / TC-EXC-003-API-001~005 |
+| REQ-EXC-002   | P0    | Session Core Context     | TC-EXC-001-DOM-001, DOM-003~004 / AT-FUNC-001 / TC-EXC-003-API-001~005 |
+| REQ-EXC-005   | P0    | Session Lifecycle        | TC-EXC-005-DOM-001~004 (domain only; runtime enforcement gated) |
+| REQ-EXC-007   | P0    | Exchange Creation Retry Safety | TC-EXC-003-API-006~008 / TC-EXC-003-DB-003~004 |
+| REQ-CON-001   | P0    | Consent Artifact         | TC-CON-001-DOM-001~002, DOM-008 (domain); `TC-CON-002-DB-001/005`; `TC-CON-003-API-001/007` (synthetic PENDING API only) |
+| REQ-CON-002   | P0    | Consent Context          | TC-CON-001-DOM-003~007 (domain); `TC-CON-002-DB-004`; `TC-CON-003-API-001/002/004` (server-owned Session binding) |
+| REQ-CON-005   | P0    | Technical Consent Boundary | TC-CON-001-DOM-008; `TC-CON-002-DB-001/006`; `TC-CON-003-API-001/008` (PENDING-only, no identity/legal/Authorization claim) |
+| REQ-CON-003   | P0    | Consent Enforcement      | `TC-CON-003-PLANNED` (Grant deny remains open); `TC-CON-004-API-001~010` (synthetic technical approval only) |
+| REQ-CON-004   | P0    | Consent Withdrawal      | `AT-FUNC-007`; `TC-CON-005-API-001~013` (synthetic technical withdrawal only) |
+| REQ-CON-006   | P0    | P0 Allowed Action Boundary | `TC-CON-006-AUTH-001~005` (pure policy only; no Grant/API integration claim) |
+| REQ-AUT-001   | P0    | Explicit Authorization   | TC-AUT-001-CTX-001~005 (context shape only; decision remains AUT-002~004) |
+| REQ-AUT-002   | P0    | Allow/Deny result        | TC-AUT-002-DD-001~006 (evaluator contract; no business policy) |
+| REQ-AUT-003   | P0    | Fail Closed              | TC-AUT-004-APP-001~004 (application boundary); TC-AUT-004-FC-001~004 (HTTP integration pending) |
+| REQ-AUT-004   | P0    | Object-Level Authorization | TC-AUT-003-OBJ-001~012 (policy contract; HTTP BOLA remains AT-SEC-003) |
+| REQ-AUT-005   | P0    | Trusted Authorization Evidence | TC-AUT-005-DB-001~007 (synthetic DB integration; no HTTP route) |
+| REQ-GRT-002   | P0    | Access Scope             | `TC-GRT-001-DOM-005`; `TC-GRT-003-API-002/008` |
+| REQ-GRT-003   | P0    | Recipient Binding        | `TC-GRT-003-API-001~005` |
+| REQ-GRT-004   | P0    | Scope Enforcement        | `TC-GRT-005-AUTH-001~008` (PASS — shared pure policy only; protected routes remain separate) |
+| REQ-GRT-005   | P0    | Expiration               | `TC-GRT-007-EXP-001~008` (PASS — strict server-time policy and issue TTL cap; protected operation remains separate) |
+| REQ-GRT-007   | P0    | Consent-bound Grant Issue | `TC-GRT-003-API-001~020`; `TC-GRT-003-DB-001~006` |
+| REQ-GRT-008   | P0    | Recipient-bound Grant revocation | `TC-GRT-004-REV-API-001~012`; `TC-GRT-004-REV-DB-001~004` |
 | REQ-IMG-001   | P0    | Imaging Package          | TC-IMG-001-PLANNED   |
 | REQ-DICOM-001 | P0    | QIDO-RS                  | TC-DICOM-001-PLANNED |
 | REQ-DICOM-002 | P0    | WADO-RS                  | TC-DICOM-002-PLANNED |
@@ -1385,11 +1484,14 @@ Mobile Secure Vault
 | REQ-VIEW-001  | P0    | VIEW                     | TC-VIEW-001-PLANNED  |
 | REQ-DWN-001   | P0    | DOWNLOAD                 | TC-DWN-001-PLANNED   |
 | REQ-PACS-001  | P0    | PACS_IMPORT              | TC-PACS-001-PLANNED  |
+| REQ-PACS-002  | P0    | Transfer Scope           | TC-PACS-002-PLANNED  |
+| REQ-PACS-003  | P0    | Destination/PatientID Binding | `TC-PACS-004-MAP-001~003`; `TC-PACS-001-PID-001/002` scoped PASS; `TC-PACS-001-PID-003` and `AT-SEC-012` coordinator no-STOW remain NOT RUN |
+| REQ-PACS-004  | P0    | Transfer Result/Unknown Outcome | `TC-PACS-007-*` scoped durable-state Acceptance PASS; coordinator/reconciliation/live transfer NOT RUN |
 | REQ-PACS-005  | P0    | Destination Verification | TC-PACS-005-PLANNED  |
 | REQ-TEN-002   | P0    | Tenant Isolation         | TC-TEN-002-PLANNED   |
 | REQ-AUD-001   | P0    | Audit                    | TC-AUD-001-PLANNED   |
 | REQ-PROV-002  | P0    | Provenance               | TC-PROV-002-PLANNED  |
-| REQ-INT-001   | P0    | Integrity                | TC-INT-001-PLANNED   |
+| REQ-INT-001   | P0    | Integrity                | `TC-INT-001-HASH-001~008` primitive PASS; end-to-end NOT RUN |
 | REQ-ERR-004   | P0    | Fail Closed              | TC-ERR-004-PLANNED   |
 | REQ-MOB-001   | P1    | Mobile Secure Vault      | TC-MOB-001-PLANNED   |
 
@@ -1948,7 +2050,7 @@ QR API는 공통 인증·Error·Correlation·Idempotency 계약을 재사용하�
 ## 34.4 Scope and implementation boundary
 
 - QR Handoff와 Mobile Secure Vault는 `CAPSTONE-P1`이며 P0 완료를 차단하지 않는다.
-- 기존 P0 `OPENAPI.yaml`, P0 17-table baseline 및 P0 성공조건은 본 Amendment로 자동 변경되지 않는다.
+- 기존 P0 `OPENAPI.yaml`, 현재 18-table baseline 및 P0 성공조건은 본 Amendment로 자동 변경되지 않는다.
 - P1 구현 전에 별도 Mobile/QR OpenAPI, Database Migration, 구현 Ticket 및 실행 가능한 Acceptance Test가 승인되어야 한다.
 - QR은 영상 전송 프로토콜이 아니다. 실제 영상 조회·전송은 기존 HTTPS/DICOMweb WADO-RS/STOW-RS 경로를 사용한다.
 - Mobile App과 Browser는 Hospital PACS를 직접 호출하지 않는다.

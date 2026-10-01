@@ -1,0 +1,160 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790691952668,
+      "tag": "0000_framework-baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790694735264,
+      "tag": "0001_registry-core",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790696119950,
+      "tag": "0002_patient-identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790696976076,
+      "tag": "0003_exchange-session",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790698035044,
+      "tag": "0004_imaging-metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790700321453,
+      "tag": "0005_consent-grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790701981060,
+      "tag": "0006_integrity-provenance-audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790722540448,
+      "tag": "0007_registry-owner-consistency",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790732043369,
+      "tag": "0008_black_mandrill",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790748260000,
+      "tag": "0009_identity_context_column_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790758320000,
+      "tag": "0010_authorization_evidence_column_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790790000000,
+      "tag": "0011_patient_mapping_read_column_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790790000001,
+      "tag": "0012_graceful_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790790000002,
+      "tag": "0013_consent_request_column_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790790000003,
+      "tag": "0014_consent_approval_column_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790790000004,
+      "tag": "0015_consent_withdrawal_column_grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790806322108,
+      "tag": "0016_grant_issue_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790806322109,
+      "tag": "0017_grant_revocation_column_update",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790834246545,
+      "tag": "0018_smiling_shooting_star",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790834406981,
+      "tag": "0019_violet_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790863920623,
+      "tag": "0020_lazy_magneto",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790873841789,
+      "tag": "0021_source_integrity_operation_binding",
+      "breakpoints": true
+    }
+  ]
+}

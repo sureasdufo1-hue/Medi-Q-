@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DOMAIN-MODEL.md`
-**Version:** v1.3 Synthetic Health Data Preview Amendment
+**Version:** v1.4 Destination PatientMapping Validation Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Status:** Approved Baseline
@@ -448,7 +448,7 @@ REVOKED
 
 ### INV-PAT-005
 
-PACS_IMPORT 수행에 사용되는 Destination Mapping은 `VALID` 상태여야 한다.
+PACS_IMPORT의 Mandatory Preflight에서 사용하는 Destination Mapping은 `VALID` 상태이고 `validatedAt`이 존재해야 한다. 이 불변조건은 PatientMapping의 적격성만 뜻하며 Consent, Authorization, TransferGrant 또는 PACS Import 허가를 대신하지 않는다.
 
 ### INV-PAT-006
 
@@ -638,6 +638,8 @@ allowed_actions
 
 status
 
+consent_version
+
 issued_at
 
 expires_at
@@ -648,7 +650,6 @@ withdrawn_at
 Future Extension:
 
 ```text
-consent_version
 policy_version
 evidence_reference
 ```
@@ -735,11 +736,52 @@ Valid Consent
 Automatic Access
 ```
 
+### INV-CON-008
+
+Consent는 최소 하나의 서로 다른 P0 Action을 명시해야 한다. P0 Domain이 허용하는 Action은 `VIEW`, `DOWNLOAD`, `PACS_IMPORT`다. 같은 Action을 중복 기록하거나 P1 `MOBILE_EXPORT`를 P0 Consent로 만들 수 없다.
+
+### INV-CON-009
+
+Consent version은 Session 안에서 양의 정수 버전으로 관리한다. Domain은 전달받은 version의 형식만 검증하며, session 내 중복 방지와 동시 version 할당은 Persistence/Application 경계가 보장해야 한다.
+
+### INV-CON-010
+
+새 Consent Artifact는 항상 `PENDING`으로 생성되며 동의 evidence의 생성만으로 권한이 생기지 않는다. `ACTIVE` 여부의 업무 전이는 별도 승인 use case가 수행하고, 신규 Grant는 Consent와 독립적인 Authorization 및 Grant 검증을 통과해야 한다.
+
+### CON-001 Domain Boundary
+
+P0 `ConsentArtifact`는 immutable domain snapshot으로, `consent_version`과 정규화된 Action 목록(`consent_actions`)을 가진다. nullable `imaging_package_id`는 Session-level Consent scope를 표현할 수 있으나, Session 전체 리소스의 자동 허용이나 Grant 발급을 뜻하지 않는다. Source와 Destination은 달라야 한다. Domain은 유효한 식별자·허용 status/action·version·timestamp shape와 `updated_at >= created_at`를 검증한다.
+
+CON-001의 `create`는 서버 UUID와 `PENDING` status를 발급한다. `reconstitute`는 저장된 schema status를 shape 검증 후 복원한다. 이 Ticket은 state transition, 승인 주체, 법적 동의 효력, Persistence, API, Audit 또는 Access Authorization을 구현하지 않는다. `ACTIVE` row의 업무 적격성은 별도 Consent/Authorization service가 현재 시각·철회·만료·Session·Resource·Recipient를 검사해야 한다.
+
+`MEDIQ-CON-002` assigns the positive Consent version inside a same-client verified Tenant transaction and persists only a new `PENDING` snapshot plus its declared P0 action set. The existing Session/version UNIQUE constraint remains the final duplicate guard. Persistence, reconstitution, version allocation, action rows, or database visibility do not represent patient identity, informed/legal consent, approval, Authorization, or a TransferGrant. Approval/withdrawal transitions and access decisions belong to later, separately accepted use cases.
+
+### Synthetic Technical Approval Amendment — 2026-10-01
+
+The `MEDIQ-CON-004` synthetic approval use case may transition an immutable `ConsentArtifact` from `PENDING` to `ACTIVE` only after the server verifies a trusted signed OIDC `mediq_patient_ref_id` claim against the exact server-owned Session and Consent PatientReference. This is synthetic test identity binding, not patient identity proof or legal consent. `ACTIVE` technical state remains separate from Authorization and TransferGrant. Approval must also transition the Session `CONSENT_PENDING→CONSENTED` and append Audit atomically; stale/expired/mismatched states fail closed.
+
+### Synthetic Technical Withdrawal Amendment — 2026-10-01
+
+The `MEDIQ-CON-005` synthetic withdrawal use case may transition an immutable Consent snapshot from `ACTIVE` with `withdrawnAt=null` to `WITHDRAWN` with `withdrawnAt=now` only when a verified signed OIDC `mediq_patient_ref_id` claim exactly matches the server-owned Session and Consent. The operation may be performed after Consent/Session expiry or terminal ExchangeSession state so the technical withdrawal record is not blocked by elapsed time. A repeated exact withdrawal is an idempotent replay. Consent state and the `CONSENT_WITHDRAWN` Audit are atomic. Session state, Grant rows, and imaging payload are unchanged; future Authorization must re-read Consent and deny `WITHDRAWN`. This is not legal withdrawal proof, remote revocation of downloaded/offline data, or recall of a completed PACS transfer.
+
 ---
 
 # 19. Authorization Decision
 
 Authorization은 별도의 영속 Entity로 반드시 구현해야 하는 것은 아니지만 Domain Decision으로 명시한다.
+
+P0 Authorization Context는 비영속 value object이며 다음 입력을 묶는다.
+
+```text
+Verified Actor/Tenant/optional Hospital context (IAM-002 output)
+ExchangeSession UUID
+MediQ internal Resource kind + UUID
+Requested Action: VIEW | DOWNLOAD | PACS_IMPORT
+Server-resolved Consent UUID
+Server-resolved TransferGrant UUID
+```
+
+Context는 서버가 내부 조회로 구성한다. ID 형식이 유효하거나 Context가 생성됐다는 사실만으로 Entity의 존재·상태·binding 또는 접근권한이 증명되지 않는다. Client-supplied ID는 조회 selector일 뿐이며, Context 생성은 Authorization `ALLOW`가 아니다. 본 Context는 영속 Authorization Decision Entity를 추가하지 않는다.
 
 입력:
 
@@ -791,6 +833,22 @@ Policy Evaluation 실패 시 `FAIL CLOSED`를 적용한다.
 POLICY ERROR
 → DENY
 ```
+
+P0 evaluator 결과는 정확히 `ALLOW` 또는 `DENY`다. Valid context와 policy 결과가 모두 확인되지 않거나 policy가 등록되지 않은 경우 `DENY`한다. Policy 결과가 정확한 `ALLOW`인 경우에만 결과를 `ALLOW`로 생성하며, `true`, truthy value, 누락·미지원 값 또는 평가 예외는 모두 `DENY`다. 이 invariant와 AUT-003 pure policy acceptance만으로 trusted facts resolution, HTTP data-return denial 또는 side-effect prevention이 입증되는 것은 아니다.
+
+### P0 Object Authorization Policy — `MEDIQ-AUT-003`
+
+`ALLOW`는 IAM-002가 검증한 수신 Tenant/Hospital의 Context와 내부 조회한 증거가 전부 일치할 때만 가능하다.
+
+- Exchange Session ID, patient, source/destination hospital이 Context·Consent·Resource binding 전체에서 일치해야 하고, Session은 `AUTHORIZED`, `READY`, `ACTIVE` 중 하나여야 하며 설정된 expiry가 미래여야 한다.
+- Consent는 Context ID와 같고 같은 Session·Patient·Source·Destination에 결속되어야 한다. Status는 `ACTIVE`, `issuedAt`은 존재하고 미래가 아니며 `withdrawnAt`은 null이어야 한다. 설정된 Consent expiry는 미래여야 한다. Nullable expiry는 예정 만료 없음으로 해석한다. Consent Action에 요청 Action이 정확히 포함되어야 한다.
+- P0 Consent action evidence에는 `VIEW`, `DOWNLOAD`, `PACS_IMPORT`만 허용한다. `MOBILE_EXPORT`, 알 수 없는 값 또는 중복값이 섞인 action list는 요청된 P0 Action이 들어 있어도 deny한다. Grant scope는 각 P0 Action의 정확한 1:1 대응만 허용하고, 추가 scope 전체가 Consent Action에 포함되어야 한다.
+- Grant는 Context ID 및 Consent/Session과 일치하고 `ACTIVE`, 미철회이며 `issuedAt <= now < expiresAt`이어야 한다. Recipient Tenant/Hospital은 검증된 Context와 Session destination에 정확히 일치해야 한다. Actor ID가 지정된 Grant는 정확히 일치해야 한다. null Actor는 해당 active Hospital membership 전체에 한정한 synthetic-P0 hospital-level grant다.
+- P0 Grant는 정확한 비-null Imaging Package ID로 제한한다. Consent에 Package가 지정되어 있으면 같은 Package여야 한다. Scope는 `VIEW → study:view`, `DOWNLOAD → study:download`, `PACS_IMPORT → study:pacs-transfer`의 정확한 대응만 허용한다.
+- Resource resolver는 internal kind/ID를 같은 Session·Patient·Source Hospital 및 Package의 Study로 연결해야 한다. Package는 `AVAILABLE`/`IN_EXCHANGE`, 미삭제, 미만료여야 한다. SERIES/INSTANCE에는 검증 가능한 parent Study binding이 필요하고, 누락 시 deny한다.
+- 누락·잘못된 값·지원하지 않는 Action/scope·모순된 snapshot·resolver 오류는 모두 deny한다. 이 policy는 Resource를 반환하지 않고 Viewer/Download/PACS/Preflight/Audit side effect를 발생시키지 않는다. PACS import는 별도의 Mandatory Preflight를 반드시 통과해야 한다.
+
+Consent/Grant/Resource snapshot은 향후 동일 서버 transaction/read-consistent lookup에서 만들어져야 한다. Domain policy Acceptance만으로 DB row provenance, API route, HTTP denial, 실제 데이터 미반환 또는 PACS 부작용 부재가 입증되는 것은 아니다.
 
 ---
 
@@ -934,6 +992,20 @@ Private Key
 
 Long-lived Secret
 ```
+
+## P0 TransferGrant Domain Contract — `GRT-001-DEC-001`
+
+`TransferGrant` is an immutable technical metadata entity. Its in-memory construction or reconstitution is not an Authorization `ALLOW`, patient Consent, persisted Grant issuance, or bearer capability. The P0 entity preserves exact Session/Consent/recipient/resource references and accepts only the P0 scope allowlist `study:view`, `study:download`, and `study:pacs-transfer`; P1 `study:mobile-export` is rejected even though the shared persistence schema can represent it.
+
+`recipientActorId` and `imagingPackageId` may be null only to preserve the approved persistence model. A null Actor represents Hospital-level binding metadata, not authorization without active tenant/hospital membership. A null Package is not a session-wide Study permission; the existing P0 Authorization rule still requires exact Package binding for protected object access. Cross-entity relationships must be checked by server-owned Application/Authorization paths, not inferred by this entity.
+
+The four persisted statuses remain readable. `CONSUMED` is terminal compatibility state only; P0 does not implement one-time Grant consumption. `isTemporallyActiveAt` checks only status and the half-open `[issuedAt, expiresAt)` interval and is never sufficient to authorize an operation. No DICOM payload, patient-local identifier, cryptographic key, password, private key, or long-lived secret belongs in the entity.
+
+### Internal Persistence Boundary — `GRT-002-DEC-001`
+
+The internal repository accepts only an `ACTIVE` domain Grant for first insertion and stores the parent metadata plus its P0 scope rows atomically within a SAVEPOINT on the caller's IAM-002 verified Tenant transaction. Reconstitution reads only rows visible under existing PostgreSQL RLS and rejects a missing/invalid P0 scope set rather than repairing or widening it. The repository does not evaluate Authorization, revalidate Consent, prove Actor/Hospital/Package relationships, revoke or consume a Grant, or expose an HTTP/API capability. DB-008 integration evidence uses exact temporary column privileges in a disposable synthetic database; the product `mediq_runtime` role retains its 126-column privilege baseline and cannot persist Grants.
+
+The statement above describes the GRT-002 checkpoint only. After GRT-003, the runtime inventory is 144 exact column privileges and the issue API can create a consent-bound Grant; it remains an authorization metadata artifact rather than image access. GRT-004 adds a separate exact-recipient revocation workflow. The repository/domain helper does not itself verify caller identity or operation-time Authorization; route/application checks and transaction context remain mandatory. `CONSUMED` stays compatibility-only and is not changed by revocation.
 
 ---
 
@@ -1234,6 +1306,8 @@ Integrity Verification 결과를 Provenance와 연결할 수 있어야 한다.
 
 P0는 Bit-preserving Scenario를 우선한다.
 
+An initial `SOURCE_CAPTURE` snapshot is linked to a durable PACS operation, Study, Session and ImagingPackage. Its `PENDING` status means the source manifest is available for a later comparison; it is not source authorization, a destination match, or transfer success. The persistence sub-gate does not expose a caller or DICOM retrieval path.
+
 ---
 
 # 40. Integrity States
@@ -1336,6 +1410,8 @@ AUTHORIZATION_GRANTED
 AUTHORIZATION_DENIED
 
 GRANT_CREATED
+
+GRANT_REVOKED
 
 GRANT_DENIED
 
@@ -2177,13 +2253,13 @@ purged_at
 
 ## P1 Mobile Extension
 
-`SecureMedicalCapsule`과 `MobileVault`는 P1 extension이다. Mobile Viewer는 Source PACS의 live path가 아니라 환자 기기에 저장된 암호화 Local Copy를 연다. P0 17-table baseline을 자동으로 확장하지 않는다.
+`SecureMedicalCapsule`과 `MobileVault`는 P1 extension이다. Mobile Viewer는 Source PACS의 live path가 아니라 환자 기기에 저장된 암호화 Local Copy를 연다. 현재 P0 18-table baseline을 자동으로 확장하지 않는다.
 
 ---
 
 # P1 Mobile Security Domain Amendment — 2026-09-15
 
-P1 Mobile MVP는 다음 논리적 Domain Object를 사용한다. 이는 P0 Aggregate와 17-table baseline을 변경하지 않으며 구현 Ticket 승인 전까지 논리 모델이다.
+P1 Mobile MVP는 다음 논리적 Domain Object를 사용한다. 이는 P0 Aggregate와 현재 18-table baseline을 변경하지 않으며 구현 Ticket 승인 전까지 논리 모델이다.
 
 ## MobileDevice
 
@@ -2322,3 +2398,61 @@ disclaimer
 7. P1 객체는 DICOM Pixel, PACS Credential, Secret 또는 장기 Cloud Imaging Copy를 소유하지 않는다.
 
 정식 상태와 전이는 `hospital-workflow/HOSPITAL-CLINICAL-WORKFLOW-P1-SPEC.md`를 따른다. Persistence와 API는 구현 Ticket 승인 전 논리 모델이다.
+
+---
+
+# P0 Durable PACS Transfer Operation Domain Amendment — 2026-10-01
+
+`PACS-007-DEC-001` adds the following persisted Domain Entity before an effect-capable PACS coordinator. This aggregate is a durable workflow record only; it is not Consent, Authorization, TransferGrant or permission to access/send an image.
+
+## PacsTransferOperation
+
+```text
+operation_id
+tenant_id
+exchange_session_id
+study_ref_id
+actor_id
+idempotency_key
+request_digest
+state
+version
+reason_code?
+source_object_count?
+destination_object_count?
+created_at
+updated_at
+stow_started_at?
+```
+
+The semantic digest is server-canonical over Tenant, verified Actor, Session, Study, Consent reference, Grant reference and exact `PACS_IMPORT` action. Consent/Grant/action are not copied into raw request columns; future authorization must re-resolve current evidence at the side-effect fence.
+
+## State Machine
+
+```text
+CREATED → PREFLIGHT_PASSED | DENIED | FAILED
+PREFLIGHT_PASSED → STOW_STARTED | DENIED | FAILED
+STOW_STARTED → VERIFYING | FAILED | PARTIAL | RESULT_UNKNOWN
+VERIFYING → COMPLETED | FAILED | PARTIAL | RESULT_UNKNOWN
+RESULT_UNKNOWN: terminal for this Ticket; no blind retry or dispatch transition
+```
+
+The aggregate and database trigger reject illegal transitions, immutable-binding changes, stale `version`, and direct SQL jumps that bypass the Preflight state. State mutation and metadata-only Audit must commit in the same verified Tenant transaction. No transaction is held open during future DICOM streaming.
+
+### Invariants
+
+- `INV-PACS-007-001`: At most one operation exists for one ExchangeSession/Study pair.
+- `INV-PACS-007-002`: An idempotency key is unique within verified Tenant + Actor; exact semantic replay returns the durable operation, while changed semantics conflict.
+- `INV-PACS-007-003`: `version` advances by exactly one per legal compare-and-set transition; stale concurrent writers do not win.
+- `INV-PACS-007-004`: A failed Audit insertion rolls the state mutation back.
+- `INV-PACS-007-005`: `RESULT_UNKNOWN` remains durable and cannot be changed to dispatch/completed without a separately designed, evidence-based reconciliation path.
+- `INV-PACS-007-006`: This Entity contains no DICOM payload, local Patient ID, endpoint credential or raw patient detail and does not itself authorize transfer.
+- `INV-PACS-007-007`: No product route, DICOM call or STOW is registered by PACS-007. Full Mandatory Preflight and operation-time Authorization are still required before any side effect.
+
+Schema details are in `DATA-MODEL.md` and relationships in `ERD.md`. Scoped PostgreSQL/RLS Acceptance is recorded under `MEDIQ-PACS-007`; the product transfer workflow remains incomplete.
+
+## P0 Operation-bound Pending Provenance Amendment — 2026-10-01
+
+`PROV-001-DEC-001` makes every `PACS_IMPORT` Provenance record refer to one durable `PacsTransferOperation`. One operation may have at most one such record. Its internal writer accepts only the persisted operation identifier and derives the rest of the immutable binding from the authorized same-Tenant database transaction. The initial status is always `PENDING`; it is not a transfer result and never implies authorization, dispatch, successful STOW, destination verification, or integrity.
+
+Only an operation in `CREATED` or `PREFLIGHT_PASSED` may receive a first-time row. Replay returns the existing row. A missing late row is not backfilled after dispatch could have started. Status transitions and all source/destination evidence remain reserved for a separately accepted transfer coordinator.

@@ -182,7 +182,7 @@ flowchart LR
 | SAAS-SCR-035 Consent 만료·불일치 / P0 | 031~033→new request | expired/version/destination/action mismatch | fail-closed, 새 요청 안내 | ErrorResponse | CONSENT_DENIED; AT-SEC-004/005 |
 | SAAS-SCR-036 Transfer Grant 발급 / P0 | active Consent→037 | current Authorization ALLOW, exact action/resource/recipient | scope·recipient·expiry 확인; 별도 발급 CTA | issue Grant EXISTING P0 | GRANT_CREATED; AT-FUNC-008 |
 | SAAS-SCR-037 Transfer Grant 상태 / P0 | 012/036→action/038 | owner/recipient binding | ACTIVE/EXPIRED/REVOKED/CONSUMED; action별 badge | GET via Exchange/Grant GAP 일부 | scope 자동확대 금지; grant tests |
-| SAAS-SCR-038 Transfer Grant 철회 / P0 | 037→037 | authorized issuer/policy | 대상·영향 확인, completed transfer 삭제 아님 | revoke Grant EXISTING P0 | GRANT_REVOKED; AT-FUNC-009 |
+| SAAS-SCR-038 Transfer Grant 철회 / P0 | 037→037 | exact verified destination USER recipient Actor/Tenant/Hospital and matching Session/Grant | 대상·범위 확인, already-revoked replay, offline/in-flight 회수 불가 안내 | `revokeTransferGrant` OpenAPI contract; implementation evidence required | GRANT_REVOKED; `TC-GRT-004-REV-API-*`; AT-FUNC-009 |
 | SAAS-SCR-039 Authorization 거부 / P0 | any action deny→012 | explicit backend DENY/UNKNOWN | 정책 세부 없이 사유범주·다음 행동 | authorization result | AUTHORIZATION_DENIED; AT-SEC-017 |
 
 ## 6.5 Cloud Viewer
@@ -196,7 +196,7 @@ flowchart LR
 | SAAS-SCR-044 W/L·Zoom·Pan / P0 | 042→042 | same session | controls+gesture alternatives; no diagnostic guarantee | client renderer | Pixel buffer memory only; VIEWER_TOOL_USED optional |
 | SAAS-SCR-045 Viewer Session 만료 / P0 | 042→040/024 | server expiry | 즉시 frame 중지·화면 제거·재승인 | GET Viewer Session | VIEWER_EXPIRED; TC-VIEW-007 |
 | SAAS-SCR-046 Source PACS/Frame 오류 / P0 | 042→retry/024 | normalized WADO error | frame retry/close; 영구 copy fallback 없음 | Viewer Gateway error | VIEWER_UPSTREAM_FAILED; TC-VIEW-009 |
-| SAAS-SCR-047 Consent·Grant 철회 종료 / P0 | 042→039/024 | revoke/deny event or poll result | 즉시 중지, `권한이 변경됨`; stale frame 제거 | Viewer status/revalidation | VIEWER_DENIED/CLOSED; security negative tests |
+| SAAS-SCR-047 Consent·Grant 철회 종료 / P0 | 042→039/024 | persisted status checked at a later protected request | 다음 retrieval/action은 deny; 이미 전달된 frame/다운로드 또는 진행 중 STOW를 즉시 회수한다고 표시하지 않음 | Future operation-time revalidation/fencing (GRT-004 alone does not prove it) | VIEWER_DENIED/CLOSED only after separate operation gate |
 
 ## 6.6 DICOM Download
 

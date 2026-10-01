@@ -980,7 +980,7 @@ Frontend 검사는 보안 경계가 아니다. DevTools로 버튼을 활성화�
 | WEB-07 | `POST .../consents/{consentId}/approve` | `approveConsent` | Matching PatientReference | Consent ACTIVE | 403 Denied, 409 상태 충돌 |
 | WEB-07 | `POST .../consents/{consentId}/withdraw` | `withdrawConsent` | Matching PatientReference | Consent WITHDRAWN | 403 Denied, 409 상태 충돌 |
 | Grant panel | `POST .../grants/issue` | `issueTransferGrant` | ACTIVE Consent, allowed scope | TransferGrant | 403 scope/recipient Denied, 409 Conflict |
-| Grant panel | `POST .../grants/{grantId}/revoke` | `revokeTransferGrant` | Authorized Grant | TransferGrant | 403 Denied, 409 상태 충돌 |
+| Grant panel | `POST .../grants/{grantId}/revoke` | `revokeTransferGrant` | Exact verified recipient USER/Tenant/Hospital/Session binding | TransferGrant (`no-store`; idempotent already-revoked replay) | 403 Denied, 409 terminal state, 503 rollback; no offline/in-flight recall claim |
 | WEB-08 | `POST .../actions/view` | `authorizeViewerAccess` | `study:view` | ViewerAccess | 403 Denied, 409 Conflict, 502 PACS failure |
 | WEB-08 | `GET /viewer-sessions/{viewerSessionId}` | `getViewerSession` | Actor/resource binding | state | 403 Denied, 404 Not Found, 410 Expired |
 | WEB-08 | `GET .../instances/{sopInstanceUid}` | `retrieveViewerDicomInstance` | `study:view` + binding | DICOM binary | 403 Denied, 410 Expired, 502 PACS failure |

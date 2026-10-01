@@ -23,6 +23,21 @@ Inspect first
 
 > Synthetic/Test DICOM이 Hospital A Test Orthanc에서 MediQ의 Patient Mapping·Consent·Authorization·Scoped Transfer Grant 검증을 통과하여 Hospital B Test Orthanc에 STOW-RS로 전달되고, Destination Verification·Integrity·Provenance·Audit까지 PASS해야 한다.
 
+## 1.1 권고안 기반 정책 결정 및 기록
+
+사용자의 상시 지침(2026-09-30, 재확인 2026-10-01 및 2026-10-02)에 따라 프로젝트 범위 내 미결 정책은 매번 별도 승인을 기다리지 않고 근거에 기반한 권고안을 선택하여 진행한다. 정책이나 사전 승인이 필요한 작업을 만나면 먼저 권고안 초안(채택안·대안·근거·영향·범위·잔여 위험)을 작성하고, 구현 전에 관련 Acceptance 조건과 검증 방법을 문서화한다. 그 다음 승인된 범위 안에서 권고안을 기준으로 작업을 진행하며, 매 단계마다 같은 승인을 다시 요청하지 않는다. 문서 변경만으로 충분하지 않은 구현 Ticket은 별도 구현 기록·실제 시험 증거도 함께 작성한다.
+
+각 결정 기록에는 최소 다음을 포함한다.
+
+- 결정 ID, 날짜, 적용 상태 및 근거/권한
+- 채택한 권고안과 고려한 대안
+- 선택 이유, 적용 범위, 보안·데이터·운영 영향
+- 갱신한 normative 문서, 구현 Ticket, 검증 증거
+
+Acceptance에는 성공·실패·거부 경로, 보안 불변조건, 시험 데이터/환경 및 완료 판정 범위를 적는다. 권고안이 현재 승인 범위 안에서 적용 불가능하거나 제품 범위를 넓히거나, 명시적 보안 불변조건을 약화하거나, PHI·실제 운영 자격증명을 요구하거나, 외부 운영환경에 의미 있는 변경을 일으키면 현재 안전 기준을 유지하고 해당 부분은 실행 전에 사용자 선택을 요청한다. 사용자가 별도로 명시한 승인 Gate는 그대로 따른다.
+
+이 상시 지침은 승인된 제품 범위를 넓히거나, 명시적 보안 불변조건을 약화하거나, 실제 환자정보·운영 자격증명 사용 및 외부 운영환경 변경을 허용하지 않는다. 그런 경계에 걸리면 안전한 현재 기준선을 유지하고 제한 사유와 권고안을 기록한다. 사용자의 구체적 후속 지시는 이 기본 권고안보다 우선한다.
+
 ## 2. 작업 시작 전 필수 확인
 
 1. 저장소 상태와 기존 변경사항을 확인한다.
@@ -56,6 +71,7 @@ Inspect first
    - `docs/ACCEPTANCE-TESTS.md`
    - `docs/IMPLEMENTATION-PLAN.md`
    - `docs/implementation/README.md`
+   - `docs/POLICY-DECISION-LOG.md` — 미결 정책, 채택 권고안 및 대안·근거 확인
 3. 명시된 `MEDIQ-*` Ticket 또는 작업 범위를 확인한다.
 4. 의존성, 영향받는 Tenant 경계, 관련 Acceptance Test를 확인한다.
 5. 코드·설정·Migration·API·Schema·테스트를 변경하는 작업이면 `docs/implementation/<TICKET>/` 기록을 생성하거나 기존 기록을 연다.

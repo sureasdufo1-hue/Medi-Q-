@@ -17,6 +17,7 @@ node_modules/
 dist/
 build/
 .venv/
+.venv-env007/
 venv/
 __pycache__/
 *.py[cod]
@@ -28,4 +29,3 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
-

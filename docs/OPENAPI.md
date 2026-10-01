@@ -340,13 +340,16 @@ paths:
       tags: [Grant]
       operationId: revokeTransferGrant
       summary: Revoke transfer grant
+      x-mediq-requirements: [REQ-GRT-008]
+      x-mediq-security: [SEC-GRANT-009]
+      description: Only the verified exact recipient USER may revoke. Consent/Session expiry does not block revocation. Replays preserve the original revokedAt; offline copies and in-flight image operations are not remotely recalled.
       parameters:
         - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/GrantId'
         - $ref: '#/components/parameters/CorrelationId'
       responses:
         '200':
-          description: Grant revoked
+          description: Grant revoked or idempotent replay (`Cache-Control: no-store`)
           content:
             application/json:
               schema:
@@ -357,6 +360,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}/actions/view:
     post:

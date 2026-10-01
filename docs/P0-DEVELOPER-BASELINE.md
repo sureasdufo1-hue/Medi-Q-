@@ -2,9 +2,19 @@
 
 **작성일:** 2026-09-28 · **제출 목표:** 2026-10-05
 
+**최신 Ticket 갱신 (2026-10-01):** `MEDIQ-CON-006`은 권고안·요구사항·보안 기준·5 Acceptance를 먼저 기록한 뒤 pure P0 Authorization policy 범위에서 scoped PASS했다. `MOBILE_EXPORT`가 valid P0 Consent action과 혼합된 evidence도 거부하며, exact action/scope map을 검증했다. API 20 files/373 tests, typecheck, `git diff --check` 통과. API/DB/PACS 경로와 권한은 추가되지 않았으며 전체 P0 readiness는 계속 BLOCKED다. 이전 CON-005 DB/withdrawal checkpoint와 ledger=16/runtime grants=126는 각각 CON-005 evidence의 권위가 유지된다.
+
+**이전 Ticket 갱신 (2026-10-01, CON-002 checkpoint):** `MEDIQ-CON-002`는 `CON-002-DEC-001` 및 `TC-CON-002-DB-001~007`을 먼저 기록한 후 internal synthetic PENDING Consent persistence/versioning 범위에서 PASS했다. API 20 files/355 tests, API typecheck, DB-008 scratch 및 DB-002~007 regressions 통과; 임시 privilege inventory 120에서 당시 baseline 100으로 복원했다. 이 결과는 legal Consent, patient identity, Authorization, Grant 또는 접근 API를 의미하지 않는다. 이후 `MEDIQ-CON-003`도 별도 사전 권고안·범위·Acceptance에 따라 완료했다. 이 문단은 CON-002 당시 결과다.
+
 **문서 성격:** 승인 기준의 실행 요약 및 개발 인계 안내. 독립적인 요구사항·API·보안 규격이 아니다.
 
-**현재 상태:** `MEDIQ-ENV-002` workspace, `MEDIQ-ENV-003` Compose config, `MEDIQ-ENV-004` PostgreSQL startup·health·내부 network 연결은 각각 Ticket 범위 PASS. Orthanc·제품 코드·Migration·P0 Acceptance는 미구현·미실행. 세부 일정은 [실행 계획표](P0-EXECUTION-SCHEDULE.md)를 따른다.
+**이전 실행 checkpoint (2026-09-30, EXC-003):** `EXC-003-DEC-001` 권고안을 기록하고 제한된 목적지 `USER` Session 생성 API, Actor-scoped idempotency, atomic success Audit 및 정확한 column grants를 구현했다. 당시 API regression 19 files / 345 tests, typecheck/migration checks, EXC-002/003 synthetic PostgreSQL RLS integration과 DB-002~007 회귀 및 clean reset/reapply가 PASS였다. 당시 local ledger=13, runtime privilege rows=100, aggregate catalog=17/44/15/29였다. EXC-003은 live OIDC issuer/HTTP→DB end-to-end와 동시요청 Acceptance가 없어 `PARTIAL`이었다. 이후 migration/grant 증가는 최신 CON-003 checkpoint에 기록한다.
+
+**이전 실행 checkpoint (2026-09-30, DB-008/PAT):** `DB-008-DEC-001` registry policy and additive migration 0007 are normative. DB-001~008 schema checks and GATE-IMP-02 PASS with aggregate catalog 17/44/14/29 PK/FK/UNIQUE/CHECK; DB-006 ran before DB-005 for the optional `imaging_package_id` FK. DB-009 enforces minimal runtime privileges and 16 Tenant RLS boundaries; PAT-001 runtime synthetic persistence passed. PAT-002-DEC-002 permits and verifies an internal synthetic same-Hospital read-only mapping path with exactly eight column SELECT privileges; PAT-003-DEC-001 pure-domain destination mapping validation passed 18 focused tests and the API regression passed 16 files/323 tests. No mapping write/API route, authorized destination retrieval or PACS no-STOW path is enabled; PAT-003 product requirement remains PARTIAL. DB-009 overall remains PARTIAL because HTTP safe errors, business Authorization and Preflight are not implemented. That DB-008 run used disposable scratch for reset/reapply, then DB-002~007 against the persistent local `mediq` development DB; the latter applied pending migrations. At that checkpoint local ledger was 12 and runtime column privileges were 70. Older progress sections below are historical snapshots.
+
+**현재 상태(2026-10-01):** `MEDIQ-ENV-002~010`, DB-001~009 DB enforcement, GATE-IMP-02, ORG-001~003은 scoped evidence에서 PASS다. PAT-001~004, IAM-001/002, AUT-001~005는 제한된 범위에서 각각 증거가 있다. Consent-001~006 synthetic domain/persistence/request/approval/withdrawal/action-policy slice도 각 scoped Acceptance PASS다. Local `mediq` development DB migration ledger는 16, runtime column privileges는 126이다. DB-008 DB-002~007 regression은 persistent dev DB에 pending migration을 적용하므로 scratch-only가 아니다. DB-009 overall은 HTTP safe-error, business Authorization 및 Preflight가 남아 PARTIAL이다. ORG-003은 A/B QIDO metadata만 enabled하고 A WADO/B STOW는 disabled다. 합성 CT fixture가 있어도 API는 product A→MediQ→B 영상 교환을 완료하지 않았다. Consent technical API 및 pure action policy는 법적 identity/consent, Grant issuance/enforcement, HTTP protected operation, workforce role, integrity/provenance enforcement, WADO/STOW payload, Viewer/Download/PACS와 전체 P0 Acceptance를 입증하지 않는다. 세부 일정은 [실행 계획표](P0-EXECUTION-SCHEDULE.md)를 따른다.
+
+**PAT-004 실행 갱신 (2026-09-30):** `PAT-004-DEC-001` 권고안과 Acceptance를 선행 문서화한 뒤 mocked persistence-to-domain Acceptance 7/7 및 API regression 17 files / 330 tests를 통과했다. Ticket은 mock adapter/domain 범위에서 PASS다. Live DB/RLS·destination authorization·HTTP와 PACS `no-STOW`는 미실행이고 전체 PatientMapping/PACS requirement는 PARTIAL이다. 최신 구현·시험 증거는 [PAT-004 보고서](implementation/MEDIQ-PAT-004/IMPLEMENTATION-REPORT.md)와 [시험 기록](implementation/MEDIQ-PAT-004/TEST-EVIDENCE.md)를 참조한다.
 
 ## 1. 지금 문서를 작성하는 방식
 
@@ -16,7 +26,7 @@
 | 무엇을 구현하고 거부하는가 | [요구사항](REQUIREMENTS.md), [보안 요구사항](SECURITY-REQUIREMENTS.md), [위협 모델](THREAT-MODEL.md) | 관찰 가능한 동작과 실패 결과로 표현 |
 | 데이터·상태·API 계약 | [Domain](DOMAIN-MODEL.md), [Data](DATA-MODEL.md), [ERD](ERD.md), [OpenAPI](OPENAPI.yaml) | 구현·테스트가 따를 단일 기준. 예시 URL을 임의 계약으로 사용하지 않음 |
 | 언제·누가 수행하는가 | [실행 계획표](P0-EXECUTION-SCHEDULE.md), [상세 Ticket](IMPLEMENTATION-PLAN.md) | 담당·선행조건·기한·상태를 갱신 |
-| 어떤 선택을 했는가 | [결정 기록](DECISIONS.md) 또는 Ticket의 ADR | 선택·이유·대안·영향·검증 조건을 기록 |
+| 어떤 선택을 했는가 | [정책 결정 로그](POLICY-DECISION-LOG.md) 또는 Ticket의 ADR | 추천안·대안·이유·범위·영향·검증 조건을 기록 |
 | 실제로 무엇을 만들었는가 | [구현 보고서 템플릿](implementation/_templates/IMPLEMENTATION-REPORT.md) | 변경 파일·동작·추적성·미완료·위험 기록 |
 | 실제로 무엇을 검증했는가 | [시험 증거 템플릿](implementation/_templates/TEST-EVIDENCE.md) | 명령·환경·예상/실제 결과·종료 코드·근거 기록 |
 
@@ -84,19 +94,22 @@
 
 아래 의미는 [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) §9의 상세 정의를 따른다. 과거 감사에서 ENV-002가 전체 환경을 뜻했던 표현과 구분한다. 예정 경로는 구현 시 확정하고 변경하면 보고서·실행 안내를 함께 갱신한다.
 
-| Ticket | 만들 결과 | 예정 위치·증거 | 완료 기준 |
+| Ticket | 만들 결과 | 위치·증거 (계획 / 실제) | 완료 기준 |
 |---|---|---|---|
 | MEDIQ-ENV-002 | 저장소 구조·책임·실행 진입점 정렬 | 기존 `services/`, `web/`, `infra/`, `tests/`, `scripts/` | 기존 변경 보존, 구조와 후속 작업 매핑 |
 | MEDIQ-ENV-003 | Compose 기본 구성 | `infra/docker-compose.yml` 예정 | 해석 가능한 Compose, 서비스·network·volume 경계 확인 |
 | MEDIQ-ENV-004 | 로컬 PostgreSQL | `infra/docker-compose.yml`; internal-only `database` network | 기동·health·재시작·별도 Compose peer 인증 연결 통과; host port 미공개, schema/migration과 구분 |
-| MEDIQ-ENV-005 | Hospital A Test Orthanc | `infra/orthanc/a-config.json` 예정 | A health·DICOMweb capability 확인 |
-| MEDIQ-ENV-006 | Hospital B Test Orthanc | `infra/orthanc/b-config.json` 예정 | B health·DICOMweb capability 및 A/B 독립성 확인 |
-| MEDIQ-ENV-007 | Synthetic DICOM 준비·seed | `infra/seed/` 또는 `scripts/` 예정, 데이터는 `data/` | SOP Class·Transfer Syntax·UID/count/hash Manifest, 반복 seed 정책 |
-| MEDIQ-ENV-008 | Application config | `.env.example` 및 실제 설정 loader | 설정 누락·placeholder 처리, 로컬 Secret 주입, container/host 주소 구분 |
-| MEDIQ-ENV-009 | Health checks | Compose·각 서비스 설정 | API/DB/A/B의 readiness를 실제 확인 |
-| MEDIQ-ENV-010 | 재현 가능한 smoke test | `scripts/` 또는 `tests/` 예정 | 준비된 환경에서 API/DB/A/B healthy 및 A의 Synthetic Study 확인 |
+| MEDIQ-ENV-005 | Hospital A Test Orthanc | `infra/docker-compose.yml`의 A 환경변수·healthcheck; `scripts/test-orthanc-a.ps1`; [시험 증거](implementation/MEDIQ-ENV-005/TEST-EVIDENCE.md) | A health·인증 거부·DICOMweb QIDO readiness 확인 |
+| MEDIQ-ENV-006 | Hospital B Test Orthanc | `infra/docker-compose.yml`의 B 환경변수·healthcheck; `scripts/test-orthanc-b.ps1`; [시험 증거](implementation/MEDIQ-ENV-006/TEST-EVIDENCE.md) | B health·인증 거부·DICOMweb QIDO 및 A/B 네트워크·볼륨 분리 확인 |
+| MEDIQ-ENV-007 | Synthetic DICOM 준비·seed | `scripts/generate-synthetic-ct.py`, `scripts/validate-synthetic-ct.py`, `scripts/seed-synthetic-ct.ps1`; ignored data `data/synthetic-ct-env007/` | PASS: SOP Class·Transfer Syntax·UID/count/hash manifest, A-only STOW seed, idempotent rerun, B empty; see [evidence](implementation/MEDIQ-ENV-007/TEST-EVIDENCE.md) |
+| MEDIQ-ENV-008 | App configuration·DB role boundary | `services/api/src/config/app-config.ts`, `.env.example`, `scripts/setup-local-postgres-roles.ps1`, `scripts/validate-app-config.ps1` | PASS: container profile/required env validation, bootstrap/runtime/migration separation, runtime no DDL, invalid password rejected; product API connection/schema remain unimplemented |
+| MEDIQ-ENV-009 | Health checks | `scripts/test-environment-health.ps1`, internal health-only API | API + PostgreSQL + A/B full operational health gate PASS; business API excluded |
+| MEDIQ-ENV-010 | 재현 가능한 smoke test | `scripts/test-environment-smoke.ps1` | Compose 재현 기동, fixture manifest/hash 검증, API/DB/A/B readiness 및 A-only synthetic Study 확인; no reset |
+| MEDIQ-DB-001 | P0 migration framework | Drizzle Kit generated SQL + `scripts/run-database-migrations.mjs`; opt-in least-privilege migrator | Repeatable empty-product-schema ledger test; product tables/schema grants not included; see [evidence](implementation/MEDIQ-DB-001/TEST-EVIDENCE.md) |
+| MEDIQ-DB-002 | Organization/Tenant/Hospital registry | Five tables with approved keys/checks/indexes; synthetic rollback integration PASS; no grants/RLS/API; see [evidence](implementation/MEDIQ-DB-002/TEST-EVIDENCE.md) |
+| MEDIQ-DB-003 | PatientReference/PatientMapping | Two tables with synthetic status/FK/unique/rollback checks; no real patient identifiers or import authorization; see [evidence](implementation/MEDIQ-DB-003/TEST-EVIDENCE.md) |
 
-DB/PACS만 실행한 상태와 Phase 0 전체 완료를 구분한다. PostgreSQL은 `database` network 내부에서 `postgres:5432`로 접근하며, host에서 실행하는 앱의 연결 프로파일은 ENV-008에서 결정·검증한다. 기존 Gate의 API health까지 충족해야 전체 환경 PASS다. API scaffold·CI 등의 작업 범위는 ENV 관련 기록에서 확인하고 기존 범위를 넘으면 별도 Ticket으로 연결한다.
+DB/PACS/API health만 실행한 상태와 Phase 0 전체 완료를 구분한다. PostgreSQL은 `database` network 내부에서 `postgres:5432`로 접근한다. ENV-009 operational API는 runtime role로 `SELECT 1`을 수행하고 A/B readiness를 확인하지만 product schema·business endpoint·Worker·Tenant RLS는 포함하지 않는다. 전체 P0 Gate는 별도 제품 API 및 보안 업무 흐름 Acceptance가 있어야 PASS다.
 
 현재 [.env.example](../.env.example)의 주소·개발용 placeholder는 템플릿이다. 컨테이너 내부 `localhost`와 Host의 주소는 설정 시 구분해야 한다. placeholder를 유효한 암호키나 배포 Credential로 취급하지 않는다. 로컬 TLS·Port·Endpoint 계약을 정리하고 인증서 검증을 끄는 방식으로 통합 시험을 통과시키지 않는다.
 
@@ -113,7 +126,7 @@ DB/PACS만 실행한 상태와 Phase 0 전체 완료를 구분한다. PostgreSQL
   -Classification CAPSTONE-P0
 ```
 
-`infra/docker-compose.yml`을 실제 작성한 뒤, 그 Ticket에서 다음 검사를 수행한다. 아직 파일이 없는 현재 상태에서 실행 가능한 환경이 있다고 보고하지 않는다.
+이 명령은 ENV-003 Compose 기준선 검사 예시다. 이미 구현된 Ticket은 해당 Ticket의 실제 환경과 `TEST-EVIDENCE.md`에 기록된 명령·결과를 사용한다. Compose 구문 검사만으로 실행 가능성이나 서비스 health를 주장하지 않는다.
 
 ```powershell
 docker compose -f infra/docker-compose.yml config --quiet

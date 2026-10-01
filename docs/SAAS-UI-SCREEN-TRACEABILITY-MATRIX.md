@@ -58,7 +58,7 @@
 | SAAS-SCR-035 | P0 / Synthetic PATIENT | REQ-CON-003~004 | Fail closed on mismatch/expiry | ErrorResponse EXISTING | CONSENT_DENIED | AT-SEC-004~005 | REF-QR-01 | New request linkage |
 | SAAS-SCR-036 | P0 / HOSPITAL_USER | REQ-GRT-001~006 | Consent+Authorization+exact recipient | issueTransferGrant EXISTING | GRANT_CREATED | AT-FUNC-008 | REF-CON-02/03 | Authorization evidence read |
 | SAAS-SCR-037 | P0 / Authorized Actor | REQ-GRT-001~005 | Scope/recipient/tenant/expiry | Grant read PARTIAL/GAP | GRANT_VIEWED | AT-SEC-006~010 | REF-QR-01 | Grant detail endpoint |
-| SAAS-SCR-038 | P0 / Authorized Issuer | REQ-GRT-005 | Issuer policy, no retroactive delete | revokeTransferGrant EXISTING | GRANT_REVOKED | AT-FUNC-009 | REF-CON-02 | Revoke impact projection |
+| SAAS-SCR-038 | P0 / Exact verified recipient USER | REQ-GRT-008 | SEC-GRANT-009 exact Actor/Tenant/Hospital/Session binding; no offline/in-flight recall claim | `revokeTransferGrant` P0 contract | GRANT_REVOKED | `TC-GRT-004-REV-API-001~012`; AT-FUNC-009 | REF-CON-02 | Replay and operation-time impact projection |
 | SAAS-SCR-039 | P0 / Actor | REQ-AUT-001~003 | SEC-AUTHZ-001~003 | Decision/Error EXISTING | AUTHORIZATION_DENIED | AT-SEC-017 | REF-CON-02 | Safe denial categories |
 | SAAS-SCR-040 | P0 / HOSPITAL_USER/PATIENT | REQ-VIEW-001~005 | Consent+Auth+study:view | authorizeViewerAccess EXISTING | VIEW_REQUESTED | TC-VIEW-004~005 | REF-IMG-02 | None for authorize |
 | SAAS-SCR-041 | P0 / Viewer Actor | REQ-VIEW-004~007 | Session/actor/tenant/study binding | authorizeViewerAccess EXISTING | VIEWER_SESSION_CREATED | TC-VIEW-004/005/007 | REF-IMG-06 | Idempotency behavior |
@@ -67,7 +67,7 @@
 | SAAS-SCR-044 | P0 / Viewer Actor | REQ-VIEW-003/009 | Memory-only pixel, no export | LOCAL renderer | VIEWER_TOOL_USED optional | AC-UI-VIEW-001~004 | REF-IMG-03/04 | Tool telemetry policy |
 | SAAS-SCR-045 | P0 / Viewer Actor | REQ-VIEW-007 | Expiry, frame stop, cache purge | get/closeViewerSession EXISTING | VIEWER_EXPIRED | TC-VIEW-007 | REF-QR-01 | Warning thresholds |
 | SAAS-SCR-046 | P0 / Viewer Actor | REQ-DICOM-004, REQ-VIEW-009 | Normalized WADO error, no fallback archive | Viewer error EXISTING | VIEWER_UPSTREAM_FAILED | TC-VIEW-009 | REF-ADM-04 | Frame retry policy response |
-| SAAS-SCR-047 | P0 / Viewer Actor | REQ-CON-004, REQ-GRT-005, REQ-VIEW-007 | Revalidation/revoke termination | Status/revalidation PARTIAL | VIEWER_DENIED/CLOSED | TC-SEC-VIEW-002 | REF-CON-04 | Push vs poll decision |
+| SAAS-SCR-047 | P0 / Viewer Actor | REQ-CON-004, REQ-GRT-008, REQ-VIEW-007 | Recheck status on next protected request; no immediate in-flight cancellation claim | Future operation-time revalidation/fencing | VIEWER_DENIED/CLOSED only after a separate operation gate | TC-SEC-VIEW-002 (planned) | REF-CON-04 | Push vs poll and in-flight fencing decision |
 | SAAS-SCR-050 | P0 / HOSPITAL_USER | REQ-DWN-001~002 | Exact study:download scope | downloadDicomStudy EXISTING | DOWNLOAD_STARTED | AT-FUNC-011 | REF-CON-02 | None for request |
 | SAAS-SCR-051 | P0 / HOSPITAL_USER | REQ-DWN-001 | No-store, active grant/session | Streaming response EXISTING | DOWNLOAD_PROGRESS optional | AC-UI-DWN-001 | REF-SAA-05 | Resumability/result unknown |
 | SAAS-SCR-052 | P0 / HOSPITAL_USER | REQ-DWN-001 | Server/stream completion evidence | Response completion EXISTING | DOWNLOAD_COMPLETED | AC-UI-DWN-002 | REF-SAA-05 | Browser save confirmation limit |
@@ -177,7 +177,7 @@ Decision은 Reference 전체의 품질 평가가 아니라 해당 MediQ 화면�
 | SAAS-SCR-044 | ADOPT | W/L·Zoom·Pan·Reset 기본 조작 |
 | SAAS-SCR-045 | ADAPT | Countdown/expiry 후 pixel 제거 추가 |
 | SAAS-SCR-046 | ADAPT | Frame error와 service incident Pattern 결합 |
-| SAAS-SCR-047 | ADAPT | Preference revoke Pattern을 즉시 종료에 변형 |
+| SAAS-SCR-047 | ADAPT | Revoke notice only; do not imply instant server-side stop or offline-copy recall |
 | SAAS-SCR-050 | ADAPT | 위험 action scope review 적용 |
 | SAAS-SCR-051 | ADAPT | 실제 run progress만 적용 |
 | SAAS-SCR-052 | ADAPT | 완료 증거와 correlation 표시 |

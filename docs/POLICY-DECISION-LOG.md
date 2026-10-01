@@ -1,0 +1,914 @@
+# MediQ Policy Decision Log
+
+이 문서는 프로젝트 범위 내 정책 권고와 채택 결정을 추적하는 중앙 기록이다. 상세 설계는 연결된 ADR 및 Ticket 구현 기록에 둔다. 결정은 승인된 요구사항·보안 불변조건·MVP 범위와 충돌하지 않아야 한다.
+
+## PDEC-001 — 권고안 기반 정책 결정 절차
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | ACTIVE |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | 사용자의 명시 지침(2026-09-30, 재확인 2026-10-01 및 2026-10-02): 권고안을 먼저 작성하고, 그에 따라 진행하며 향후 필요한 결정도 같은 순서를 따름 |
+| 결정 | 프로젝트 범위 안의 미결 정책·설계·선행 승인 항목은 먼저 권고안 초안과 선택 근거를 기록한다. 구현에 앞서 관련 Acceptance 조건·부정/거부 경로·검증 방법을 정의한 후, 승인된 범위 내에서는 권고안을 채택하여 작업을 계속한다. 반복적인 건별 확인을 요청하지 않는다. |
+| 필수 기록 | 권고안/결정 ID·일자·상태, 채택안, 대안, 근거, 영향·범위·잔여 위험, 관련 승인 기준·Ticket, 선행 Acceptance 및 실제 검증 결과를 로그 또는 ADR·Acceptance Test에 남긴다. 문서상 권고안과 구현 사실/시험 결과는 명확히 구분한다. |
+| 진행 순서 | `기준선·작업범위 확인 → 권고안 초안/대안 기록 → Acceptance와 검증법 확정 → 구현 기록 생성(구현 Ticket일 때) → 권고안에 따른 최소 작업 → 실제 시험·증거 → 관련 기준 문서/상태 동기화` |
+| 경계 | 이 지침은 제품 범위 확대, 명시적 보안 불변조건 완화, PHI·실제 운영 자격증명 사용, 외부 운영환경 변경을 허용하지 않는다. 승인 범위 안에서 시행할 수 없는 경우 안전한 기존 기준을 유지하고, 실행을 확장해야 하는 경우에는 그 부분을 분리해 사용자 선택을 받는다. |
+| 구현 추적 | `MEDIQ-GOV-002`; `AGENTS.md` §1.1; all future implementation Tickets |
+
+## TLS-001-DEC-001 — 로컬 Test Orthanc HTTPS 및 인증서 검증
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — scoped local implementation and Acceptance PASS |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `SEC-TLS-001~002`; `AT-SEC-022~023`; `DICOM-INTEROPERABILITY-PROFILE.md` §19.3; 사용자가 권고안을 먼저 기록하고 채택안에 따라 진행하도록 승인한 상시 지침 |
+| 채택 권고안 | Synthetic local Compose의 MediQ API↔Hospital A/B Test Orthanc 구간에 Orthanc 내장 HTTPS를 적용한다. 로컬 전용 Test CA로 A/B별 서버 인증서를 발급하고 DNS SAN을 정확히 service hostname에 binding한다. API·DICOM integration client는 CA chain과 hostname을 기본 검증하며 HTTP fallback, `verify=false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`를 금지한다. private key와 Test CA material은 Git 밖 ignored runtime 경로에만 생성한다. |
+| 대안 및 판단 | HTTP를 계속 쓰는 안은 격리망 bootstrap에는 제한적으로 쓸 수 있지만 TLS 선행 Gate와 PACS 전달 경로를 검증하지 못하므로 이 Ticket의 목표에서는 기각한다. 내부 reverse proxy는 일반·운영 배치에서 선호할 대안이나 추가 image/config/network 경계가 필요하다. Orthanc 내장 HTTPS는 격리된 단일-host Synthetic MVP Test profile에 한정해 선택하며 운영 아키텍처 선택으로 확대하지 않는다. |
+| 범위/비범위 | 포함: Compose A/B Test Orthanc HTTPS, certificate bootstrap/trust, API DICOM endpoint HTTPS-only config, validated health/integration probes, positive/negative TLS Acceptance. 제외: Client↔MediQ ingress TLS, mTLS, VPN, 외부/운영 병원 PACS, production PKI/rotation, proxy/ingress, Authorization 또는 PACS coordinator/STOW 구현. |
+| 보안 영향 | HTTP service URI는 기본 설정·runtime config에서 거부한다. 신뢰하지 않는 CA, hostname mismatch, 만료/잘못된 cert 또는 TLS handshake 실패는 fail closed한다. Hospital A/B network 격리, Basic test credential, no-host-port 및 Orthanc data volume은 유지한다. Healthcheck도 인증서 검증을 수행하고 내장 Orthanc probe의 `CERT_NONE` 동작은 사용하지 않는다. |
+| 잔여 위험 | local CA/private keys는 개발자 workstation와 Docker bind-mount 권한에 의존하는 Test-only 자료다. Orthanc 내장 TLS를 선택한 것은 운영 reverse-proxy architecture나 production key custody 검증이 아니다. Client↔MediQ TLS와 mTLS도 미구현이며 `SEC-TLS-001` 전체 Acceptance는 이 Ticket만으로 PASS가 아니다. |
+| Acceptance/추적 | `TC-TLS-001-HTTPS-001~003`; `TC-TLS-001-CERT-001~003`; `TC-TLS-001-HEALTH-001`; `TC-TLS-001-DICOM-001` — all PASS within local scope; `MEDIQ-TLS-001`; `MEDIQ-DCM-002`; `MEDIQ-PACS-001`; global `AT-SEC-022/023` remain broader; `THR-014`; `THR-022` |
+| 관련 문서 | `SECURITY-REQUIREMENTS.md`; `DICOM-INTEROPERABILITY-PROFILE.md` §§10.2, 19.3; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `infra/docker-compose.yml`; `infra/README.md` |
+
+## DB-008-DEC-001 — Registry 허용값 및 소유 관계 무결성
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | 사용자가 DB-008에 제시된 두 권고안을 모두 승인하고, 이후 정책 결정은 권고안을 기본으로 진행하라고 명시함 |
+| `organization_type` | 확장 가능한 분류 코드로 유지한다. 고정된 도메인 목록이 정해지지 않았으므로 DB CHECK를 두지 않는다. 향후 승인된 카탈로그/API 검증은 별도 범위에서 정의한다. |
+| `hospitals.status`, `actors.status` | 허용값은 `ACTIVE`, `SUSPENDED`, `INACTIVE`다. `VARCHAR + CHECK`로 허용값을 강제한다. |
+| Hospital 소유 관계 | `hospitals(tenant_id, organization_id)`가 동일 소유 관계를 갖도록 `tenants(tenant_id, organization_id)` 복합 FK로 강제한다. 참조키를 위해 해당 쌍의 UNIQUE를 둔다. |
+| Actor 소유 관계 | `actors(tenant_id, hospital_id)`가 동일 Tenant의 Hospital만 가리키도록 `hospitals(tenant_id, hospital_id)` 복합 FK로 강제한다. 참조키를 위해 해당 쌍의 UNIQUE를 둔다. `hospital_id` NULL은 유지하며, 이 경우 Tenant-level Actor를 허용한다. |
+| 보안 경계 | 복합 FK는 Registry 관계의 구조적 무결성만 보장한다. Runtime Authorization, Tenant Isolation, RLS 또는 접근통제를 대체하지 않는다. |
+| 고려한 대안 | 독립 FK만 유지하면 교차 소유 조합이 저장될 수 있다. Application-only 검증은 DB에 직접 들어오는 모든 쓰기 경로에서 동일하게 보장되지 않으므로 선택하지 않았다. |
+| 관련 문서 | `DATA-MODEL.md`, `ERD.md`, `SECURITY-REQUIREMENTS.md`, `ACCEPTANCE-TESTS.md`, `MEDIQ-DB-008` |
+
+## ORG-001-DEC-001 — Synthetic Organization/Tenant 기준 Fixture와 Seed 동작
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 채택 권고안 | Domain Model의 Hospital Organization 예시를 따라 Synthetic Hospital A/B/C별 Organization 1개와 각기 격리된 Tenant 1개를 seed한다. C는 unauthorized third-party negative tests용이다. 병원, Actor, Patient, endpoint는 이 Ticket에서 만들지 않는다. |
+| 코드/값 | `ORG-HOSPITAL-A/B/C`, `TEST-TENANT-A/B/C`; `organization_type=HOSPITAL`; 초기 lifecycle은 `ACTIVE`; 이름과 식별자는 모두 `Synthetic`/`TEST`임을 분명히 표시한다. UUID는 실행 간 안정된 고정 값으로 둔다. |
+| 안정 ID | Org A/B/C: `01000000-0000-4000-8000-000000000001/2/3`; Tenant A/B/C: `02000000-0000-4000-8000-000000000001/2/3` (각 Code 순서대로 suffix 대응) |
+| Seed 안전성 | 충돌 시 기존 행을 덮어쓰거나 삭제하지 않는다. insert-if-absent 후 모든 seed identity·관계·속성을 검증하고, 충돌/수정된 기준 fixture는 오류로 중단한다. 한 트랜잭션으로 처리하고 두 번째 실행은 데이터 변경 없는 성공이어야 한다. |
+| 근거 | `DOMAIN-MODEL.md`의 `ORG-HOSPITAL-A/B`; `ACCEPTANCE-TESTS.md`의 Tenant A/B/C 보안 fixture; Tenant가 별도 SaaS isolation boundary라는 기준 |
+| 고려한 대안 | A/B/C를 단일 Organization 아래 묶는 안은 승인 Domain 예시와 다르므로 선택하지 않는다. Random UUID 매 실행은 재현성·idempotency를 해치므로 거부한다. Upsert로 metadata를 덮어쓰는 안은 operator 변경을 조용히 제거할 수 있어 거부한다. |
+| 보안 경계 | Synthetic/Test local PostgreSQL만 사용한다. Seed는 인증/인가·RLS·Tenant isolation 통제 구현이 아니며 실제 조직·병원 등록이 아니다. |
+| 관련 문서 | `DOMAIN-MODEL.md`, `DATA-MODEL.md`, `ERD.md`, `ACCEPTANCE-TESTS.md`, `IMPLEMENTATION-PLAN.md`, `MEDIQ-ORG-001` |
+
+## ORG-002-DEC-001 — Synthetic Hospital Registry Fixture와 Seed 동작
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001` 권고안 기반 절차; `MEDIQ-ORG-002`의 Hospital A/B registry 범위와 기존 A/B/C Organization·Tenant fixture |
+| 채택 권고안 | A/B/C 각 한 건씩 Test Hospital을 기존의 대응 Organization/Tenant에 등록한다. A는 source, B는 destination, C는 독립된 unauthorized third-party negative-test fixture다. C는 레지스트리 기준 데이터일 뿐 A/B 교환 endpoint나 접근 권한을 갖지 않는다. |
+| 코드/값 | `TEST-HOSPITAL-A/B/C`; 대응하는 `ORG-HOSPITAL-A/B/C`와 `TEST-TENANT-A/B/C`; `environment_type=TEST`, 초기 `status=ACTIVE`; 이름은 Synthetic임을 명시한다. |
+| 안정 ID | Hospital A/B/C: `04000000-0000-4000-8000-000000000001/2/3` (Code 순서대로 suffix 대응) |
+| Seed 안전성 | Insert-if-absent 후 ID/code/name/environment/status와 `tenant_id`·`organization_id` owner pair를 exact-verify한다. 충돌·기준선 drift는 전체 트랜잭션을 rollback하며 기존 행을 UPDATE/DELETE하지 않는다. 반복 실행은 데이터 변경 없는 성공이어야 한다. |
+| 고려한 대안 | A/B만 생성하면 C의 향후 cross-tenant negative fixture가 미등록 Hospital과 구분되지 않는다. 무작위 ID 또는 metadata upsert는 재현성·운영자 변경 보존을 해치므로 선택하지 않는다. |
+| 보안 경계 | Synthetic local Test PostgreSQL 전용. Endpoint URL, credential, Actor, Patient, DICOM은 생성하지 않는다. `ACTIVE`는 레지스트리 상태이며 인증·인가·Tenant isolation 또는 교환 가능성을 부여하지 않는다. |
+| 관련 문서 | `DOMAIN-MODEL.md` §8, `DATA-MODEL.md` §9, `ERD.md`, `SECURITY-REQUIREMENTS.md`, `ACCEPTANCE-TESTS.md`, `IMPLEMENTATION-PLAN.md`, `MEDIQ-ORG-002` |
+
+## ORG-003-DEC-001 — Role-aligned DICOMweb Endpoint Registry와 활성화 기준
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-ORG-003`; Data Model endpoint type/unique definition; DICOM Interoperability Profile의 Hospital A/B 역할 및 현재 capability evidence |
+| 채택 권고안 | 필요한 역할만 등록한다: Hospital A에 QIDO-RS/WADO-RS, Hospital B에 QIDO-RS/STOW-RS로 총 4개. Hospital C는 negative-test registry fixture이므로 endpoint를 만들지 않는다. |
+| URL 형식 | 무시되는 local `.env`의 A/B root URL이 정확히 각 Compose 내부 host(`orthanc-a`/`orthanc-b`), HTTP, port 8042이고 userinfo/path/query/fragment가 없음을 검증한 뒤 `/dicom-web`을 추가한다. URL은 DB metadata로만 저장하며 seed는 PACS에 접속하지 않는다. |
+| 활성화 기준 | A/B QIDO-RS는 authenticated environment QIDO probe 근거로 `enabled=true`로 등록한다. A WADO-RS 및 B STOW-RS는 아직 payload interoperability가 검증되지 않았으므로 `enabled=false`로 등록하고 별도 adapter/transfer acceptance 후 활성화한다. enabled 값은 runtime authorization을 대체하지 않는다. |
+| 안정 ID | A QIDO/WADO: `05000000-0000-4000-8000-000000000001/2`; B QIDO/STOW: `05000000-0000-4000-8000-000000000003/4` |
+| 고려한 대안 | 모든 endpoint를 미리 enabled하는 안은 WADO/B-STOW 미검증을 감추므로 거부한다. 각 병원에 불필요한 3종 전체를 등록하는 안은 승인된 Source/Destination 역할보다 범위가 넓어 거부한다. 임의 URL 허용은 endpoint SSRF/외부 오접속 위험 때문에 거부한다. |
+| 보안 경계 | Synthetic local Test profile 전용 HTTP 내부 host만 허용한다. PACS credential은 DB URL/endpoint row에 두지 않고 local secret 설정 경계에 남긴다. 외부 호출, Production endpoint, TLS/mTLS readiness 또는 제품 DICOM 지원을 주장하지 않는다. |
+| 관련 문서 | `DATA-MODEL.md` §10, `DICOM-INTEROPERABILITY-PROFILE.md` §§3, 16–17, `SYSTEM-ARCHITECTURE.md`, `SECURITY-REQUIREMENTS.md`, `THREAT-MODEL.md`, `ACCEPTANCE-TESTS.md`, `IMPLEMENTATION-PLAN.md`, `MEDIQ-ORG-003` |
+
+## PAT-001-DEC-001 — P0 합성 PatientReference 코드와 영속성 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-PAT-001`; `INV-PAT-001~003`; P0 Synthetic/Test-only 경계; 기존 `patient_refs` schema |
+| 채택 권고안 | P0 애플리케이션 도메인은 `MQ-TEST-` 접두사와 대문자 ASCII 영숫자/하이픈 suffix를 갖는 코드(전체 64자 이하)만 PatientReference로 수락한다. ID는 UUID이며 새 참조는 `ACTIVE`로 생성한다. `ACTIVE/INACTIVE` 외 상태와 실제 ID/인구학 정보는 받거나 저장하지 않는다. |
+| 저장소 경계 | 도메인과 `PatientReferenceRepository` port를 PostgreSQL adapter와 분리한다. DB-003에 승인된 기존 컬럼만 parameterized SQL로 사용한다. 중복 코드 오류는 값이 노출되지 않는 일반 충돌 오류로 변환한다. |
+| 실행 경계 | P0 PatientReference 기능은 현재 public API/Controller에 연결하지 않는다. `mediq_runtime`은 이 결정일에 `patient_refs` SELECT/INSERT 권한이 없어 조회·생성은 deny-by-default 상태로 둔다. RLS/table-grant·업무 Authorization Gate 승인 및 integration test 전에는 runtime 권한을 추가하지 않는다. |
+| 고려한 대안 | 임의 문자열 코드는 실사용 ID가 유입될 위험이 있어 선택하지 않는다. Hospital-local ID를 코드로 재사용하거나 환자정보를 부가하는 것은 Identity Namespace 경계를 위반하므로 금지한다. 기존 테이블에 새 migration을 추가하는 것은 승인 schema와 중복이므로 하지 않는다. |
+| 변경 범위 | P0 앱 코드의 입력 경계만 구체화한다. DB schema, API contract, real identity verification, patient mapping 및 Tenant Authorization/RLS를 변경하지 않는다. 향후 비합성 PatientReference 도입은 별도 scope/security/privacy decision이 필요하다. |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-PAT-001`, `DOMAIN-MODEL.md` §9, `DATA-MODEL.md` §12, `SECURITY-REQUIREMENTS.md` `SEC-IAM-003`, `ACCEPTANCE-TESTS.md`, `MEDIQ-PAT-001` |
+
+**이후 결정에 따른 현재 적용 범위:** `DB-009-DEC-001`은 위 결정의 synthetic-only DB access 금지를 제한적으로 대체하여, test-only repository 경로에서만 `mediq_runtime`의 `patient_refs` 5개 컬럼 `SELECT`·`INSERT`를 허용한다. 해당 예외는 DB CHECK로 `MQ-TEST-*`에 제한되고 PAT-001 evidence에서 검증됐다. Public API, 실제 identity, PHI, PatientMapping, Tenant 업무 권한은 여전히 금지/미구현이다.
+
+## DB-009-DEC-001 — P0 최소권한 DB·Tenant RLS·인가 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; 사용자의 최소권한 DB 접근·Tenant RLS·인가 경계를 문서와 Acceptance로 확정하라는 요청; `SEC-DB-001~004`; 현재 P0 schema와 PAT-001 차단 증거 |
+| 런타임 DB 역할 | 현재 API 런타임 로그인은 non-owner·non-superuser·`NOBYPASSRLS`·`NOINHERIT`·DDL 불가를 유지한다. 업무별 객체 권한은 migration마다 명시적으로 부여하고 `PUBLIC`/default privilege의 포괄 grant는 금지한다. 당장 PAT-001에서 필요한 범위는 `patient_refs` 승인 컬럼의 `SELECT`·`INSERT`뿐이며 `UPDATE`·`DELETE`·`TRUNCATE`·DDL은 부여하지 않는다. Worker에 별도 DB 접근이 생기면 별도 role을 검토한다. |
+| PatientReference P0 경계 | `patient_refs`는 병원 간 동일한 MediQ reference를 연결하는 전역 namespace라 tenant 소유 행으로 오인해 RLS를 적용하지 않는다. 대신 P0에서는 `MQ-TEST-` synthetic pattern을 DB 제약으로도 강제하고, 합성 코드만 저장한다. 이 예외는 실제 환자정보·인구학 정보의 저장이나 API 노출을 허용하지 않으며, 실제 identity 도입 전 별도 설계·승인이 필요하다. |
+| Tenant RLS | Tenant 소유 또는 Tenant 참여 관계가 있는 보호 테이블에는 RLS를 `ENABLE`하고 `FORCE`한다. 직접 `tenant_id`가 없으면 승인된 Hospital/Exchange 관계로 Tenant를 판정한다. Tenant context는 인증 후 서버가 확정한 값만 업무 트랜잭션 안의 transaction-local DB context로 전달하며 누락·빈값·잘못된 값은 fail closed한다. Connection pool에는 transaction 종료 시 context가 남지 않아야 한다. |
+| 교차 Tenant Exchange | RLS는 유효 Exchange의 source/destination 참여 Tenant에 해당 행을 제한적으로 보이게 할 수 있다. 이 가시성은 허용행위가 아니다. Consent, Authorization, Grant, Patient/Study/Action/Destination/Expiry 검증은 모든 보호 작업 전에 별도 업무 정책으로 통과해야 하며 Tenant C는 거부한다. |
+| 인가 권위 | 인증된 서버 측 Actor/Tenant와 업무 Authorization Service가 권위 있는 decision point다. client가 제출한 Tenant/Actor, UUID/URL, 세션 존재, RLS 통과는 단독 권한이 아니다. Authorization failure·DB context 설정 실패는 fail closed한다. PACS side effect는 Mandatory Preflight 통과 전에 실행하지 않는다. |
+| RLS의 보장 한계 | transaction-local custom GUC는 애플리케이션이 올바르게 사용하면 누락된 tenant predicate와 pool 누수를 줄이는 방어층이다. 동일 런타임 DB role로 임의 SQL을 실행할 수 있는 공격자가 값을 바꾸지 못하게 인증하는 수단은 아니다. 따라서 RLS를 SQL injection 방어 또는 업무 Authorization 대체라고 표현하지 않는다. P0 Acceptance는 parameterized SQL, context 누락/cross-tenant/pool 재사용 경로를 검증하고, 이 residual risk를 기록한다. 운영/실환자 전환은 signed DB context 또는 동등하게 강한 경계 검토를 별도 release gate로 둔다. |
+| 채택 이유 | 전역 PatientReference 모델과 병원 간 Exchange 도메인을 유지하면서도 런타임 권한을 필요한 객체·명령으로 제한하고, tenant-bound 업무 테이블에서 DB가 실수성 누출을 막게 한다. 단순 GUC RLS를 강한 공격자 격리로 과장하지 않는다. |
+| 고려한 대안 | 모든 테이블에 `tenant_id`를 복제하면 기존 도메인 관계와 정합성을 깨고 중복 tenant 사실을 만들므로 기각한다. 모든 역할에 광범위 CRUD를 주는 안은 최소권한 위반이다. GUC만으로 임의 SQL·코드 실행 공격까지 막는다고 주장하는 안은 보안 보장을 과장하므로 기각한다. 실제 환자 데이터를 지금 열어 두는 안은 P0 synthetic-only 경계 밖이므로 기각한다. |
+| 추적 | `MEDIQ-DB-009` 선행 보안 Gate → `MEDIQ-PAT-001` live synthetic persistence → `MEDIQ-PAT-002~004` PatientMapping/negative tests → `MEDIQ-IAM-*` 및 Consent/Grant enforcement. 상세 검증은 `TC-DB-009-*`, `TC-PAT-001-PER-003`을 따른다. |
+| 관련 문서 | `SECURITY-REQUIREMENTS.md` `SEC-DB-005~006`, `SEC-TEN-005`, `SEC-AUTHZ-010~011`; `SYSTEM-ARCHITECTURE.md`; `DATA-MODEL.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-DB-009`; `MEDIQ-PAT-001` |
+
+## PAT-002-DEC-001 — P0 합성 Source PatientMapping 범위와 인가 선행 Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-PAT-002`; 기존 DB-003 `patient_mappings` schema; `DB-009-DEC-001`; 사용자가 권고안 초안에 따라 작성·진행하라고 지시함 |
+| 채택 권고안 | PAT-002는 CAPSTONE-P0 합성 Source PatientMapping의 domain/repository boundary로 한정한다. 새 schema/migration은 현재 범위에 포함하지 않는다. DB-003이 이미 검증한 구조 제약은 `TC-DB-003-REG-001~008` 증거를 참조하고 PAT-002에서 중복 PASS로 주장하지 않는다. |
+| Synthetic 입력 | PatientReference는 `MQ-TEST-*`; Hospital Local Patient ID는 `^TEST-[A-Z0-9]+(?:-[A-Z0-9]+)*$`에 일치하고 총 128자 이하인 값만 받는다. 실제 환자번호·PHI·인구학 정보는 금지한다. 이 P0 입력 경계는 애플리케이션에서 검증한다. 향후 runtime INSERT 권한을 검토할 때는 동일 규칙을 DB 제약 또는 동등한 우회 불가 경계로 재검토한다. |
+| Mapping 의미 | `VALID`는 P0에서 명시적으로 구성된 합성 fixture가 매핑된 상태를 뜻하며 실환자 신원확인, 진료 적합성 또는 PACS Import 권한을 의미하지 않는다. 허용 상태는 기존 schema의 `VALID`, `UNVERIFIED`, `AMBIGUOUS`, `REVOKED`다. 목적지 유효성 및 누락·모호 mapping의 PACS 거부는 PAT-003/004 범위다. |
+| Tenant/인가 경계 | Tenant는 `patient_mappings.hospital_id → hospitals.tenant_id` 관계에서 도출한다. 신뢰 가능한 Actor와 활성 membership을 credential 검증 후 서버가 확정해야 한다. Client-supplied Tenant/Actor/Hospital, mapping UUID 또는 RLS visibility만으로 접근을 허용하지 않는다. RLS는 row visibility의 defense-in-depth일 뿐 정확한 Hospital/object/action Authorization을 대체하지 않는다. |
+| 실행 Gate | PAT-002 Acceptance, synthetic domain 및 parameterized repository SQL contract는 구현·시험하되 route에 연결하지 않는다. `patient_mappings`의 `mediq_runtime` privilege, API route 및 실제 runtime integration은 `SEC-AUTHZ-010~011`, `TC-PAT-002-TEN-001~002`, `TC-PAT-002-SEC-001~003`, DB-009의 verified-context transaction/pool/error Acceptance가 통과한 뒤 별도 권한 검토·필요 migration과 함께 허용한다. Gate 실패·미구현 시 deny-by-default를 유지한다. |
+| 후속 결정 | `PAT-002-DEC-002`가 위 Gate를 제한적으로 구체화하여 synthetic internal same-Hospital read-only path와 exact 8-column SELECT를 허용했다. 그 외 write, API route, role administration, image access 및 PACS path는 여전히 금지된다. |
+| RLS 잔여 위험 | transaction-local custom GUC는 동일 runtime role의 임의 SQL에 의해 바뀔 수 있다. 이는 synthetic P0에서만 기록된 residual이며 Tenant 신원 인증, SQL injection 방어 또는 production/실환자 격리 주장으로 확대하지 않는다. |
+| 고려한 대안 | 즉시 광범위 CRUD grant/API를 여는 방안은 기각한다. 인증 경계를 기다리는 동안 PAT-002의 모든 domain/repository 작업을 정지하는 방안 대신, route와 DB runtime 권한에 닿지 않는 합성 domain/parameterized repository 준비를 허용하고 runtime 연결을 선행 gate 뒤로 둔다. schema 중복 migration은 기각한다. |
+| Acceptance/추적 | `TC-PAT-002-GATE-001`, `TC-PAT-002-DOM-001~002`, `TC-PAT-002-PER-001~002`, `TC-PAT-002-TEN-001~002`, `TC-PAT-002-SEC-001~003`; `MEDIQ-DB-009` → `MEDIQ-PAT-001` → `MEDIQ-PAT-002` → `PAT-003/004` → `IAM/AUTHZ/Consent/Grant` |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-PAT-002`; `DATA-MODEL.md` §§13–14; `SECURITY-REQUIREMENTS.md` `SEC-DB-005~006`, `SEC-TEN-005`, `SEC-AUTHZ-010~011`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-DB-009`; `MEDIQ-PAT-001` |
+
+## PAT-002-DEC-002 — Synthetic PatientMapping의 read-only runtime 접근 범위
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `PAT-002-DEC-001`의 별도 최소권한 검토 Gate; `SEC-AUTHZ-010~011`; `SEC-TEN-005`; IAM-002 verified membership transaction; AUT-001~005 scoped evidence; 사용자의 권고안 우선·기록 후 실행 지침 |
+| 채택 권고안 | 다음 PAT-002 slice는 합성 mapping의 내부 read-only runtime Acceptance로 한정한다. 검증된 IAM-002 `USER` Actor가 `hospitalId`를 가진 경우에만 자기 membership Hospital의 mapping을 읽을 수 있다. 대상 Hospital ID가 요청에 포함되면 untrusted candidate로 취급해 검증된 `identity.hospitalId`와 정확히 일치하는지 DB query 전에 검사하고, SQL predicate 값은 요청값이 아닌 verified context에서 가져온다. Tenant-only membership, `SERVICE`, null Hospital, 잘못된 identity, 다른 Hospital은 deny한다. |
+| DB 권한 | 신규 migration은 `patient_mappings`의 기존 8개 승인 컬럼에 `SELECT`만 부여한다: `mapping_id`, `patient_ref_id`, `hospital_id`, `local_patient_id`, `status`, `validated_at`, `created_at`, `updated_at`. Table-wide 권한, `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/DDL, `PUBLIC` 또는 default grant는 부여하지 않는다. 기존 forced Tenant RLS를 유지한다. |
+| 쓰기·업무 의미 | Runtime mapping 생성/수정은 닫아 둔다. 합성 P0 mapping은 migration/test fixture 경계에서만 구성한다. 현 P0에는 workforce role/capability와 검증된 환자-기록 matching workflow가 없으므로 사용자 입력이 canonical `PatientReference`에 연결되는 write API는 만들지 않는다. 읽은 `VALID` status도 신원확인·임상 동일인 판정·영상 접근/Import 권한을 뜻하지 않는다. |
+| 노출·부작용 경계 | 내부 application reader는 IAM-002 transaction 안에서 exact Hospital Authorization 후 같은 `PoolClient`와 `PostgresPatientMappingRepository`를 사용한다. Module/Controller/OpenAPI route, mapping write, Consent/Grant, Viewer/Download, DICOM/PACS side effect는 연결하지 않는다. 거부는 SQL 및 callback 이전에 수행하고 외부 응답은 아직 존재하지 않는다. |
+| Acceptance/추적 | `TC-PAT-002-TEN-001~002`, `TC-PAT-002-SEC-001~003`의 runtime-read 부분을 실제 Test DB에서 검증한다. 추가로 same-Tenant wrong-Hospital pre-query denial, Tenant C RLS denial, exact 8-column SELECT catalog, all write/DDL denial, same-client/pool reset을 기록한다. HTTP safe-error와 `MEDIQ-DB-009` overall은 별도 Gate로 계속 유지한다. |
+| 채택 이유 | PAT-002의 이미 승인된 synthetic repository를 실제 verified Tenant/Auth boundary에서 검증하면서도 patient identity linkage write와 API를 추가 승인·별도 workflow 전까지 차단한다. Exact Hospital predicate는 tenant-level RLS보다 좁은 애플리케이션 접근 범위를 적용한다. |
+| 고려한 대안 | Broad CRUD grant나 즉시 mapping create API는 patient identity mis-linking·권한 과다 위험으로 기각한다. Runtime mapping 접근 전체를 계속 미루면 이미 확보된 IAM-002 transaction 및 PAT-002 adapter의 통합 검증이 불가능하므로, 별도 synthetic read-only slice만 진행한다. Tenant RLS만으로 same-Tenant Hospital 경계를 보장한다고 보는 안은 기각한다. |
+| 잔여 위험 | P0 Actor registry에는 workforce role/capability가 없어 같은 active Hospital의 모든 synthetic `USER`가 해당 Hospital mapping을 읽을 수 있다. `mediq.tenant_id` custom GUC는 같은 DB role에서 바꿀 수 있다는 기존 synthetic-P0 residual을 가진다. 따라서 이 결정은 real patient/production access, cross-hospital linkage, role-based management 또는 mapping write의 승인이 아니다. |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-PAT-002`; `SECURITY-REQUIREMENTS.md` `SEC-TEN-005`, `SEC-AUTHZ-010~011`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PAT-002`; `MEDIQ-IAM-002`; `MEDIQ-DB-009` |
+
+## AUT-004-DEC-001 — Authorization-gated 애플리케이션 경계와 HTTP 구현 Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — scoped recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-AUT-003`; `SEC-AUTHZ-003`; `SEC-ERR-003`; `MEDIQ-AUT-001~003`; 사용자가 권고안 초안에 따라 기록·진행하라고 지시함 |
+| 채택 권고안 | `MEDIQ-AUT-004`는 IAM-002 `ActorTenantContextService`의 검증된 membership transaction 안에서 AuthorizationContext를 만들고, `AuthorizationEngine`을 같은 `PoolClient` scope로 정확히 한 번 평가한 뒤 exact `ALLOW`인 경우에만 애플리케이션 callback을 실행하는 내부 executor로 한정한다. Context identity가 IAM-002 검증 결과와 다르거나 Context/의존성이 없거나 정책 결과가 DENY/비정상/실패이면 callback을 실행하지 않는다. 내부 예외 메시지는 고정된 안전 오류로 변환한다. |
+| HTTP Acceptance 경계 | 결정 당시 보호 리소스 Controller/route와 trusted PostgreSQL evidence reader가 없어, 이 Ticket은 HTTP status/body, 실제 BOLA, Viewer/Download/WADO/STOW side effect, Audit 또는 product data disclosure의 PASS를 주장하지 않았다. 후속 AUT-005가 internal Study reader를 구현했으나 HTTP 통합은 별도이며, orchestration과 HTTP Acceptance를 분리하고 후자는 실행 전까지 `NOT RUN`으로 유지한다. |
+| 연결·권한 Gate | Executor는 `AppModule`에 등록하거나 Controller/API에 연결하지 않는다. PAT-002 및 기타 보호 저장소 권한, Consent/Grant runtime enforcement, HTTP route/OpenAPI 변경은 별도 scoped Acceptance와 최소권한 검토 후 진행한다. AUT-005의 Study evidence reader 구현은 이 route gate를 해제하지 않는다. 기본 `AuthorizationEngine`에 정책이 없으면 DENY다. |
+| PACS 부작용 경계 | 이 generic executor의 callback을 STOW-RS 또는 비가역 외부 PACS side effect에 직접 사용하지 않는다. PACS import는 별도 Mandatory Preflight, idempotency, Integrity/Provenance/Audit 및 Destination Verification 오케스트레이션이 승인되기 전까지 실행 경로를 만들지 않는다. |
+| 고려한 대안 | 즉시 Controller·HTTP 상태코드·business route까지 구현하는 안은 evidence reader와 Consent/Grant runtime 증거가 없어 거부한다. AUT-004 전체를 계속 미루는 안 대신, 외부 접근이 불가능한 내부 orchestration invariant와 거부 시험만 먼저 검증한다. 현재 fake/in-memory ALLOW 시험을 실제 인가 증거로 취급하는 안도 거부한다. |
+| Acceptance/추적 | 신규 `TC-AUT-004-APP-001~004`는 내부 orchestration 범위; 기존 `TC-AUT-004-FC-001~004` HTTP/data/BOLA/side-effect integration 및 `AT-SEC-003/017`은 후속 Gate로 유지 |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-AUT-003`; `SECURITY-REQUIREMENTS.md` `SEC-AUTHZ-003`, `SEC-ERR-003`; `ACCEPTANCE-TESTS.md` `TC-AUT-004-APP-001~004`, `TC-AUT-004-FC-001~004`, `AT-SEC-003`, `AT-SEC-017`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUT-004` |
+
+## EXC-001-DEC-001 — ExchangeSession 도메인 범위와 생성 불변조건
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-EXC-001`의 승인된 Phase 3 범위; `DOMAIN-MODEL.md` §§11–14; `DATA-MODEL.md` ExchangeSession 정의; `TC-DB-004-REG-004~005`; `TC-FUNC-001`의 초기 `REQUESTED` 상태 |
+| 채택 권고안 | EXC-001은 순수 ExchangeSession 도메인과 단위 Acceptance로 한정한다. 신규 생성은 서버 생성 UUID와 `REQUESTED` 상태를 사용한다. PatientReference·Source/Destination Hospital·Requester Actor ID는 UUID 형식이어야 하고 Source와 Destination은 달라야 한다. Purpose는 공백만인 값을 거부하고 Unicode code point 기준 255자 이하여야 하며, 입력 텍스트 자체는 임의 정규화하지 않는다. 생성·재구성 timestamp는 유효해야 하고 `updated_at >= created_at`만 강제한다. 선택 timestamp는 값이 있으면 유효한 날짜인지 검사한다. 기존 12개 상태만 재구성할 수 있다. |
+| 의도적 비범위 | `expires_at > created_at`, `completed_at`과 상태 간 상관관계, 상태 전이 및 terminal-state 접근 거부는 이 도메인 생성 Ticket에서 추론하지 않는다. 만료 의미와 상태 전이는 후속 `MEDIQ-EXC-005`에서 Acceptance와 함께 다룬다. 이 Ticket은 persistence/repository, API, Tenant/Actor resolver, Authorization, DB grant/RLS 변경을 하지 않는다. Session ID 또는 state는 접근 credential이 아니다. |
+| 채택 이유 | Phase 3 계획이 domain과 repository/API/transition/object-authorization을 별도 Ticket으로 분리한다. 기존 Exchange schema에는 12개 상태와 source/destination distinct constraint가 있으며, schema Acceptance는 expiry 관계를 임의로 추가하지 말라고 명시한다. 승인 경계를 유지하면서 요구사항의 고유 Session·핵심 참조·초기 상태를 도메인 수준에서 시험할 수 있다. |
+| 고려한 대안 | EXC-001에서 repository/API 또는 상태전이까지 함께 구현하는 방안은 Ticket 분리와 IAM/Consent 선행 경계를 흐리므로 기각한다. `expires_at > created_at` 또는 상태와 완료시각의 추가 상관 제약을 추정해 넣는 방안은 승인 기준에 없는 업무규칙이므로 기각하고 별도 Acceptance 검토로 미룬다. |
+| Acceptance/추적 | `TC-EXC-001-DOM-001~004`, `TC-EXC-001-SEC-001`; `REQ-EXC-001~002`; `DOMAIN-MODEL.md` §§11–14; `DATA-MODEL.md` ExchangeSession; `MEDIQ-DB-004` schema evidence |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-EXC-001~002`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-EXC-001` |
+
+## EXC-002-DEC-001 — ExchangeSession repository 계약과 runtime 권한 Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-EXC-002` persistence/repository 범위; `EXC-001-DEC-001`; `DB-009-DEC-001`; `TC-DB-009-PRIV-002`, `TC-DB-009-RLS-003/006`, `TC-DB-009-AUTH-001~004`; 승인된 `exchange_sessions` schema 및 FORCE RLS |
+| 채택 권고안 | EXC-002는 기존 11-column schema를 대상으로 내부 `ExchangeSessionRepository`와 parameterized PostgreSQL adapter를 구현한다. Adapter는 생성과 Session ID 조회만 제공하고 입력/결과는 domain으로 검증한다. 중복 키와 DB 실패는 고정 비노출 오류로 변환한다. Adapter는 checked-out client의 query만 사용하며 connection/pool 관리, tenant context 설정, transaction lifecycle을 소유하지 않는다. |
+| 런타임·인가 경계 | API module에 등록하거나 route에서 호출하지 않는다. `mediq_runtime`에 `exchange_sessions` privilege를 부여하지 않고 migration/RLS를 변경하지 않는다. 추후 caller는 credential로 검증된 Actor·Hospital membership 및 server-resolved Tenant의 동일 transaction client를 사용하고 exact object/action Authorization을 선행해야 한다. RLS 가시성은 업무 허가가 아니다. 현 단계는 unit/SQL contract 시험만 수행하며 실제 runtime DB Acceptance는 trusted context/pool wrapper와 별도 권한 검토 후 진행한다. |
+| 기준선 정합성 | 승인 Domain Model·DB schema·Implementation Plan은 12개 상태를 정의하지만 `REQ-EXC-005`만 `CANCELLED`를 누락했다. 별도 상태를 새로 만드는 대신 해당 Requirement에 기존 승인 상태 `CANCELLED`를 추가해 기준선을 일치시킨다. 상태 전이·terminal state 제어는 EXC-005 범위에 남긴다. |
+| 채택 이유 | DB-009가 확인한 현재 runtime privilege에는 승인 `patient_refs` 외의 product table grant가 없고, API Tenant transaction wrapper 및 business Authorization도 없다. SQL adapter를 먼저 준비하면 계획된 persistence 단위에 진전하면서도 세션 데이터에 대한 미인가 runtime 접근을 열지 않는다. 기존 schema 재사용은 승인된 DB-004 shape를 유지하고 새 migration을 피한다. |
+| 고려한 대안 | 지금 `exchange_sessions` runtime SELECT/INSERT grant와 API를 여는 안은 verified Tenant binding/pool isolation 및 object/action Authorization 이전에 노출을 만들므로 기각한다. DB schema를 다시 만들거나 상태를 11개로 줄이는 안은 이미 검증된 12-state 기준선과 충돌하므로 기각한다. 모든 repository 작업을 IAM 완료까지 중단하는 안 대신, 미연결 내부 adapter와 SQL contract만 허용하고 live access는 닫아 둔다. |
+| Acceptance/추적 | `TC-EXC-002-PER-001~005`, `TC-EXC-002-SEC-001`; `REQ-EXC-001~002`, `REQ-EXC-005`; `TC-DB-004-REG-001~008`; `TC-DB-009-PRIV-002`, `RLS-003/006`, `AUTH-001~004`; `MEDIQ-EXC-002` |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-EXC-001~002`, `REQ-EXC-005`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-DB-004`, `MEDIQ-DB-009` |
+
+## EXC-005-DEC-001 — ExchangeSession 상태전이 규칙과 적용 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-EXC-005`; `REQ-EXC-005~006`; `DOMAIN-MODEL.md` §§13–14; `EXC-001/002-DEC-001`; Tenant/AuthZ runtime Gate 미완료 증거 |
+| 채택 권고안 | 정상 흐름은 `REQUESTED → CONSENT_PENDING → CONSENTED → AUTHORIZED → READY → ACTIVE → COMPLETED`만 허용한다. `REJECTED`는 `REQUESTED`/`CONSENT_PENDING`에서, `REVOKED`는 `CONSENTED`/`AUTHORIZED`/`READY`/`ACTIVE`에서 허용한다. `EXPIRED`, `FAILED`, `CANCELLED`는 어느 non-terminal state에서도 허용한다. 현재 state가 terminal이면 어떤 전이도 허용하지 않는다. `COMPLETED`는 `ACTIVE`에서만 진입하며 완료 timestamp를 전이 시각으로 설정한다. |
+| 시간·불변성 | 전이 시각은 유효한 `Date`여야 하며 `now >= updated_at`을 강제한다. `expires_at`에 따른 실제 만료 판정은 domain이 임의로 결정하지 않고 후속 Application Service가 검증한다. 그 service는 만료 근거를 확인한 뒤에만 `EXPIRED`를 요청해야 한다. 완료 timestamp가 이미 기록된 비-terminal snapshot은 손상/불일치로 보고 전이를 거부한다. 전이는 새 immutable aggregate를 반환하고 원본을 변경하지 않는다. |
+| 적용 경계 | 이번 작업은 순수 domain state machine과 unit Acceptance로 한정한다. API, repository write, DB grant/RLS, Tenant context, Authorization, Audit 또는 PACS side effect를 연결하지 않는다. 상태전이는 인증·Consent·Grant 또는 접근권한을 부여하지 않으며 terminal 접근 거부의 end-to-end enforcement는 별도 Application/API Authorization Gate다. |
+| 채택 이유 | Phase 3 요구사항은 정의된 state transition을 강제해야 하지만 Exchange API의 trusted Actor/Tenant, pool wrapper와 object/action Authorization은 아직 없다. 순수 aggregate 전이는 먼저 확정할 수 있으나 runtime action으로 노출해서는 안 된다. 명시적인 edge와 terminal lock은 임의 상태 건너뛰기·완료 위조·재활성화를 방지한다. |
+| 고려한 대안 | 임의의 state pair를 허용하는 방안은 `INV-EXC-007`을 위반해 기각한다. 모든 terminal event를 모든 state에서 허용하는 방안은 Consent 전 `REVOKED` 등 의미상 잘못된 전이를 허용하므로 기각한다. Domain method를 route에 즉시 연결하는 안은 trusted Tenant/AuthZ Gate 전 보호 workflow를 노출하므로 기각한다. 만료 시간을 Domain 안에서 결정하는 안은 Clock/Consent/Grant/Session 만료 기준이 확정되지 않아 Application Service로 둔다. |
+| Acceptance/추적 | `TC-EXC-005-DOM-001~004`, `TC-EXC-005-SEC-001`; `REQ-EXC-005~006`; `INV-EXC-005~007`; `MEDIQ-EXC-005` |
+| 관련 문서 | `REQUIREMENTS.md` `REQ-EXC-005~006`; `DOMAIN-MODEL.md` §§13–14; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-EXC-001/002`; DB-009 Auth/Tenant Gate |
+
+## IAM-001-DEC-001 — OIDC JWT Bearer 미들웨어와 보호 API 선행 순서
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `TECH-STACK-DECISION.md` §§10, 13; `TS-ADR-007`; `SEC-IAM-004~006`; `SEC-API-001`; `SEC-AUTHZ-010~011`; `MEDIQ-IAM-001`; DB-009 미완료 Acceptance |
+| 채택 권고안 | `jose` 6.x를 사용해 설정에 고정된 OIDC issuer, audience, JWKS URI로 JWT Bearer를 검증한다. P0 Test Identity는 RS256, protected `typ=at+jwt`, 서명, `iss`, `aud`, `exp`, `nbf`(존재 시 시간 검증), `sub`를 검사한다. Request의 URL/헤더가 JWKS 출처를 바꾸지 못하며 Bearer token은 8 KiB를 넘을 수 없다. |
+| 기본 거부와 공개 경로 | 모든 Nest route handler에 global guard를 적용해 기본 보호한다. 공개 예외는 내부 네트워크 전용 `/health/live`, `/health/ready`뿐이며 각각 코드상 `PublicRoute`로 명시한다. 미설정 OIDC 검증기는 보호 route에서 generic 503으로 fail closed하고, 누락·잘못된·만료된 token은 동일한 generic 401로 거부한다. |
+| 최소 인증 문맥 | 성공 후 `issuer`와 `subject`만 immutable request principal로 전달한다. Raw token, 임의 role, Tenant/Hospital/Patient/Grant claim을 저장·로그하거나 인가로 해석하지 않는다. 다음 `IAM-002`가 trusted Actor registry와 membership으로 Actor/Tenant/Hospital을 서버에서 resolve하고, Authorization은 별도 Gate다. |
+| 테스트 키 경계 | Acceptance는 테스트 프로세스가 매 실행 생성하는 ephemeral RSA private key와 loopback JWKS fixture만 사용한다. Private key/JWT/fixture credential은 저장소·환경 설정에 넣지 않는다. 런타임 API는 서명하지 않고 공개키 JWKS만 조회한다. |
+| 실행 순서 보정 | Phase label과 제품 범위는 바꾸지 않는다. 다만 Phase 3/4의 보호 API·DB write를 열기 전에 `IAM-001 → IAM-002/003 + trusted Tenant transaction wrapper → AUT-001~004`를 cross-cutting prerequisite로 통과시킨다. 순수 domain/schema Ticket은 독립 Acceptance로 진행할 수 있다. 이 보정은 기존 API를 조기 노출하지 않기 위한 의존성 정리다. |
+| 제외 범위 | OIDC Authorization Code/PKCE 로그인 Provider/UI, Actor/Tenant 조회, business Authorization, DB grant/RLS, Audit writer와 제품 API는 이 Ticket에서 구현하지 않는다. 인증 성공은 Consent, Grant, resource/action 또는 PACS 권한을 부여하지 않는다. |
+| 대안 | API를 현재 인증 없이 공개하는 안은 `SEC-API-001`에 반해 기각한다. 자체 HMAC JWT 또는 request-supplied Tenant/Actor를 신뢰하는 안은 `TS-ADR-007`·`SEC-AUTHZ-010`에 반해 기각한다. Keycloak 의존은 P0의 self-contained Test Identity 선택과 달라 채택하지 않는다. |
+| Acceptance/추적 | `TC-IAM-001-AUTH-001~007`, `SEC-001`; `SEC-IAM-004~006`; `SEC-API-001`; `MEDIQ-IAM-001` |
+| 관련 문서 | `TECH-STACK-DECISION.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `OPENAPI.yaml`; `IMPLEMENTATION-PLAN.md`; `P0-EXECUTION-SCHEDULE.md`; DB-009 Tenant/Auth Gate |
+
+## IAM-001-DEC-002 — 외부 API 노출 전 rate-limit 및 issuer 구성 Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `TECH-STACK-DECISION.md` §10.2의 request rate-limit 요구; `SEC-API-001`; 현재 Compose API에 host `ports`가 없고 제품 업무 route와 실제 OIDC issuer가 아직 없음 |
+| 채택 권고안 | 현재 P0 synthetic 환경에서는 API host port를 공개하지 않고, 별도 OIDC issuer 및 명시적인 rate-limit 정책/Acceptance가 준비되기 전 외부 ingress를 추가하지 않는다. 미설정 issuer는 protected route에서 fail-closed `503`으로 둔다. |
+| Rate-limit 적용 경계 | 임의의 프로세스 내 IP 제한값을 즉석에서 정하지 않는다. 신뢰 가능한 proxy/ingress와 전달 헤더 신뢰 범위가 확정된 뒤 그 경계에서 인증 시도와 API 요청 제한을 선택하고 시험한다. 그 전까지 외부 노출 금지는 통제다. 현재 verifier의 JWT/JWKS 크기 제한, JWKS key 수 제한, fetch timeout/cooldown/cache는 rate-limit 대체가 아니다. |
+| 범위 및 비범위 | 이번 IAM-001은 global authentication middleware와 synthetic acceptance에 한정한다. 실제 Identity Provider, login/PKCE UI, 사용자/Actor/Tenant 인증 문맥, 업무 Authorization, 제품 API 또는 per-client rate limiter를 구현·주장하지 않는다. |
+| 고려한 대안 | 명시된 proxy trust와 운영 임계치 없이 process-local IP limiter를 구현하면 다중 인스턴스·proxy·주소 위조 조건에서 일관된 통제가 보장되지 않아 채택하지 않는다. 지금 API를 host port로 열어 통합 편의를 얻는 안은 issuer/AuthZ/rate limit가 없어 기각한다. |
+| Acceptance/추적 | IAM-001 middleware: `TC-IAM-001-AUTH-001~007`; 외부 ingress 추가 전 trusted proxy, rate-limit policy 및 denial/load Acceptance를 별도 Gate로 기록한다. |
+| 관련 문서 | `THREAT-MODEL.md` `THR-001`; `TECH-STACK-DECISION.md` §10.2; `SECURITY-REQUIREMENTS.md` `SEC-API-001`; `infra/docker-compose.yml`; `MEDIQ-IAM-001` |
+
+## IAM-002-DEC-001 — 검증된 Actor·Tenant 문맥과 transaction-local RLS 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `SEC-AUTHZ-010~011`; `DB-009-DEC-001`; `actors(tenant_id, external_subject)` unique 및 Tenant RLS; 미구현 IAM-002 dependency |
+| 채택 권고안 | P0는 `MEDIQ-IAM-001`이 검증한 단일 설정 OIDC issuer의 `issuer + subject`를 사용한다. 요청의 Tenant 값은 권한이 아니라 후보 선택자다. Backend는 UUID 후보 Tenant로 transaction-local `mediq.tenant_id`를 설정한 뒤, 동일 트랜잭션에서 정확한 `external_subject`와 후보 Tenant에 속하는 `ACTIVE` Actor를 조회하고 Tenant 및 Actor에 연결된 Hospital(있다면)이 `ACTIVE`인지 검증한다. 검증 전에는 업무 callback/Repository에 트랜잭션을 넘기지 않는다. issuer는 설정값과 정확히 일치해야 한다. |
+| 신뢰 context | `{ issuer, subject }`는 IAM-001 검증 결과만 사용한다. `actor_id`, `tenant_id`, `hospital_id`, `actor_type`은 client나 JWT의 임의 claim에서 가져오지 않고 검증된 Registry row에서 구성한다. Actor `hospital_id=NULL`은 Tenant-level context이며 Hospital-specific permission을 부여하지 않는다. `actor_type`은 역할 또는 업무 Authorization이 아니다. |
+| DB 최소권한 | 별도 migration으로 `mediq_runtime`에 `actors`의 `actor_id, tenant_id, hospital_id, actor_type, external_subject, status`, `tenants`의 `tenant_id, status`, `hospitals`의 `hospital_id, tenant_id, status`에 한해 column-level `SELECT`를 부여한다. RLS `ENABLE/FORCE` 및 기존 Tenant policy를 유지하고 INSERT/UPDATE/DELETE/DDL이나 다른 columns 권한은 부여하지 않는다. |
+| 트랜잭션·풀 | wrapper는 checkout한 동일 client에서 `RESET mediq.tenant_id → BEGIN → set_config(..., true) → membership lookup → callback → COMMIT/ROLLBACK → RESET → release`를 수행한다. 초기화·정리 실패나 rollback 실패 시 해당 client를 pool에 재사용하지 않고 폐기한다. Repository는 wrapper가 전달한 client만 사용한다. |
+| 보안 경계 | 후보 Tenant가 UUID 형식이고 존재한다는 것, RLS로 row가 보인다는 것, context가 만들어졌다는 것은 business Authorization이 아니다. Consent/Grant/Action/Resource/Destination 검사 및 Audit/Preflight는 후속 업무 Ticket이다. IAM-002는 public route를 만들지 않는다. |
+| issuer 경계 | 현재 Actor schema는 issuer를 저장하지 않는다. 그러므로 P0는 하나의 configured issuer만 허용한다. 여러 issuer를 수용하려면 `(issuer, subject)` identity namespace와 migration/Acceptance를 별도 결정하기 전까지 거부한다. |
+| 고려한 대안 | Client Tenant ID를 바로 trusted context로 채택하는 안은 `SEC-AUTHZ-010` 위반이다. Actor를 조회하기 위해 RLS를 끄거나 runtime `BYPASSRLS`/광범위 table grant를 주는 안은 최소권한·Tenant 격리를 약화하므로 기각한다. 모든 actor identity에 대해 전역 unique를 새 schema로 강제하는 안은 기존 tenant-scoped membership 모델을 불필요하게 제한하므로 채택하지 않는다. |
+| Acceptance/추적 | `TC-IAM-002-CTX-001~004`, `TC-IAM-002-DB-001`, `TC-IAM-002-TX-001~003`; `TC-DB-009-RLS-006`; `SEC-AUTHZ-010~011`; `MEDIQ-IAM-002` |
+| 관련 문서 | `SECURITY-REQUIREMENTS.md`; `SYSTEM-ARCHITECTURE.md`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `P0-EXECUTION-SCHEDULE.md`; IAM-001/DB-009 records |
+
+## AUT-001-DEC-001 — P0 Authorization Context value object 범위
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-AUT-001`; `SEC-AUTHZ-001`, `SEC-AUTHZ-010~011`; `INV-AUT-001~004`; 완료된 `MEDIQ-IAM-002`; 미완료 PAT-002 runtime/AuthZ gate |
+| 채택 권고안 | `MEDIQ-AUT-001`은 비영속·불변 Authorization Context value object와 입력 검증만 구현한다. Context는 검증된 IAM-002 Actor/Tenant/Hospital context, ExchangeSession UUID, MediQ 내부 Resource kind/UUID, 서버가 정한 P0 Action(`VIEW`, `DOWNLOAD`, `PACS_IMPORT`), 서버에서 조회한 Consent UUID 및 TransferGrant UUID를 모두 포함한다. |
+| 신뢰 경계 | Actor/Tenant/선택 Hospital/Actor type은 IAM-002 resolver 출력에서만 가져온다. Session·Resource·Consent·Grant UUID는 참조 식별자일 뿐 권한 증거가 아니며, client가 보내더라도 서버 측 조회·binding 검증 전에는 신뢰하지 않는다. Resource ID는 MediQ 내부 UUID이고 DICOM UID나 병원 Local Patient ID를 Authorization credential로 사용하지 않는다. |
+| 동작 경계 | 생성 성공은 Context의 형식·완전성만 뜻하며 `ALLOW` 또는 정책 통과를 뜻하지 않는다. 이 Ticket은 Consent/Grant 실재·상태·scope·tenant/resource/recipient/expiry 정합성 조회, 정책 평가, Allow/Deny service, route, DB 권한, Audit 및 DICOM side effect를 구현하지 않는다. 누락·잘못된 필드는 거부한다. |
+| 후속 Gate | `MEDIQ-AUT-002`는 기본 DENY와 명시적 decision을, `AUT-003`은 객체·Tenant·Action/Consent/Grant binding을, `AUT-004`는 policy/dependency 오류의 fail-closed를 각각 구현한다. 해당 Gate들과 필요한 Consent/Grant persistence가 통과하기 전 PAT-002 runtime grant/API와 보호된 업무 route는 열지 않는다. |
+| 고려한 대안 | 이 Ticket에서 곧바로 `ALLOW` 판정이나 PatientMapping route를 구현하는 안은 Consent/Grant/object authorization이 아직 없고 PAT-002의 보안 Gate를 우회하므로 기각한다. Consent·Grant를 boolean이나 client claim으로 받는 안은 위조·누락 및 정책 혼동 위험 때문에 기각한다. 영속 Authorization Decision table은 현재 Domain Model이 요구하지 않으므로 추가하지 않는다. |
+| Acceptance/추적 | `TC-AUT-001-CTX-001~005`; `REQ-AUT-001`; `SEC-AUTHZ-001`, `SEC-AUTHZ-010~011`; `INV-AUT-001~004`; `MEDIQ-AUT-001` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DOMAIN-MODEL.md`; `SYSTEM-ARCHITECTURE.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PAT-002` |
+
+## AUT-002-DEC-001 — 명시적 정책 결과만 허용하는 default-deny evaluator
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-AUT-002`; `SEC-AUTHZ-002~003`; `INV-AUT-001~004`; `AUT-001-DEC-001`; `THR-030` |
+| 채택 권고안 | `MEDIQ-AUT-002`는 non-persistent evaluator contract를 구현한다. 입력이 유효한 `AuthorizationContext`가 아니거나 정책 포트가 없으면 `DENY`한다. 정책 포트의 반환값이 정확히 `ALLOW`일 때만 `ALLOW`; 정확한 `DENY`, 미정의/누락/알 수 없는 반환값은 `DENY`한다. 정책 평가 예외도 `DENY`로 변환하며 예외 메시지는 결과에 포함하지 않는다. |
+| 정책 경계 | AUT-002에는 실제 업무 policy provider를 등록하지 않는다. explicit `ALLOW`는 단위 시험용 fake policy로 계약만 검증한다. 실제 `AuthorizationPolicy`는 AUT-003 이후 Tenant·Session·Resource·Action·Consent·Grant·Recipient·Expiry binding Acceptance를 통과해야만 연결할 수 있다. 현재 구성에서 보호된 모든 업무 요청은 계속 거부 상태다. |
+| 부작용 경계 | Evaluator는 결정을 `ALLOW`/`DENY`로만 반환하고 의료영상·응답 payload·DB write·PACS 호출을 수행하지 않는다. Controller, Nest provider registration, OpenAPI, DB grant/migration 및 route 연결은 이 Ticket에서 하지 않는다. 정책 예외의 HTTP status/safe error, Audit 기록과 side-effect 차단 통합은 AUT-004/후속 API Ticket에 남긴다. |
+| 고려한 대안 | policy 미설정 때 allow-by-default 또는 truthy/boolean 판정은 기각한다. 이 Ticket에서 incomplete Context에 일부만 보고 allow하는 실제 정책을 구현하는 안은 AUT-003 object/resource/Consent/Grant 검증을 생략하므로 기각한다. 모든 정책 예외를 HTTP 응답으로 노출하거나 정책 상세를 DENY 결과에 포함하는 안은 정보 노출 위험 때문에 기각한다. |
+| Acceptance/추적 | `TC-AUT-002-DD-001~006`; `REQ-AUT-002`; `SEC-AUTHZ-002~003`; `INV-AUT-001~004`; `THR-030`; `MEDIQ-AUT-002` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DOMAIN-MODEL.md`; `SYSTEM-ARCHITECTURE.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUT-001`; `MEDIQ-PAT-002` |
+
+## AUT-003-DEC-001 — 서버 조회 Evidence에 대한 객체 단위 인가 정책
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; 계획서 §14.2의 `MEDIQ-AUT-003` Object-level authorization; `SEC-API-002`; Domain/Data의 Consent·Grant·Session·Imaging invariants; IAM-002 verified Actor/Tenant/Hospital context; AUT-001/002 scoped PASS |
+| 채택 권고안 | `MEDIQ-AUT-003`은 결정 규칙을 구현하는 비영속 Policy와 내부 `AuthorizationEvidenceReader` port로 한정한다. Policy는 요청 Context와 IAM-002 verified callback에서 제공된 같은 request-scoped `PoolClient`를 내부 조회 port에 전달하고, 완전하고 일관된 Session·Consent·Grant·Resource binding이 확인될 때에만 정확한 `ALLOW`를 반환한다. 누락·불일치·알 수 없는 enum/시각/상태는 `DENY`한다. Evidence를 조회하는 PostgreSQL 구현, runtime table grants, Nest registration, HTTP route는 별도 선행 Consent/Grant·API Gate 전까지 만들거나 연결하지 않는다. |
+| Session 조건 | 동일 Session ID, Patient, Source Hospital, Destination Hospital이 Consent·Resource binding과 일치해야 한다. Session은 `AUTHORIZED`, `READY`, `ACTIVE` 중 하나여야 하고, 설정된 expiry가 있으면 현재보다 미래여야 한다. Terminal 또는 사전 승인 상태는 거부한다. |
+| Consent 조건 | Context가 가리키는 동일 Consent가 같은 Session·Patient·Source·Destination에 결속되어야 한다. `ACTIVE`, 유효한 `issuedAt <= now`, `withdrawnAt == null`, 허용 Action 포함을 요구한다. nullable `expiresAt`은 Data Model과 동일하게 예정 만료 없음으로 해석하되, 값이 있으면 `expiresAt > now`여야 한다. package ID가 지정된 Consent는 요청 Package와 정확히 일치해야 한다. |
+| Grant 조건 | Context가 가리키는 동일 Grant는 동일 Session·Consent·수신 Tenant·수신 Hospital에 결속되고 `ACTIVE`, 유효한 `issuedAt <= now < expiresAt`, `revokedAt == null`이어야 한다. 권한은 정확한 Imaging Package ID에 한정한다. `recipientActorId`가 있으면 Actor ID도 일치해야 하고, null이면 정확한 수신 Hospital에 속한 IAM-002 검증 Actor 범위의 hospital-level Grant로만 해석한다. Action은 `VIEW→study:view`, `DOWNLOAD→study:download`, `PACS_IMPORT→study:pacs-transfer`로 일대일 대응한다. |
+| Resource 조건 | 내부 Resource의 kind/ID가 Context와 정확히 같고, trusted resolver가 이를 같은 Session·Patient·Source Hospital의 Study/Package에 귀속시켜야 한다. Package는 `AVAILABLE` 또는 `IN_EXCHANGE`, 삭제되지 않았고 retention expiry가 있으면 미래여야 한다. `SERIES`/`INSTANCE`는 parent Study binding을 증명하지 못하면 거부한다. Grant의 Package ID가 null이거나 binding Package와 다르면 P0 object-level access를 거부한다. |
+| 요구사항 ID 정합 | 기존 `REQ-AUT-003`의 Fail Closed 의미와 ID는 보존한다. 계획서 Ticket 순서에 맞춰 Object-level authorization은 새 `REQ-AUT-004`로 추가하며 `MEDIQ-AUT-003`/`TC-AUT-003-OBJ-*`가 이를 구현한다. `REQ-AUT-003`의 HTTP/data/side-effect fail-closed Acceptance는 `MEDIQ-AUT-004`/`TC-AUT-004-FC-*`에서 검증한다. 기존 ID를 다른 의미로 재사용하지 않는다. |
+| 적용 경계 | 이 Ticket의 resolver는 interface/test double뿐이며 실제 저장소 자료를 신뢰해 조회한다는 실행 증거가 아니다. Policy를 `AuthorizationEngine`에 시험 연결할 수 있지만 API/Application module에는 등록하지 않는다. `ALLOW`는 인가 판단일 뿐 data 반환, Viewer session, Download, PACS Preflight, Integrity/Provenance, Audit 또는 side effect를 발생시키지 않는다. `AT-SEC-003`의 HTTP BOLA/IDOR 결과와 PAT-002 runtime access는 미실행 상태로 유지한다. |
+| 고려한 대안 | (1) Consent/Grant/Session DB 조회·privilege migration·API route까지 함께 여는 안은 Consent/Grant application workflow와 resource-specific DB privilege/Acceptance가 없어 기각한다. (2) Tenant RLS 행 가시성, UUID knowledge 또는 Consent 단독으로 허용하는 안은 BOLA 및 INV-AUT-002를 위반하여 기각한다. (3) package scope가 null인 Grant를 Session 전체로 확대 해석하는 안은 P0 resource-scope 원칙에 반하므로 기각한다. (4) 요구사항 ID를 재사용해 Fail Closed 의미를 바꾸는 안은 추적성 손실 때문에 기각한다. |
+| 잔여 위험/후속 Gate | role/capability 기반 workforce authorization은 현재 IAM Context/Grant schema에 포함되지 않는다. Null actor recipient의 병원 단위 Grant는 synthetic P0에서만 허용하며 Production/실환자 사용 전 역할정책 검토가 필요하다. Trusted DB evidence reader, Consent/Grant domain/persistence 및 minimum column grants, API safe error/deny-before-data-side-effect Acceptance, Preflight/Audit는 별도 Gate다. 이 Gate 전까지 보호 API와 PAT-002 runtime grant는 닫힌다. |
+| Acceptance/추적 | `TC-AUT-003-OBJ-001~012`; `AT-SEC-003` remains HTTP integration pending; `REQ-AUT-004`; `SEC-API-002`; `THR-002`; `MEDIQ-AUT-003` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `SYSTEM-ARCHITECTURE.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUT-004`; `MEDIQ-PAT-002`; Consent/Grant tickets |
+
+## AUT-005-DEC-001 — Tenant transaction 기반 PostgreSQL Authorization Evidence Reader
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-AUT-004~005`; `SEC-AUTHZ-010~012`; `SEC-DB-005~006`; `SEC-TEN-005`; `DB-009-DEC-001`; `IAM-002-DEC-001`; `AUT-003-DEC-001`; `AUT-004-DEC-001`; 승인된 Session/Consent/Grant/Imaging schema와 FORCE RLS |
+| 채택 권고안 | `MEDIQ-AUT-005`는 실제 `mediq_runtime` PostgreSQL에서 server-owned Authorization facts를 읽는 내부 adapter와 exact column-level `SELECT` grants로 한정한다. Reader는 `AuthorizationContext`의 내부 Session/Consent/Grant/StudyReference UUID만 parameterized query에 바인딩하고, IAM-002가 검증한 동일 `PoolClient`를 사용한다. 단일 read query에서 Session·Consent/Action·Grant/Scope·ImagingPackage·StudyReference를 모두 찾아 complete facts를 반환한다. 누락·중복·binding 불일치·SQL/RLS/권한 오류는 policy의 fail-closed 경계를 통해 DENY한다. |
+| Resource 경계 | 현재 저장 모델에서 서버가 증명 가능한 리소스는 `study_references.study_ref_id`에 대응하는 `STUDY`뿐이다. `SERIES`/`INSTANCE` context는 조회 없이 DENY한다. UID·local patient ID·storage_ref·DICOM payload는 조회하거나 결과로 반환하지 않는다. 이 제약은 child-level DB binding이 추가되고 별도 Acceptance를 통과할 때까지 유지한다. |
+| DB 권한 | 신규 migration은 7개 기존 업무 테이블에 필요한 정확한 41개 column `SELECT`만 부여한다: `exchange_sessions` 6, `consents` 10, `consent_actions` 2, `transfer_grants` 11, `transfer_grant_scopes` 2, `imaging_packages` 7, `study_references` 3. Table-wide privilege, INSERT/UPDATE/DELETE/TRUNCATE/DDL, PUBLIC/default grant는 추가하지 않는다. 기존 IAM-002 11개와 synthetic `patient_refs` 10개 권한을 포함한 현재 검증 inventory는 총 62 column-privilege rows다. |
+| 적용/부작용 경계 | 실제 `AuthorizationEngine` + `ResolvedObjectAuthorizationPolicy` + PostgreSQL reader를 IAM-002 runtime-only scratch DB에서 통합 검증한다. Integration callback은 부작용 없는 synthetic assertion만 한다. Executor/Policy를 `AppModule`이나 HTTP route에 등록하지 않고 OpenAPI·Viewer·Download·PACS·Audit writer·PatientMapping runtime grant는 변경하지 않는다. `ALLOW`는 인가 판정 증거일 뿐 제품 데이터 접근·전송 성공을 뜻하지 않는다. |
+| Acceptance/Gate | 신규 `TC-AUT-005-DB-001~007`; API/HTTP `TC-AUT-004-FC-001~004`, `AT-SEC-003/017`은 계속 NOT RUN이며 별도 Ticket 필요. PAT-002 runtime mapping grant/API도 이 결정만으로 열리지 않는다. `MEDIQ-DB-009` overall은 계속 PARTIAL이다. |
+| 고려한 대안 | (1) HTTP route와 실영상 side effect까지 한 번에 연결하는 안은 safe HTTP/BOLA, Consent/Grant workflow, Preflight·Integrity·Provenance·Audit·Destination Verification Gate가 미완료이므로 기각한다. (2) RLS visibility만 보고 허용하거나 caller facts를 받는 안은 `SEC-TEN-005`와 BOLA 경계를 위반하므로 기각한다. (3) 기존 스키마에 없는 Series/Instance parent lookup을 추정하는 안은 authoritative binding을 증명하지 못해 기각한다. (4) table-wide SELECT 또는 CRUD grant는 최소권한 원칙 위반으로 기각한다. |
+| 잔여 위험 | DB의 custom Tenant GUC는 같은 runtime SQL 실행자가 임의 변경할 수 있다는 기존 P0 한계를 가진다. 단일 query는 일관된 facts snapshot을 제공하지만 concurrent Consent/Grant revoke에 대한 side-effect race를 해결하지 않는다. Protected operation을 열기 전에는 revoke concurrency/transaction lock policy와 HTTP no-data/BOLA, safe error, Audit 및 operation-specific Acceptance가 별도 필요하다. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `SYSTEM-ARCHITECTURE.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUT-005`; `MEDIQ-DB-009`; `MEDIQ-IAM-002`; `MEDIQ-AUT-003/004` |
+
+## CON-001-DEC-001 — P0 ConsentArtifact 순수 도메인 범위
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-CON-001` Phase 4 계획; `REQ-CON-001/002/005`; `DOMAIN-MODEL.md` Consent invariants; `DATA-MODEL.md` `consents`/`consent_actions`; `SEC-CONSENT-001~004`; 기존 DB-005 schema Acceptance |
+| 채택 권고안 | `MEDIQ-CON-001`은 CAPSTONE-P0의 비영속 `ConsentArtifact` 도메인으로 한정한다. 서버 생성 UUID, 호출자가 별도 version allocator에서 전달한 양의 정수 `consentVersion`, ExchangeSession/PatientReference/Source Hospital/Destination Hospital UUID, 선택적 Imaging Package UUID, 비어 있지 않은 고유 P0 action 집합(`VIEW`, `DOWNLOAD`, `PACS_IMPORT`), 기존 5개 status, nullable issue/expiry/withdrawal timestamp, 생성·수정 timestamp를 불변 snapshot으로 표현한다. 신규 생성은 항상 `PENDING`, `issuedAt=null`, `withdrawnAt=null`이며 재구성만 schema상 5개 상태를 받아들인다. |
+| Resource·Action 의미 | `imagingPackageId=null`은 Session 범위의 Consent metadata를 뜻하며 그 자체로 전체 리소스 접근이나 Grant를 허용하지 않는다. 특정 package가 지정되면 해당 package에 한정한다. P0 Domain은 `MOBILE_EXPORT`를 허용하지 않는다. action과 package의 실제 요청 binding은 AUT-003 및 Application/Authorization Gate가 계속 검증한다. |
+| 검증 규칙 | UUID 및 허용 enum, 서로 다른 Source/Destination, positive safe-integer version, 최소 1개의 중복 없는 P0 action, 유효한 Date 또는 null, `updatedAt >= createdAt`만 이 Ticket에서 검사한다. 저장소 schema의 기존 제약을 중복 주장하지 않고, 승인되지 않은 expiry/issue/withdrawal 간 시간 순서나 status/timestamp 상관관계를 새로 추론하지 않는다. Version의 session 내 유일성/동시 할당은 후속 Persistence Ticket 책임이다. |
+| 명시적 비범위 | approve/reject/withdraw/expire 상태전이, Consent 요청·승인 API, Persistence/version allocator, DB grants/RLS, Audit, Actor/Patient identity proof, 법적 동의 효력, Access Authorization, TransferGrant 발급, PACS/Viewer/Data side effect는 포함하지 않는다. 새 Artifact를 만들거나 `ACTIVE` snapshot을 재구성해도 ALLOW나 법적 동의 완료를 뜻하지 않는다. |
+| 채택 이유 | 기존 Phase 4 Ticket 분리와 DB-005 schema를 존중하며, Consent를 독립·명시적 evidence로 만들면서 권한이나 법적 효력을 과장하지 않는다. AUT-003 정책과 연결 가능한 안정된 도메인 표현을 먼저 제공한다. |
+| 고려한 대안 | (1) Consent를 boolean이나 client claim으로 처리하는 안은 evidence/context/action 분리를 훼손하므로 기각한다. (2) CON-001에서 API·DB privilege·승인/철회 workflow까지 함께 구현하는 안은 Ticket 순서와 현재 business authorization gate를 우회하므로 기각한다. (3) P0 domain에 `MOBILE_EXPORT`를 허용하는 안은 P1 경계와 충돌하므로 기각한다. (4) 승인되지 않은 날짜 상관관계나 자동 version allocator를 domain에서 추론하는 안은 저장소·동시성 계약이 정해지지 않아 기각한다. |
+| Acceptance/추적 | `TC-CON-001-DOM-001~008`; `REQ-CON-001/002/005`; `INV-CON-001~010`; `MEDIQ-CON-001`; API/Authorization/security integration remains pending under CON/AUT/DB gates |
+| 관련 문서 | `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-001`; `MEDIQ-AUT-003` |
+
+## CON-002-DEC-001 — 합성 Consent의 원자적 저장과 세션별 버전 할당
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-CON-002` Phase 4 순서; `CON-001-DEC-001`; `REQ-CON-001/002/005`; `INV-CON-001~010`; 기존 `DB-005` consents/consent_actions schema와 `(exchange_session_id, consent_version)` UNIQUE; IAM-002 same-client Tenant transaction; `SEC-DB-005/006`; 사용자의 권고안 우선·기록 후 진행 지침 |
+| 채택 권고안 | `MEDIQ-CON-002`는 기존 PostgreSQL `consents`·`consent_actions` schema를 변경하지 않고, synthetic P0 기술 Consent의 내부 persistence adapter만 구현한다. 신규 저장은 도메인 생성 규칙 그대로 `PENDING`, `issued_at=NULL`, `withdrawn_at=NULL`인 불변 `ConsentArtifact`로만 가능하다. Session별 버전은 동일 IAM-002 verified Tenant transaction의 `PoolClient`에서 `pg_advisory_xact_lock(hashtextextended(session_id::text, fixed_seed))`를 획득한 뒤 해당 RLS-visible Session의 `MAX(consent_version)+1`로 원자적으로 배정한다. 기존 DB UNIQUE 제약은 최종 중복 방어로 유지한다. 값이 PostgreSQL `integer` 최대치에 이르거나 필요한 증거가 없으면 fail closed한다. |
+| Context·저장 원자성 | 저장 전에 server-owned `exchange_sessions` 행을 같은 Tenant/RLS transaction에서 확인하고 PatientReference·Source Hospital·Destination Hospital·Session ID binding이 정확히 같은지 검증한다. Consent parent row와 P0 action rows는 같은 transaction 안에서 저장되며, 어느 하나라도 실패하면 모두 rollback한다. 내부 `findById` 재구성은 same-transaction RLS-visible 자료만 반환한다. Advisory lock은 transaction 경계 안에서 유지되어야 하며, adapter는 IAM-002가 시작한 transaction 밖에서 독립 호출하지 않는다. |
+| 최소권한·시험 경계 | 새로운 permanent migration, API wiring 또는 영구 Consent write grant는 금지한다. DB-008 disposable scratch DB에서만 baseline에 이미 있던 `consents` SELECT 10개 열과 `consent_actions` SELECT 2개 열에 더해, 각각 남은 SELECT 3개 열(`consent_version`, `created_at`, `updated_at`)과 1개 열(`consent_action_id`)을 임시 추가한다. 모든 13개 Consent 열과 3개 Action 열에는 INSERT를 추가한다. 시험 중 유효 권한은 `consents` SELECT/INSERT 13/13, `consent_actions` 3/3이며 inventory는 baseline 100개에서 120개가 된다. Acceptance 종료 후 정확히 100개로 복구되어야 한다. 두 테이블 모두 FORCE RLS 및 기존 Tenant predicates를 유지하고 table-wide/PUBLIC/default/DDL/UPDATE/DELETE/TRUNCATE 권한은 부여하지 않는다. |
+| 비범위·의미 | Consent row와 action을 저장해도 환자 신원, 환자 의사, 전자서명, 충분한 설명, 법적 동의 또는 환자 승인 행위를 증명하지 않는다. 이 Ticket은 `PENDING` 이외 status 전이, 요청/승인/철회 API, Authorization `ALLOW`, TransferGrant, Audit event, Viewer/Download/PACS side effect를 구현하지 않는다. `ACTIVE`나 철회 상태를 persistence에서 쓰지 않으며 읽어 온 상태도 권한으로 사용하지 않는다. No Consent/withdrawal enforcement와 `SEC-CONSENT-001~004`는 계속 미완료다. |
+| 채택 이유 | 기존 DB-005가 이미 version uniqueness와 RLS 구조를 제공하므로 불필요한 schema migration을 피한다. Transaction advisory lock은 제한된 Session-scoped allocator를 가능하게 하며 DB UNIQUE가 추가 방어를 제공한다. Scratch-only exact privileges는 실제 PostgreSQL/RLS·동시성 동작을 확인하면서 보호된 제품 Consent write path를 조기에 열지 않는다. |
+| 고려한 대안 | (1) 호출자가 version을 직접 주게 하는 안은 동일 Session concurrent create에서 중복/충돌 정책을 호출자에게 맡기므로 기각한다. (2) `MAX+1`만 수행하고 lock하지 않는 안은 동시 요청이 같은 version을 받을 수 있어 기각한다. (3) 영구 runtime INSERT 권한이나 Consent API를 이 Ticket에서 여는 안은 patient/Consent actor authentication, approve/withdraw workflow, Audit 및 business Authorization이 아직 승인·검증되지 않아 기각한다. (4) DB schema에 별도 sequence/counter를 추가하는 안은 현재 Session별 UNIQUE와 transaction lock으로 불변조건을 지킬 수 있어 현 단계에서는 불필요하므로 기각한다. (5) DB-005 schema 자체를 중복 재작성하는 안은 기존 승인 schema와 회귀 gate를 불필요하게 흔들므로 기각한다. |
+| Acceptance/추적 | `TC-CON-002-DB-001~007`; `REQ-CON-001/002/005`; `SEC-DB-005/006`; `SEC-CONSENT-001~004`는 이 Ticket에서 PASS 처리하지 않음; `MEDIQ-CON-002` |
+| 후속 Gate | `MEDIQ-CON-003~008`는 Consent request/approve/withdraw semantics, actor/patient boundary, allowed action enforcement와 Audit을 각각 정의해야 한다. `MEDIQ-AUT-*`/`MEDIQ-GRT-*`/PACS consumer는 Consent status만으로 권한을 인정할 수 없고 independent Authorization/Grant 및 Mandatory Preflight를 계속 요구한다. |
+| 관련 문서 | `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-001`; `MEDIQ-CON-002`; `MEDIQ-DB-005`; `MEDIQ-DB-008`; `MEDIQ-IAM-002` |
+
+## CON-003-DEC-001 — 목적지 병원의 PENDING Consent 요청 API
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-CON-003`; 승인 OpenAPI `requestConsent`; `AT-FUNC-005`; `REQ-CON-001/002/005`; `INV-CON-001~010`; `SEC-API-001/002`; `SEC-DB-005/006`; `SEC-AUD-001`; `IAM-002` verified same-client Tenant transaction |
+| 채택 권고안 | `POST /exchange-sessions/{sessionId}/consents/request`를 구현한다. 호출자는 유효한 OIDC USER이며 verified Actor의 Hospital은 server-owned Session의 destination과 같고, actor ID는 해당 Session의 `requester_actor_id`와 같아야 한다. Session·PatientReference·Source/Destination은 body가 아니라 같은 RLS transaction의 저장된 Session에서 가져온다. Session은 `REQUESTED`여야 한다. |
+| Request·scope 검증 | Body는 `allowedActions`와 선택적인 `imagingPackageId`·`expiresAt`만 허용한다. Action은 중복 없는 비어 있지 않은 P0 집합 `VIEW`, `DOWNLOAD`, `PACS_IMPORT`여야 한다. `imagingPackageId`가 있으면 같은 Session/Patient/Source에 연결되고 `AVAILABLE`, 삭제되지 않았으며 retention 미만료인 저장 객체인지 동일 Tenant transaction에서 확인한다. `expiresAt`은 strict date-time이며 미래여야 하고, Session 만료가 설정된 경우 그 시각을 넘을 수 없다. Patient-local ID, 원본 DICOM 및 caller-supplied Patient/Hospital context는 받지 않는다. |
+| 원자성·Audit | 한 verified `PoolClient` transaction에서 Session advisory lock, Session read/actor/state 검증, Consent와 action 저장, Session `REQUESTED→CONSENT_PENDING` optimistic update, `CONSENT_REQUESTED` success Audit를 함께 commit한다. 어느 단계든 실패하면 모두 rollback한다. Audit에는 actor/tenant/session, Consent resource, action, outcome, timestamp, correlation context만 남기며 환자식별자·패키지 내용·DICOM·Credential은 넣지 않는다. |
+| 재시도 | 이미 `CONSENT_PENDING`이고 정확히 같은 유일한 `PENDING` Consent 및 canonical request가 있으면 기존 Consent를 재응답하고 `Idempotency-Replayed: true`를 설정한다. Consent/Audit를 중복 생성하지 않는다. body가 다르거나 일관된 단일 PENDING 상태를 확인할 수 없으면 `409`로 닫는다. 새 idempotency column/table은 추가하지 않는다. |
+| 정확한 DB 권한 | additive migration으로 현재 100-row baseline에 22개 column privilege만 추가한다: `consents`에 남은 3-column SELECT + 13-column INSERT, `consent_actions`에 남은 1-column SELECT + 3-column INSERT, `exchange_sessions(state, updated_at)` UPDATE 2개. 결과 baseline은 122 rows다. 기존 Session SELECT 12, Audit INSERT 12, ImagingPackage exact SELECT와 forced RLS는 유지한다. Table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE 및 다른 UPDATE는 금지한다. |
+| 응답·제품 경계 | 신규 요청은 `201`과 `PENDING` Artifact를 반환한다. 오류는 입력 400, 인증 401, 접근 거부 403, 상태·중복 충돌 409, 내부 의존성 장애 503으로 고정된 비민감 코드만 반환한다. `PENDING`은 실제 환자 승인·법적 동의 또는 영상 접근권한이 아니다. Approval/withdrawal, Grant, Authorization `ALLOW`, Viewer/Download/PACS/환자 통지는 이 Ticket에서 열지 않는다. |
+| 고려한 대안 | (1) body의 patient/source/destination을 신뢰하는 안은 교차 대상 위조 위험으로 거부한다. (2) tenant membership만 검사하고 Session 생성자/목적지 병원을 확인하지 않는 안은 object-level access 위험으로 거부한다. (3) Consent·Session·Audit을 별 transaction으로 저장하는 안은 partial state를 남길 수 있어 거부한다. (4) repeated POST마다 새 Consent/Audit를 만드는 안은 응답 유실 시 중복을 만들어 거부한다. (5) table-wide 권한 또는 승인 전에 환자 승인/Grant로 승격하는 안은 최소권한 및 Consent/Authorization 분리와 충돌해 거부한다. |
+| Acceptance/추적 | `TC-CON-003-API-001~009`; `AT-FUNC-005`; `SEC-CONSENT-005`; `REQ-CON-001/002/005`; `SEC-API-001/002`; `SEC-DB-005/006`; `SEC-AUD-001` |
+| 관련 문서 | `OPENAPI.yaml`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-001/002/003`; `MEDIQ-IAM-001/002`; `MEDIQ-EXC-003`; `MEDIQ-DB-008` |
+
+## CON-004-DEC-001 — 합성 환자 주장에 한정된 technical Consent 승인
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `CAPSTONE-MVP-BOUNDARY.md` Consent Workflow Boundary의 Synthetic Patient Approval 및 비법적 효력; `AT-FUNC-006`; `REQ-CON-003`; `INV-CON-010`; `CON-003-DEC-001`; 현재 Actor에 patient binding이 없다는 코드·DB evidence |
+| 채택 권고안 | `POST /exchange-sessions/{sessionId}/consents/{consentId}/approve`는 Synthetic/Test P0에서만 technical transition으로 구현한다. PatientReference는 요청 body/header/query 값이 아니라 서명·issuer·audience가 검증된 OIDC JWT의 `mediq_patient_ref_id` claim에서만 가져온다. Claim이 없는/잘못된 token, active USER가 아닌 actor, Hospital-bound actor, 또는 요청한 Hospital Actor 자신은 거부한다. Server-owned Session과 단일 PENDING Consent의 `patient_ref_id`가 claim과 모두 정확히 일치해야 하며 Session/Consent의 expiry와 현재 상태도 검증한다. 이 claim은 합성 actor binding일 뿐 실제 신원확인·설명의무·법적 동의를 증명하지 않는다. |
+| 원자 전이·재시도 | verified IAM-002 transaction 안에서 Session advisory lock을 잡고 저장된 Session/Consent를 다시 읽는다. 유효한 승인에서 Consent `PENDING→ACTIVE`와 `issued_at/updated_at` 설정, Session `CONSENT_PENDING→CONSENTED`, `CONSENT_APPROVED` 성공 Audit을 하나의 transaction으로 commit한다. 어느 쓰기라도 실패하면 모두 rollback한다. 동일 환자 claim의 이미 완료된 동일 승인 재시도는 기존 결과를 replay로 반환하고 추가 Audit를 만들지 않는다. |
+| DB 최소권한 | additive migration은 `consents(status, issued_at, updated_at)` UPDATE만 추가한다. Session state/updated_at UPDATE와 Audit INSERT는 기존 허용 column privilege를 재사용한다. 예상 runtime catalog는 122→125개이며 table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE 또는 다른 UPDATE는 추가하지 않는다. Forced RLS는 그대로 적용한다. |
+| 제품·법적 경계 | `ACTIVE`는 Synthetic/Test technical workflow 결과다. 실제 법적 동의·환자 본인확인, Authorization ALLOW, TransferGrant, Viewer/Download/PACS 권한을 의미하지 않는다. 이 Ticket은 Grant 발급이나 영상/PACS 호출을 하지 않는다. 실환자 또는 운영 IDP 연계 전에는 별도 환자 identity-proofing, claim issuance, 법무·보안 review 및 Scope Decision이 필요하다. |
+| 고려한 대안 | (1) 일반 로그인만으로 approve를 허용하면 병원 직원이 환자를 대신할 수 있어 기각한다. (2) client가 `patientRefId`를 body/header로 선택하게 하면 타 환자 승인 위험으로 기각한다. (3) Consent `ACTIVE`를 즉시 Grant/access로 승격하면 Consent와 Authorization을 혼합하므로 기각한다. (4) 새 identity DB table을 추가하는 안은 합성 P0 요구에 불필요한 schema/scope 확대라 기각하고, trusted test issuer의 서명 claim + 기존 active Actor membership만 사용한다. (5) OIDC assertion 부재 시 병원 세션 또는 UI 상태로 fallback하는 안은 fail-closed 위반으로 기각한다. |
+| Acceptance/추적 | `TC-CON-004-API-001~010`; `AT-FUNC-006`; `SEC-CONSENT-006`; `REQ-CON-003/005`; `SEC-API-001/002`; `SEC-DB-005/006`; `SEC-AUD-001`; `THR-004` |
+| 관련 문서 | `CAPSTONE-MVP-BOUNDARY.md`; `DOMAIN-MODEL.md`; `SYSTEM-ARCHITECTURE.md`; `OPENAPI.yaml`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-IAM-001/002`; `MEDIQ-CON-001/002/003/004` |
+
+## CON-005-DEC-001 — 합성 환자 claim 결속 Consent 철회 API
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-CON-004`; `AT-FUNC-007`; `SEC-CONSENT-002`; `SEC-CONSENT-006`; `SEC-AUD-001`; 기존 Consent schema/status/`withdrawn_at`; `MEDIQ-CON-004` verified synthetic patient claim boundary; `MEDIQ-AUT-003/005` withdrawn-Consent DENY evidence |
+| 채택 권고안 | `POST /exchange-sessions/{sessionId}/consents/{consentId}/withdraw`를 Synthetic/Test P0 technical workflow로 구현한다. PatientReference는 검증된 signed OIDC JWT `mediq_patient_ref_id` claim에서만 얻는다. active tenant-level `USER`(Hospital binding 없음)만 허용하며, server-owned Session/Consent의 exact ID·PatientReference·Tenant/RLS binding 및 Session requester 분리를 확인한다. Claim selector, Consent object, state는 body/query/임의 header/UI에서 받지 않는다. |
+| 상태·가용성 | 신규 전이는 `ACTIVE → WITHDRAWN`만 허용한다. Consent와 Session의 만료시각 또는 ExchangeSession의 진행/terminal state 때문에 철회를 막지 않는다. 이미 `WITHDRAWN`이고 claim·binding이 같은 재요청은 replay로 처리한다. `PENDING`, `EXPIRED`, `REJECTED` 및 상태/시각 불일치는 conflict/deny한다. 환자 철회 의사를 만료 여부보다 우선해 기록한다. |
+| 원자성·재시도 | 동일 IAM-002 verified Tenant/RLS transaction에서 Session advisory lock을 잡고 server-owned rows를 재조회한다. `consents.status='WITHDRAWN'`, `withdrawn_at=now`, `updated_at=now`와 단일 성공 `CONSENT_WITHDRAWN` Audit를 함께 commit하거나 rollback한다. 동일 완료 재시도 및 경합은 성공 Audit를 중복 생성하지 않는다. Session 상태, Grant row, PACS/영상은 이 endpoint가 변경하지 않는다. |
+| DB 최소권한 | Schema 변경 없이 additive migration으로 `consents(withdrawn_at)` UPDATE 한 열만 추가한다. 기존 `status, updated_at` Consent UPDATE 권한과 Audit INSERT를 재사용하여 runtime catalog를 125→126으로 제한한다. Table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE/다른 UPDATE 권한을 추가하지 않고 forced RLS를 유지한다. |
+| 하위 Authorization 경계 | `WITHDRAWN` Consent를 이용한 신규 Grant는 계속 DENY한다. 이후 Grant 발급은 같은 Session advisory lock을 사용해 Consent를 transaction 안에서 다시 읽어야 한다. 매 접근 시 Authorization은 ACTIVE Consent를 다시 검증해야 하며, 이 Ticket은 Grant row를 revoke하거나 이미 완료된 PACS 전송·다운로드·오프라인 사본을 회수했다고 주장하지 않는다. |
+| 제품·법적 경계 | 이 API는 synthetic technical state와 Audit만 기록한다. 실환자 본인확인, 법적 동의 절차, 환자 통지, 즉시 원격 키 회수, 기존 영상의 삭제 또는 외부 PACS에서의 회수는 제공하지 않는다. `Consent WITHDRAWN`은 Authorization/Grant의 독립 검증을 대체하지 않는다. |
+| 고려한 대안 | (1) client가 patient reference를 지정하는 안은 타 환자 철회 BOLA 위험으로 기각한다. (2) Session/Consent가 expired/terminal이면 철회를 막는 안은 오래된 동의의 철회 기록을 차단하므로 기각한다. (3) Session state나 Grant/PACS 데이터를 이 endpoint에서 함께 변경하는 안은 별 lifecycle·실패 경계를 혼합하므로 기각한다. (4) 반복 요청마다 Audit를 추가하는 안은 네트워크 재시도로 중복 의사 이벤트를 만들므로 기각한다. (5) table-wide UPDATE 또는 `withdrawn_at` 이외 열 권한을 추가하는 안은 최소권한을 넘으므로 기각한다. |
+| Acceptance/추적 | `TC-CON-005-API-001~013`; `AT-FUNC-007`; `AT-SEC-006`; `REQ-CON-004`; `SEC-CONSENT-002/007`; `SEC-API-001/002`; `SEC-DB-005/006`; `SEC-AUD-001`; `THR-004` |
+| 관련 문서 | `CAPSTONE-MVP-BOUNDARY.md`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `OPENAPI.yaml`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-001~005`; `MEDIQ-IAM-001/002`; `MEDIQ-AUT-003/005` |
+
+## CON-006-DEC-001 — P0 Consent Allowed Action의 엄격한 정책 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-CON-006` 구현계획; `CAPSTONE-MVP-BOUNDARY.md`의 P0/P1 분리; `DOMAIN-MODEL.md` P0 Consent Action 및 AUT-003 규칙; `SEC-GRANT-005`; 현재 `object-authorization-policy.ts`가 P0 Context는 거부하지만 Consent evidence의 허용 Action/Scope map에는 `MOBILE_EXPORT`를 포함하는 코드 점검 |
+| 채택 권고안 | AUT-003 pure Authorization policy가 Consent `allowedActions`를 P0 Action인 `VIEW`, `DOWNLOAD`, `PACS_IMPORT`로만 검증한다. `MOBILE_EXPORT` 및 알 수 없는 Action이 P0 Consent evidence에 포함되면, 요청 Action이 별도로 유효하더라도 `DENY`한다. Action/Grant scope 대응은 `VIEW↔study:view`, `DOWNLOAD↔study:download`, `PACS_IMPORT↔study:pacs-transfer`의 일대일 mapping만 허용하며, Consent Action에 없는 Grant scope·중복·불일치·추가 scope는 `DENY`한다. |
+| 구현 경계 | 기존 AUT-003 순수 정책과 테스트만 보강한다. 입력 검증·Consent API·Grant 발급 API·Viewer/Download/PACS route, DB schema·migration·runtime grant, P1 Mobile 기능을 추가하지 않는다. 기존 DB schema의 `MOBILE_EXPORT` 허용은 향후 P1 저장 모델 호환으로 유지하되, P0 Domain/API/Authorization 허용으로 해석하지 않는다. |
+| Acceptance/추적 | `TC-CON-006-AUTH-001~005`; 기존 AUT-003 exact P0 action/scope positive 및 denial matrix; `REQ-CON-006`; `REQ-GRT-004`; `SEC-CONSENT-008`; `SEC-GRANT-005`; `THR-005` |
+| 고려한 대안 | (1) AuthorizationContext가 `MOBILE_EXPORT`를 막으므로 Consent evidence에서도 허용하는 현재 구현을 유지하는 안은 malformed/server-stored evidence에 대한 P0 evaluator의 독립 fail-closed 보장이 없어 기각한다. (2) P0 Action enum 또는 DB schema에서 P1 값을 제거하는 안은 DB/schema·P1 호환 범위를 불필요하게 넓히므로 기각한다. (3) 이 Ticket에서 Grant issue endpoint와 HTTP/PACS side effect를 구현하는 안은 별도 Grant/Preflight 승인 Ticket 범위를 앞당기므로 기각하고, 해당 통합 Acceptance는 후속으로 남긴다. |
+| 잔여 위험 | 이 pure policy Acceptance는 실제 Grant 발급 차단, HTTP BOLA, DB evidence provenance, Viewer/Download/PACS side effect 또는 A→B E2E를 입증하지 않는다. Grant issue route와 protected operation integration은 별도 Acceptance가 필요하다. |
+| 관련 문서 | `CAPSTONE-MVP-BOUNDARY.md`; `DOMAIN-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-006`; `MEDIQ-AUT-003` |
+
+## CON-007-DEC-001 — Consent Audit 이벤트 문맥 검증과 요구사항 정합화
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-AUD-001/002`; `SEC-AUD-001/002`; `AT-AUD-001~003`; `MEDIQ-CON-003~005` 코드·Acceptance 점검; 사용자의 권고안 선작성·기록 후 진행 지침 |
+| 확인된 공백 | CON-003~005는 `CONSENT_REQUESTED`, `CONSENT_APPROVED`, `CONSENT_WITHDRAWN`을 각 성공 전이와 원자 저장하고 replay/fault rollback을 검증한다. 다만 런타임 통합 Acceptance는 주로 해당 action의 행 개수만 확인하고 actor·tenant·session·resource·outcome·correlation·timestamp 간 실제 행 값 결속은 확인하지 않는다. `REQ-AUD-001`에는 `CONSENT_REQUESTED`가 있으나 `SEC-AUD-001` 이벤트 목록에는 누락되어 있다. |
+| 채택 권고안 | 세 기존 성공 이벤트만 유지하고 중복·추가 이벤트는 만들지 않는다. `SEC-AUD-001`에 `CONSENT_REQUESTED`를 추가하여 `REQ-AUD-001`과 일치시킨다. PostgreSQL 통합 Acceptance에서 각 성공 이벤트가 정확한 Actor, Tenant, Session, `CONSENT` resource type 및 Consent ID, action, `SUCCESS`, null `reason_code`, 응답 `X-Correlation-ID`, 유효한 `occurred_at`/`created_at`을 저장하는지 검증한다. Semantic replay/concurrency는 이벤트 한 건만 남기고, 기존 transaction fault는 상태와 이벤트를 함께 rollback해야 한다. |
+| 최소화·보안 경계 | 감사행에는 임상정보·환자 로컬 ID·DICOM UID/payload·request/response body·token·credential을 추가하지 않는다. 현재 12개 metadata/reference column 외의 자유형 payload column이 없는 스키마를 Acceptance에서 확인한다. Audit row 조회는 migrator/test inspector를 이용한 synthetic test evidence에 한정한다. Runtime Audit `SELECT` 권한은 부여하지 않는다. |
+| 비범위 | 신규 Audit action, denied-request global logging pipeline, Audit 조회 API/UI, schema/migration/runtime privilege 변경, 인증·인가·Consent 동작 변경, 법적 동의나 전체 Audit lifecycle PASS 선언은 포함하지 않는다. `ACCESS_DENIED`·인증 실패 등 전역 거부 기록은 별도 `MEDIQ-AUD-*`/global `STC-AUD-001` Gate로 남긴다. |
+| Acceptance/추적 | `TC-CON-007-AUD-001~005`; 기존 `TC-CON-003-API-005/007`, `TC-CON-004-API-006~008`, `TC-CON-005-API-008~010`; `AT-AUD-001~003`; `REQ-AUD-001/002`; `SEC-AUD-001/002` |
+| 고려한 대안 | (1) 현 행 개수 assertion만 유지하면 잘못된 actor/tenant/correlation이 기록되어도 통과하므로 기각한다. (2) 같은 전이에 별도 Audit을 더 추가하면 중복과 잘못된 횟수 의미가 생겨 기각한다. (3) 감사행에 상세 Consent/request payload를 복제하면 민감정보 최소화 원칙을 위반하므로 기각한다. (4) 이 Ticket에서 모든 API의 `ACCESS_DENIED` 기록 pipeline까지 구현하는 안은 전역 보안 이벤트 설계·실패 정책·요청 경로를 넓히므로 별도 Gate로 분리한다. |
+| 잔여 위험 | 이 결정은 세 Consent 성공 action의 event context만 검증한다. 인증 실패·인가 거부·다른 업무 event의 포괄 기록/전달/보존/변조방지 및 전역 `STC-AUD-001`은 입증하지 않으며 overall Audit 요구사항은 계속 열린다. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-CON-003~005`; `MEDIQ-CON-007` |
+
+## CON-008-DEC-001 — 누락·철회 Consent의 보호 작업 거부 Acceptance
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-CON-003/004`; `SEC-CONSENT-001/002/007`; `REQ-AUT-003/005`; `SEC-AUTHZ-001/002`; `MEDIQ-AUT-005` 실제 PostgreSQL evidence reader와 Authorization-gated executor; 사용자 지침(권고안 선작성·기록 후 진행) |
+| 확인된 공백 | AUT-005 통합시험은 Consent ID가 존재하지 않는 조회 거부와 `WITHDRAWN` Consent에 묶인 `ACTIVE` Grant의 보호 callback 전 차단을 이미 단일 action으로 확인하지만, 이를 CON-008의 명시 Acceptance로 추적하지 않고, 모든 P0 action에서의 거부를 반복 검증하지 않는다. 실제 Grant 발급 경로와 제품 HTTP 보호 route는 아직 없다. |
+| 채택 권고안 | 신규 기능/API/DB 권한을 만들지 않는다. 기존 AUT-005 synthetic PostgreSQL runtime 통합시험에서 Consent가 없는 경우와 철회된 Consent를 각각 `VIEW`, `DOWNLOAD`, `PACS_IMPORT`로 평가한다. 누락 Consent는 서버 evidence 조회가 결과 없음으로 닫혀야 하고, 철회 경로는 `Consent=WITHDRAWN`과 연결 Grant=`ACTIVE`를 확인한 뒤 Authorization 거부 및 보호 callback 0회를 확인한다. 실제 기존 `mediq_runtime`·Tenant RLS·동일 transaction client 경계를 유지한다. |
+| 보안·데이터 경계 | 테스트는 disposable DB-008 fixture, 비운영 synthetic identity/evidence만 사용한다. `DENY`는 fail closed이며 Consent 철회가 기존 Grant 레코드를 자동 취소한다고 가정하지 않는다. Consent는 보호 operation에서 독립 재검증한다. 어떠한 테스트도 실제 법적 동의, 사용자 대상 HTTP route, Viewer/Download/PACS side effect 차단 또는 전체 A→B 흐름을 입증한다고 확대 해석하지 않는다. |
+| 비범위 | Grant issue API/서비스, 신규 schema/migration/runtime grant, HTTP/AppModule wiring, PACS/Viewer/Download route, STOW, Audit pipeline 변경 및 Grant 자동 revoke는 제외한다. Grant 발급 전 Consent 재조회·철회와 발급의 직렬화는 별도 Grant issuance Gate에서 검증한다. |
+| Acceptance/추적 | `TC-CON-008-AUT-001~006`; 기존 `TC-AUT-005-DB-001~007`; `REQ-CON-003/004`; `SEC-CONSENT-001/002/007`; `REQ-AUT-003/005`; `THR-004`; `MEDIQ-CON-008` |
+| 고려한 대안 | (1) pure policy mock만으로 완료 처리하는 안은 PostgreSQL evidence, runtime role, RLS 및 보호 callback 경계를 증명하지 못하므로 기각한다. (2) 철회 시 Grant row를 함께 revoke하는 안은 기존 Consent withdrawal 결정의 no-Grant-side-effect 경계를 바꾸며 race/transaction 정책도 승인되지 않아 기각한다. (3) 아직 없는 Grant endpoint나 보호 HTTP route를 이 Ticket에서 신설하는 안은 해당 Ticket의 Grant issuance·HTTP BOLA·Preflight 범위를 앞당겨 혼합하므로 기각한다. |
+| 잔여 위험 | 이 Acceptance는 내부 Study Authorization executor에 대한 synthetic operation boundary만 검증한다. Grant 발급 거부·경쟁 직렬화, 실제 HTTP BOLA, 영상 조회·전송 부작용 및 P0 E2E는 별도 Acceptance 전까지 미검증이다. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUT-005`; `MEDIQ-CON-008` |
+
+## GRT-001-DEC-001 — P0 TransferGrant 도메인과 lifecycle metadata
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-GRT-001/002/006`; `SEC-GRANT-001/006`; `INV-GRT-001~009`; `AUT-003-DEC-001` exact Package binding rule; current PostgreSQL `transfer_grants`/`transfer_grant_scopes` schema; `MEDIQ-GRT-001` backlog |
+| 확인된 공백 | TransferGrant table/status/scope schema는 있으나 Domain class는 없다. Domain text에는 abstract recipient/resource refs, P0/P1 scopes, optional `CONSUMED` 의미가 있고 DB에는 required Session/Consent/Tenant/Hospital, optional Actor/Package, `revoked_at`, `created_at`이 있다. 이 표현 차이와 `CONSUMED`, nullable Package의 권한 의미를 구현 전에 정리해야 한다. |
+| 채택 권고안 | `TransferGrant`는 DB context와 일치하는 불변 synthetic P0 metadata entity로 둔다. 필드는 Grant/Session/Consent/Tenant/Hospital UUID, nullable Actor UUID, nullable ImagingPackage UUID, non-empty unique P0 scope set, status, `issuedAt`, `expiresAt`, nullable `revokedAt`, `createdAt`이다. UUID는 canonical lowercase로 정규화하고 Date 및 scope array는 방어 복사한다. `issue` factory는 유효한 구조의 in-memory `ACTIVE` snapshot만 생성하며 Authorization이나 persistent issuance를 수행하지 않는다. `reconstitute`는 persisted four statuses를 읽는다. `revoke(now)`는 ACTIVE에서 REVOKED로 불변 전이하고, `isTemporallyActiveAt(now)`는 `ACTIVE ∧ issuedAt≤now<expiresAt ∧ revokedAt=null`만 계산한다. |
+| Scope·상태 결정 | P0 domain scope는 `study:view`, `study:download`, `study:pacs-transfer` 세 값으로 제한한다. `study:mobile-export`는 DB schema가 표현 가능해도 이 P0 domain에서 거부한다. `CONSUMED`는 forward/persisted compatibility용 terminal status로 reconstitute만 허용하며 P0 `consume()`/one-time operation은 없다. `EXPIRED`도 persisted terminal status로 읽되 시간 만료 판정은 `isTemporallyActiveAt`이 독립 계산한다. |
+| Binding·보안 경계 | `recipientActorId=null`은 schema의 Hospital-wide binding metadata를 보존할 뿐 tenant/hospital membership을 허용하지 않는다. `imagingPackageId=null`은 schema 호환상 reconstitute할 수 있지만 resource-less Grant를 P0 Study access로 넓히지 않으며 이 Domain은 Authorization method를 제공하지 않는다. Consent↔Session, Tenant↔Hospital, Recipient↔Actor, Scope↔Consent cross-entity binding은 verified transaction/Application/Authorization이 확인한다. Domain construction is not proof of Authorization ALLOW, user consent, persisted Grant, or capability. Payload, DICOM, UID, key, credential, password, private key, or secret fields are excluded. |
+| 비범위 | Repository, schema/migration, runtime grants/RLS, issue/revoke API/controller/module, Audit, Consent/Authorization/Grant scope enforcement, recipient/Tenant access check, Viewer/Download/PACS/QR, `consume()` 및 one-time workflow는 포함하지 않는다. 이들은 후속 GRT/AUT/feature gates다. |
+| Acceptance/추적 | `TC-GRT-001-DOM-001~010`; `REQ-GRT-001`; `SEC-GRANT-001/006`; `INV-GRT-001~009`; `THR-006` (domain structure only); `MEDIQ-GRT-001` |
+| 고려한 대안 | (1) DB의 P1 `study:mobile-export` scope를 P0 entity에서도 수용하는 안은 P1 permission promotion risk라 기각한다. (2) P0에서 Grant를 one-time `CONSUMED`로 만드는 안은 view/download/PACS semantics와 idempotency가 결정되지 않았고 domain spec도 optional로 남겼으므로 기각한다. (3) null `imagingPackageId`를 session-wide Study permission으로 해석하는 안은 `AUT-003-DEC-001` exact Package requirement를 위반하므로 기각한다. (4) Entity factory가 Authorization/Consent/recipient cross-check를 자체 수행하는 안은 별도 trusted persistence/Authorization 경계를 우회하거나 중복하므로 기각한다. (5) `EXPIRED`를 DB에서 제거하는 migration은 이 domain-only Ticket 범위를 넓히므로 기각한다. |
+| 잔여 위험 | Entity validation은 Grant issuance, Consent/Authorization decision, recipient binding, package resource access, scope-action enforcement, database provenance, HTTP BOLA 또는 side effects를 증명하지 않는다. Those remain separate GRT/AUT/PACS gates. |
+| 관련 문서 | `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `ERD.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-001` |
+
+## GRT-002-DEC-001 — TransferGrant 내부 persistence와 scratch-only 권한
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `GRT-001-DEC-001`; `REQ-GRT-001/002`; `SEC-GRANT-001/006`; `INV-GRT-001~009`; 기존 `transfer_grants`/`transfer_grant_scopes` schema와 126개 runtime column-privilege baseline; IAM-002 verified same-client Tenant transaction; DB-008 disposable PostgreSQL harness |
+| 확인된 공백 | Domain Grant는 준비됐지만 DB insert/read와 row-to-domain 복원 adapter가 없다. Authorization evidence reader는 Grant metadata의 기존 SELECT 범위만 갖고 있고, runtime에는 Grant INSERT가 승인되지 않았다. API·Grant issuance service도 아직 연결되어 있지 않다. |
+| 채택 권고안 | 기존 두 테이블을 재사용하는 내부 `TransferGrantRepository` port와 PostgreSQL adapter를 추가한다. 입력은 `ACTIVE`인 domain Grant만 허용하며, parent Grant와 P0 scope rows를 동일한 IAM-002 verified `PoolClient` transaction에서 하나의 SAVEPOINT로 원자적으로 insert한다. `findById`는 기존 RLS-visible row와 scope를 읽고 `TransferGrant.reconstitute`로 복원하며 invalid/missing/duplicate/malformed/SQL-error 경로는 fail closed한다. Database FK/RLS와 schema CHECK 외 cross-entity business binding이나 Authorization은 이 repository가 추론하지 않는다. |
+| 권한 경계 | 영구 migration이나 production `mediq_runtime` privilege는 추가하지 않는다. DB-008가 만든 폐기형 synthetic scratch DB에서만 통합시험 직전에 정확한 임시 권한 16개를 부여한다: `transfer_grants` 12개 column INSERT, `transfer_grant_scopes` 3개 column INSERT, `transfer_grants.created_at` 1개 column SELECT. 기존 126개 baseline의 다른 SELECT 권한은 유지한다. 시험 종료 또는 실패 뒤 권한을 회수하고 exact inventory 126으로 복원됐음을 확인한다. Table-wide/PUBLIC/default/UPDATE/DELETE/TRUNCATE/DDL 권한은 금지한다. |
+| 데이터·Tenant 경계 | `save`/`findById`는 호출자가 제공한 동일한 verified Tenant transaction client에서만 사용한다. Test fixture는 synthetic Patient/Actor/Tenant/Hospital/Session/Consent/Package/Grant만 사용한다. PostgreSQL forced RLS의 참여 Tenant 가시성과 제3 Tenant·context 없는 조회/쓰기 차단은 저장소 경계 시험이며, 이를 업무 Authorization으로 해석하지 않는다. |
+| 비범위 | 영구 runtime 권한, migration/schema, issue/revoke API·service, route/OpenAPI/AppModule wiring, Audit, Consent/Authorization 재평가·발급 직렬화, recipient/action/package cross-binding, Viewer/Download/PACS side effect는 포함하지 않는다. Repository 구현과 scratch Acceptance는 저장 가능한 내부 metadata 경계만 증명한다. |
+| 고려한 대안 | (1) 정확한 INSERT/created_at SELECT를 영구 부여하는 안은 아직 승인된 Grant issue/service caller와 발급 Authorization gate가 없어 권한을 앞당기므로 기각한다. (2) mock/unit만으로 끝내는 안은 PostgreSQL column privilege, forced RLS, transaction rollback을 검증하지 못하므로 기각한다. (3) 이 Ticket에서 Grant issue API와 Authorization을 같이 연결하는 안은 Consent·recipient·scope·HTTP BOLA 및 denial/serialization Gate를 혼합하므로 기각한다. |
+| Acceptance/추적 | `TC-GRT-002-PER-001~008`; `REQ-GRT-001/002`; `SEC-GRANT-001/006`; `SEC-DB-005/006`; `TC-IAM-002-CTX-*`; `TC-DB-009-RLS-*`; `MEDIQ-GRT-002` |
+| 실행 결과 | 2026-10-01: API typecheck PASS; API regression 22 files/399 tests PASS. DB-008 clean-run 및 reset/reapply 각각의 실제 PostgreSQL 시험에서 GRT-002 TAP 7/7 PASS; 임시 privilege 142→126 복원, forced RLS/rollback/participant visibility/no-context denial PASS. Full DB-008 및 DB-002~007 regression exit 0. 상세 명령은 `MEDIQ-GRT-002/TEST-EVIDENCE.md`. |
+| 잔여 위험 | Scratch DB Acceptance를 통과해도 production/runtime DB role은 Grant를 insert할 수 없다. `findById`의 `created_at` SELECT도 임시 시험에서만 허용된다. 승인된 Authorization-gated issue API와 별도 exact privilege review가 완료되기 전에는 product Grant를 발급·사용하지 않는다. HTTP/Grant DENY·scope/recipient/action enforcement 및 P0 E2E는 계속 미검증이다. |
+| 관련 문서 | `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-001/002`; `MEDIQ-DB-008/009`; `MEDIQ-IAM-002`; `MEDIQ-AUT-005` |
+
+## GRT-003-DEC-001 — 동의·세션 결속형 멱등 Grant 발급 API
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `GRT-001/002-DEC-001`; `REQ-GRT-001~006`; `SEC-GRANT-001~006`; `SEC-AUTHZ-001~011`; `SEC-AUD-001~006`; `AT-FUNC-008`; `AUT-003-DEC-001`; `CON-006/008-DEC-001`; IAM-002 verified same-client Tenant transaction; active forced-RLS schema |
+| 확인된 공백 | OpenAPI 초안은 recipient Hospital/Actor, Package, expiry를 요청 body에서 허용하지만 서버가 이를 Session·Consent·verified caller와 결속하는 발급 workflow가 없다. 기존 object-access Authorization은 이미 발급된 Grant를 입력으로 요구하므로 그 evaluator를 발급 선행 조건으로 재사용하면 순환 의존이 생긴다. Grant row에는 재시도 key가 없고 runtime에는 Grant INSERT 권한이 없다. |
+| 채택 권고안 | `POST /exchange-sessions/{sessionId}/grants/issue`를 verified IAM-002 `USER` 전용으로 구현한다. 호출자는 Session의 목적지 Hospital에 속하고 해당 Session requester actor와 정확히 같아야 한다. 서비스는 요청자가 보낸 recipient Tenant/Hospital/Actor를 신뢰하지 않으며 수신 Tenant·Hospital·Actor를 verified context와 Session에서 파생한다. 발급은 Session `CONSENTED` + 아직 만료되지 않음, 정확히 결속된 `ACTIVE`·미철회·미만료 Consent, 유효한 Consent action 집합, 정확한 Session/Patient/Source Hospital의 활성 ImagingPackage, Consent에 지정된 package가 있다면 package 일치까지 모두 확인한다. |
+| 발급 인가·범위 | 기존 `ResolvedObjectAuthorizationPolicy`는 사용 권한 판정이며 Grant 자체가 없으면 평가할 수 없다. 이를 우회 재사용하지 않는다. 대신 발급 전용 default-deny 정책을 두고 검증된 issuer·Session·Consent·Package facts에 대한 explicit `ALLOW`일 때만 발급한다. Consent action과 scope는 `VIEW↔study:view`, `DOWNLOAD↔study:download`, `PACS_IMPORT↔study:pacs-transfer`의 정확한 1:1 대응만 허용하며 unknown/duplicate/P1 action·scope, consent expansion, resource mismatch는 거부한다. Grant에는 항상 정확한 non-null Package와 authenticated recipient Actor를 저장한다. 이 결과는 영상 접근 `ALLOW`가 아니며 Viewer/Download/STOW를 호출하지 않는다. |
+| 만료·멱등성 | 요청 body에서 `expiresAt`을 받지 않는다. 서버 시각 기준 Grant expiry는 `min(issuedAt + 30 minutes, Session expiry, Consent expiry)`로 계산하고 결과가 현재보다 미래가 아니면 발급을 거부한다. 이 30분은 P0 기술 기본값이며 사용자 요청의 긴 만료로 늘릴 수 없다. `Idempotency-Key`는 필수 UUID이며 DB에 Tenant·recipient Actor·key와 Grant를 묶어 저장한다. 동일 key·동일 request binding은 같은 Grant를 반환하고 `Idempotency-Replayed: true`로 표시한다. 동일 key의 다른 binding/scope는 409이며, Session 단위 transaction advisory lock과 DB unique constraint가 경합·중복을 막는다. |
+| 원자성·최소권한 | Session lock 후 fresh facts 확인, Grant parent와 scopes, success `AUTHORIZATION_GRANTED` 및 `GRANT_CREATED` Audit을 하나의 verified Tenant transaction에서 원자 처리한다. Audit write 또는 commit 실패 시 전체 rollback하고 안전한 503을 반환한다. 승인하는 영구 column 권한은 기존 runtime inventory 126에 `transfer_grants`의 정확한 13열 INSERT, `transfer_grant_scopes`의 정확한 3열 INSERT, `transfer_grants.created_at` 및 `idempotency_key`의 정확한 2열 SELECT만 더한 144 privilege rows다. 기존 11 Grant SELECT는 보존한다. table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE/불필요 UPDATE 권한은 금지하고 forced RLS를 유지한다. |
+| 실패·감사 경계 | 유효한 verified context 아래의 policy DENY는 고정된 거부 코드만 외부에 반환하고, 최소 Audit `AUTHORIZATION_DENIED/DENY`를 남긴다. 입력 형식 오류와 IAM membership 부재 등 신뢰 context 생성 이전 실패는 이 업무 Audit 범위 밖이다. 금지·충돌·인가거부에서 Grant, Scope, 성공 Audit 또는 외부 영상/PACS side effect가 남으면 안 된다. 실제 denial Audit는 데이터를 최소화하고 환자/영상 payload·Local Patient ID를 포함하지 않는다. |
+| 고려한 대안 | (1) 수신 actor·Hospital·expiry를 body 값으로 신뢰하는 안은 caller-controlled privilege/binding 변경 위험으로 기각한다. (2) 이미 Grant가 필요한 object-access Authorization evaluator를 Grant 발급 전에 재사용하는 안은 순환 의존이므로 기각한다. (3) recipientActorId를 null로 두는 Hospital-wide Grant는 P0 workforce role/capability가 아직 없어 권한 공유 범위가 불필요하게 넓어 기각한다. (4) 요청 expiry를 제한 없이 받아들이는 안은 장기 과권한을 만들 수 있어 기각한다. (5) DB에 멱등성 키 없이 application lock만 쓰는 안은 다른 process/실수 경로에서 중복을 DB가 방지하지 못해 기각한다. (6) table-wide INSERT/UPDATE 권한은 최소권한 원칙 위반으로 기각한다. |
+| 비범위 | Legal identity/consent 효력, workforce role administration, Grant revoke API, Viewer/Download/PACS authorization/use, Mandatory Preflight, DICOM transfer, Consent/Grant withdrawal의 remote recall, 전체 denial-audit coverage 및 A→B E2E는 이 Ticket으로 완료되지 않는다. 기존 object-access Authorization `ALLOW`는 발급 후 별도 검증에서만 쓴다. |
+| Acceptance/추적 | `TC-GRT-003-API-001~020`; `TC-GRT-003-DB-001~006`; `AT-FUNC-008`; `REQ-GRT-001~007`; `SEC-GRANT-001~008`; `SEC-AUTHZ-001~011`; `SEC-AUD-001~006`; `THR-005/006/041`; `MEDIQ-GRT-003` |
+| 잔여 위험 | 30분 값은 synthetic P0 usability/security tradeoff이며 운영 배포 전 임상 업무·다운로드 크기·정책에 맞춘 별도 승인 필요. 성공적인 grant issuance는 아직 package payload integrity/provenance, object-use Authorization 또는 PACS E2E를 증명하지 않는다. |
+| 관련 문서 | `OPENAPI.yaml`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DATA-MODEL.md`; `ERD.md`; `DOMAIN-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-001/002/003`; `MEDIQ-DB-008/009`; `MEDIQ-IAM-002`; `MEDIQ-AUT-003/005`; `MEDIQ-CON-006/008` |
+
+## GRT-004-DEC-001 — Recipient Actor 한정 멱등 Grant 철회
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-GRT-003`의 exact destination Actor/Package binding; `REQ-GRT-008`; `SEC-GRANT-009`; `SEC-AUTHZ-010~011`; `SEC-TEN-005`; `SEC-AUD-001~006`; IAM-002 verified same-client Tenant transaction; existing `transfer_grants.status/revoked_at`; `AT-FUNC-009` |
+| 채택 권고안 | `POST /exchange-sessions/{sessionId}/grants/{grantId}/revoke`를 추가한다. verified IAM-002 active `USER`만 호출할 수 있고, verified Tenant/Hospital/Actor가 Grant의 `recipient_tenant_id`, `recipient_hospital_id`, non-null `recipient_actor_id`와 각각 정확히 일치해야 한다. Session 경로도 Grant 및 실제 Session에 일치해야 한다. Caller가 body에서 recipient/resource/status/revokedAt을 지정할 수 없다. `SERVICE`, tenant-only Actor, 타 병원/타 Actor/타 Tenant는 deny한다. 현재 P0 GRT-003의 발급자는 recipient requester와 동일 Actor이므로 별도 issuer identity를 추가하지 않으며, 병원 관리자 등 다른 actor의 대리 철회는 RBAC 미범위로 둔다. |
+| 철회 조건·멱등성 | 철회는 위험감소 작업이므로 Session 상태, Consent 활성/만료/철회, Grant expiry를 선행 조건으로 요구하지 않는다. 정확히 결속된 `ACTIVE` Grant는 `REVOKED`와 서버 `revoked_at`으로 전이한다. 이미 `REVOKED`이면 기존 timestamp를 보존하고 동일 200 응답으로 replay 처리하며 `Idempotency-Replayed: true`를 반환한다. 이를 상태 기반 멱등성으로 다루므로 별도 key는 요구하지 않는다. `EXPIRED`/`CONSUMED`는 재전이하지 않고 fixed 409로 응답한다. Scope row와 기존 audit history는 삭제하지 않는다. |
+| 원자성·동시성 | 동일 Session advisory lock을 Grant issue/Consent transition과 공유한 뒤 exact Grant row를 `FOR UPDATE`한다. `ACTIVE→REVOKED` 조건부 상태 변경과 단일 `GRANT_REVOKED/SUCCESS` Audit을 같은 verified Tenant transaction에서 commit한다. 동시 동일 요청은 상태 변경 및 success Audit을 한 번만 만들고, 이후 호출은 revoked replay를 반환한다. Audit 실패면 Grant 상태 변경도 rollback한다. 이 lock은 issue/revoke/Consent transition 상호 직렬화만 제공하며 아직 구현되지 않은 Viewer/Download/PACS와 race-safe fencing을 증명하지 않는다. |
+| 최소권한 | `mediq_runtime`의 기존 정확한 144 column-privilege rows에 `transfer_grants.status` 및 `transfer_grants.revoked_at` UPDATE만 추가해 총 146 rows로 제한한다. 필요한 SELECT는 기존 GRT-003/AUT-005의 exact column grants를 재사용하고 Audit의 exact INSERT도 재사용한다. `transfer_grants` table-wide UPDATE, status 외 update, `PUBLIC`/default/DDL/DELETE/TRUNCATE 권한은 금지한다. forced RLS는 유지한다. |
+| 실패·감사 경계 | verified context 아래의 존재하지 않음·binding 불일치·상태 충돌은 resource detail을 노출하지 않는 fixed deny/conflict로 처리하고 최소 denial Audit을 남긴다. Authentication/membership 실패와 형식 오류는 업무 Audit 전에 종료한다. 성공 Audit에는 actor, tenant, session, transfer-grant resource, correlation, timestamp만 남기며 Patient local ID/DICOM/Scope payload/credential은 복제하지 않는다. |
+| 고려한 대안 | (1) 모든 병원 사용자/관리자에게 철회를 허용하는 안은 아직 workforce role/permission model이 없어 기각한다. (2) Session 생성 Actor를 새 schema field로 보존하여 issuer-only 철회를 하는 안은 GRT-003에서 철회 가능한 verified recipient와 같은 Actor를 이미 강제하므로 불필요하다. (3) Consent ACTIVE 또는 Session non-terminal을 요구하는 안은 위험감소 조작을 stale state로 막으므로 기각한다. (4) replay마다 Audit을 추가하는 안은 repeated request를 실제 상태전이처럼 오해하게 하고 중복 감사를 만들 수 있어 기각한다. (5) scope/history 삭제, offline 복사 회수 또는 현재 열린 Viewer/PACS 중단을 약속하는 안은 시스템이 보장하지 않아 기각한다. (6) table-wide UPDATE 또는 `status` 외 필드 update는 최소권한 위반으로 기각한다. |
+| 비범위·잔여 위험 | PATIENT claim 기반 철회, hospital-admin/operator 대리 철회, offline/mobile capsule 원격 회수, 기존 Viewer session 차단, 이미 진행 중인 Download/STOW race 종료, operation-time Authorization 및 stale-cache invalidation, legal consent effect는 포함하지 않는다. 후속 protected operation은 반드시 Consent/Grant status를 operation boundary에서 다시 평가하고 적절한 lease/fencing을 설계해야 한다. |
+| Acceptance/추적 | `TC-GRT-004-REV-API-001~012`; `TC-GRT-004-REV-DB-001~004`; `AT-FUNC-009`; `REQ-GRT-008`; `SEC-GRANT-009`; `THR-042`; `MEDIQ-GRT-004` |
+| 실행 결과 | 2026-10-01 scoped PASS: API 24 files/453 tests; DB-008 clean/reset-reapply both signed-OIDC PostgreSQL/RLS GRT-004, 146 exact privilege rows, DB-002~007 regressions and owned scratch cleanup. Offline copies and in-flight operations are not remotely recalled or fenced. |
+| 관련 문서 | `OPENAPI.yaml`; `OPENAPI.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `ERD.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `P0-EXECUTION-SCHEDULE.md`; `MEDIQ-GRT-004` |
+
+## GRT-005-DEC-001 — 기존 Pure Authorization Policy를 통한 Grant Scope Enforcement
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-GRT-004`; `SEC-GRANT-005`; `THR-006`; existing `decideObjectAuthorization`; `TC-AUT-003-OBJ-001/009`; `MEDIQ-GRT-005` |
+| 채택 권고안 | Scope enforcement는 별도의 중복 evaluator가 아니라 기존 pure `decideObjectAuthorization` 정책의 필수 조건으로 유지한다. 정확한 P0 mapping은 `VIEW→study:view`, `DOWNLOAD→study:download`, `PACS_IMPORT→study:pacs-transfer`다. 요청 action은 Consent 허용목록에 있어야 하고, Grant는 해당 exact scope를 포함해야 하며, 모든 Grant scope는 지원되고 고유하며 대응 Consent action 안에 포함되어야 한다. Missing/unknown/duplicate/P1/불일치/확장 evidence는 `DENY`다. |
+| 검증·Acceptance | `TC-GRT-005-AUTH-001~008`을 dedicated traceability/test gate로 추가하되 구현은 existing pure policy와 그 evidence를 재사용한다. `ALLOW`는 rule evaluation 결과일 뿐 image 반환, Download, PACS Import, route authorization 또는 side effect를 의미하지 않는다. |
+| 적용 범위 | Pure authorization-policy tests and documentation only. Same action/scope mapping may be used by `VIEW`, `DOWNLOAD`, `PACS_IMPORT` decisions. No endpoint wiring, persistence lookup change, DB grant/migration, Viewer/Download/PACS adapter, DICOM side effect, or in-flight fencing. |
+| 고려한 대안 | (1) 별도 Grant scope evaluator를 만드는 안은 같은 action map이 중복되어 drift할 수 있어 기각한다. (2) 이번 Ticket에서 protected API와 Viewer/Download/PACS를 등록하는 안은 scope policy와 trusted evidence/HTTP/Preflight/side-effect boundary를 혼동하므로 기각한다. (3) Grant Scope가 Consent action보다 넓은 경우에도 requested action만 비교하는 안은 broader Grant authorization을 놓칠 수 있어 기각한다. |
+| 비범위·잔여 위험 | Existing AUT-003 pure evidence contract does not prove evidence came from live PostgreSQL/RLS, an HTTP request was denied, PACS STOW was not called, or a race after decision was fenced. Those require separate integration Tickets and Acceptance. |
+| Acceptance/추적 | `TC-GRT-005-AUTH-001~008`; `TC-AUT-003-OBJ-001/005/009`; `AT-SEC-010/011`; `REQ-GRT-004`; `SEC-GRANT-005`; `THR-006`; `MEDIQ-GRT-005` |
+| 실행 결과 | 2026-10-01 scoped PASS: all eight dedicated IDs; focused policy file 96/96, API typecheck and full suite 24 files/461 tests. No route, database permission, Viewer/Download/PACS/STOW or side effect was added. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `DOMAIN-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-005` |
+
+## GRT-006-DEC-001 — TransferGrant API Payload Allowlist
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-GRT-006`; `SEC-GRANT-006`; `THR-031`; `TC-GRT-001-DOM-010`; GRT-003 issue and GRT-004 revoke response contracts; `MEDIQ-GRT-006` |
+| 채택 권고안 | Keep Grant domain/API as an explicit metadata allowlist. Use one shared response serializer for issue and revoke so both expose only approved identifiers, recipient/resource references, scope, status and lifecycle timestamps. Never serialize DICOM/payload, DICOM UID, DEK/KEK, password, private key or long-lived secret; unknown fields on an in-memory object must not be copied into the public response. |
+| 적용 범위 | Shared response mapping plus unit tests for issue/revoke response shape and injected synthetic forbidden fields. Reuse current domain snapshot and existing GRT-003 signed-OIDC API response evidence. No API schema expansion, new database column, migration, credential, or actual payload handling. |
+| 고려한 대안 | (1) Keeping two duplicated serializers allows them to drift; consolidate the same explicit allowlist. (2) Spreading `toSnapshot()` or arbitrary entity properties into a response could leak future fields; do not use generic object spreading. (3) Adding payload/key storage to Grant is rejected because Grant is authorization metadata, not a Capsule or key container. |
+| 비범위·잔여 위험 | A metadata-only Grant response is not an encryption mechanism, DICOM transfer, or authorization for any image operation. Actual DICOM/Capsule and key handling remain in separate approved data-flow/security boundaries. |
+| Acceptance/추적 | `TC-GRT-006-PAY-001~004`; `TC-GRT-001-DOM-010`; `TC-GRT-003-API-001~020`; `REQ-GRT-006`; `SEC-GRANT-006`; `THR-031`; `MEDIQ-GRT-006` |
+| 실행 결과 | 2026-10-01 scoped PASS: domain metadata snapshot and issue/revoke controller serializer allowlist verified; focused 1 file/4 tests, API typecheck and full suite 25 files/465 tests. No payload/key/secret was used. Actual HTTP integration, DB and DICOM transfer remain outside this Ticket. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `OPENAPI.yaml`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-006` |
+
+## GRT-007-DEC-001 — Strict Temporal Grant Expiration Policy
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-GRT-005`; `SEC-GRANT-002`; `THR-007`; existing `TransferGrant.isTemporallyActiveAt`; `decideObjectAuthorization`; GRT-003 server TTL policy |
+| 채택 권고안 | Reuse the existing strict half-open validity interval `issuedAt <= now < expiresAt` and default-deny the Grant if time evidence is missing/invalid, the issue time is in the future, `expiresAt <= issuedAt`, the Grant is terminal/revoked, or Consent/Session has expired. Do not treat a future persisted `ACTIVE` status as sufficient. Expiry time passing denies use without claiming that storage status is automatically rewritten to `EXPIRED`. Grant issuance remains server-timed and caps expiry at the earliest of 30 minutes, Session expiry and Consent expiry. |
+| 적용 범위 | Dedicated temporal policy/unit Acceptance mapped to existing pure Authorization rules and existing GRT-003 issue-service expiry-cap tests. No second clock/evaluator, scheduler/status mutation, database change, route, Viewer/Download/PACS action or side effect. |
+| 고려한 대안 | (1) `now <= expiresAt` inclusive expiry permits use at the exact boundary and is rejected. (2) Trust persisted `ACTIVE` without checking time permits stale/expired grants and is rejected. (3) Rewrite Grant state asynchronously on expiry is unnecessary for access denial and creates race/maintenance semantics outside this Ticket. (4) Recompute client expiry or use client clock is rejected; server time is authoritative. |
+| 비범위·잔여 위험 | Pure policy expiry tests do not prove a live HTTP request is blocked, cached Viewer session invalidation, or in-flight operation fencing. Each protected operation must re-evaluate time at its own operation boundary. |
+| Acceptance/추적 | `TC-GRT-007-EXP-001~008`; `TC-GRT-001-DOM-008`; `TC-AUT-003-OBJ-008`; `REQ-GRT-005`; `SEC-GRANT-002`; `THR-007`; `MEDIQ-GRT-007` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DOMAIN-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-GRT-007` |
+
+## PAT-003-DEC-001 — 목적지 PatientMapping 순수 검증 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; 사용자의 권고안 우선·기록 후 진행 지침; `REQ-PAT-003/004`; `INV-PAT-004~007`; `SEC-IAM-007~009`; `MEDIQ-PAT-003/004` 계획 |
+| 채택 권고안 | `MEDIQ-PAT-003`은 DB/API/PACS와 분리된 순수 Domain 검증기로 한정한다. 호출 경계가 서버에서 해석한 `PatientReference`와 `Destination Hospital`을 제공하고, 후보는 정확히 1개여야 하며 mapping의 두 reference가 모두 일치하고 `status=VALID`, `validatedAt`이 존재해야 `VALID` 판정을 반환한다. 후보 없음, 복수 후보, `AMBIGUOUS`, `UNVERIFIED`, `REVOKED`, 잘못된 입력/객체 또는 Patient/Hospital binding 불일치는 모두 `DENY`로 분류한다. |
+| 반환·행위 경계 | 결과에는 검증 판정, 고정 denial reason 또는 성공 시 내부 `mappingId`만 둔다. `localPatientId`는 반환하지 않는다. `VALID`는 PatientMapping 조건만 충족했다는 뜻이며 Consent, Authorization, TransferGrant, Mandatory Preflight 또는 `PACS_IMPORT` 허가·완료를 뜻하지 않는다. PACS/STOW side effect는 이 검증기에서 불가능해야 한다. |
+| 적용 범위 | synthetic domain unit test와 문서 Acceptance만 포함한다. 새로운 DB 권한/조회, Hospital A→B cross-Hospital reader, mapping write/validation workflow, HTTP route/OpenAPI, `AppModule` wiring, PACS/STOW 호출은 만들지 않는다. PAT-002의 same-Hospital read 권한 경계를 확장하지 않는다. |
+| 고려한 대안 | (1) 목적지 cross-Hospital mapping을 조회하는 runtime reader를 지금 추가하는 안은 PAT-002가 승인한 same-Hospital verified membership 경계를 넓히고 업무 Authorization/Consent/Grant/Preflight가 없는 상태에서 보호 경로를 만들므로 기각한다. (2) 검증 API가 `pacsImportAllowed=true`를 반환하는 안은 Mapping 유효성과 전체 import 인가를 혼동하므로 기각한다. (3) `VALID` 상태만 보고 `validatedAt` 부재를 무시하는 안은 검증 근거가 비어도 통과시킬 수 있어 기각한다. (4) caller 제공 Tenant/Hospital를 권한 근거로 신뢰하는 안은 기존 IAM-002 경계를 위반하므로 기각한다. |
+| 후속 게이트 | `MEDIQ-PAT-004`는 missing/ambiguous/invalid mapping decision의 별도 negative Acceptance로 유지한다. 실제 destination mapping retrieval·인가, HTTP 오류/무데이터 응답, Mandatory Preflight와 PACS no-STOW는 이후 `MEDIQ-PACS-004` 또는 대응하는 PACS Import integration Ticket에서 검증한다. Mapping Domain 결과만으로 실제 PACS Import 차단을 주장하지 않는다. |
+| 관련 문서 | `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PAT-003`; `MEDIQ-PAT-004`; `MEDIQ-PACS-004` |
+
+## PAT-004-DEC-001 — PatientMapping persistence-to-domain 거부 Acceptance
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `PAT-003-DEC-001`; `REQ-PAT-003/004`; `SEC-IAM-007~009`; 현행 `PostgresPatientMappingRepository`의 exact Hospital/Patient lookup와 duplicate-row fail-closed branch; `MEDIQ-PAT-004` 계획 |
+| 채택 권고안 | `MEDIQ-PAT-004`는 PostgreSQL client를 mock한 adapter-to-domain negative Acceptance로 한정한다. Repository가 0행이면 null을 반환하고 validator가 `MAPPING_MISSING`으로 거부해야 한다. 한 행의 `AMBIGUOUS`, `UNVERIFIED`, `REVOKED`, 또는 `VALID`+null `validatedAt` 값은 그대로 Domain에 전달되되 validator가 각각 거부해야 한다. 같은 lookup이 복수 행을 반환하면 adapter는 임의 첫 행을 선택하지 않고 고정 `PatientMappingPersistenceError`로 fail closed한다. DB query 예외도 driver 상세를 숨긴 동일 persistence error로 처리한다. |
+| 보안·데이터 경계 | 모든 데이터는 synthetic fixture다. mock query contract는 PostgreSQL runtime/RLS/grant 또는 목적지 mapping retrieval 인가를 증명하지 않는다. 오류 결과를 `VALID` 또는 PACS 허가로 변환해서는 안 되며 Local Patient ID와 driver details를 오류 결과에 노출하지 않는다. |
+| 비범위 | 신규 migration/권한/DB runtime test, `PatientMappingAccessService` 확장, cross-Hospital service identity, HTTP/OpenAPI route, mapping write, Consent/Authorization/Grant, PACS Preflight 또는 STOW 호출은 추가하지 않는다. `AT-SEC-012`의 no-STOW integration은 `MEDIQ-PACS-004`에 남긴다. |
+| 채택 이유 | DB-003 unique constraint가 정상 중복을 막더라도 손상된/예상 밖 adapter 결과에서 “첫 환자”를 임의 선택하지 않는 현재 코드 경로를 직접 증거화한다. PAT-003 도메인 테스트와 구별되는 persistence conversion/error boundary를 검증한다. |
+| 고려한 대안 | (1) PAT-003 도메인 테스트를 복제하는 안은 새로운 boundary를 검증하지 않으므로 기각한다. (2) 이번 Ticket에서 destination runtime grants/API를 여는 안은 PAT-002 same-Hospital boundary 및 아직 미구현된 Consent/Grant/Authorization/Preflight gate를 확장하므로 기각한다. (3) duplicate rows에서 첫 결과를 쓰거나 VALID로 추론하는 안은 fail-closed 원칙 위반으로 기각한다. |
+| 후속 게이트 | 실제 Destination Hospital mapping lookup은 권한 있는 server-side context가 정해진 뒤 별도 Ticket에서 구현한다. PACS Import 전에 mapping뿐 아니라 Consent·Authorization·Grant·Destination·Integrity/Provenance를 포함한 Mandatory Preflight를 통과시키고, 실패 시 STOW 호출 수 0을 `AT-SEC-012`/`MEDIQ-PACS-004`에서 실제 Test Orthanc A/B로 검증한다. |
+| Acceptance/추적 | `TC-PAT-004-PER-001~005`; `AT-SEC-012` remains `PLANNED/NOT RUN`; `MEDIQ-PAT-004`; `MEDIQ-PACS-004` |
+| 실행 결과 | `MEDIQ-PAT-004` mocked Acceptance 7/7 및 API regression 17 files / 330 tests PASS. `AT-SEC-012` actual PACS no-STOW는 미실행. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PAT-004`; `MEDIQ-PACS-004` |
+
+## EXC-002-DEC-002 — 합성 scratch DB의 ExchangeSession repository 실DB Acceptance
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-EXC-002`의 기존 persistence 범위; `EXC-002-DEC-001`의 API·영구 runtime 권한 차단; IAM-002의 verified same-client Tenant transaction; AUT-005의 Session metadata 최소 `SELECT`; DB-008의 일회성 synthetic scratch PostgreSQL harness |
+| 채택 권고안 | EXC-002 repository의 PostgreSQL 동작은 격리된 DB-008 scratch DB에서만 `mediq_runtime`으로 검증한다. integration test 직전에 migration identity가 필요한 정확한 열의 `SELECT`/`INSERT` 권한을 임시 부여하고, 시험 직후 해당 임시 권한을 열 단위로 회수한 다음 기존 70개 privilege-row 기준선 복구를 검증한다. 테스트 데이터는 모두 synthetic이며 test transaction/폐기되는 scratch DB 밖에 남기지 않는다. |
+| 시험 경계 | IAM-002가 검증하는 Actor/Tenant membership과 동일 checked-out transaction client를 사용해 Repository `create`/`findById`의 실제 PostgreSQL round-trip, rollback, source/destination Tenant의 RLS 가시성, unrelated Tenant의 비가시성 및 pool context 정리를 시험한다. 세션 생성은 persistence/RLS 통합시험용 합성 fixture이며, 이 시험만으로 업무 Authorization·사용자 권한·API 접근을 승인하지 않는다. RLS 가시성은 Authorization이 아니다. |
+| 권한 경계 | 임시 권한은 DB-008이 생성·폐기하는 disposable scratch DB에서만 사용한다. `exchange_sessions` 전체 11열 `SELECT`와 정확한 11열 `INSERT`가 `RETURNING` 포함 adapter contract 시험에 필요하다. 기존 AUT-005의 6열 `SELECT`는 보존하고, 추가 5열 `SELECT`와 11열 `INSERT`만 임시 부여·회수한다. 최종 카탈로그는 원래 70개 privilege rows로 복귀해야 한다. 영구 migration, 제품 runtime grant, `UPDATE`/`DELETE`/`TRUNCATE`/DDL 권한은 추가하지 않는다. |
+| 의도적 비범위 | Controller/API/OpenAPI/AppModule 연결, persistent runtime grant, Session create/read business Authorization, Consent/Grant workflow, state transition write, Audit writer, DICOM/PACS/Viewer side effect는 수행하지 않는다. `GATE-IMP-04` 및 전체 Exchange 요구사항을 PASS로 바꾸지 않는다. |
+| 채택 이유 | SQL mock만으로는 PostgreSQL 타입/권한/RLS 동작을 증명하지 못한다. 반면 영구 권한이나 보호 API를 지금 여는 것은 Session object/action Authorization과 HTTP fail-closed 경계보다 앞선다. scratch-only 권한을 사용하면 내부 adapter의 실DB 동작을 증거화하면서 승인된 runtime 최소권한 기준선과 제품 접근 경계를 보존할 수 있다. |
+| 고려한 대안 | (1) 영구 11열 `SELECT`/`INSERT` migration은 API/runtime caller와 Session create/read Authorization이 아직 없으므로 기각한다. (2) mock/unit 시험만 유지하면 DB-009의 실제 runtime RLS·connection behavior를 확인할 수 없어 기각한다. (3) `AppModule`/HTTP route를 함께 연결하는 안은 `EXC-002`의 persistence 범위를 넘어가고 Consent/Grant 및 HTTP BOLA/safe-error Acceptance가 미완료이므로 기각한다. |
+| Acceptance/추적 | 신규 `TC-EXC-002-DB-001~004`, `TC-EXC-002-SEC-002`; 기존 `TC-EXC-002-PER-001~005`, `TC-DB-009-RLS-003/006`, `TC-IAM-002-CTX-*`, `TC-AUT-005-DB-*`; `MEDIQ-EXC-002` |
+| 실행 결과 | 2026-09-30 DB-008 전체 검증에서 최초 2회는 PowerShell scalar string `[0]` 비교 오류로 false-negative였고 disposable scratch 정리 경로를 확인했다. 배열 안전 비교로 수정한 최종 실행은 3회의 scratch runtime/RLS Acceptance, 매회 86→70 privilege 복원, DB-002~007 및 전체 DB-008 reset/reapply 회귀를 PASS했다. 영구 DB 권한/migration/API는 추가되지 않았다. |
+| 관련 문서 | `ACCEPTANCE-TESTS.md`; `SECURITY-REQUIREMENTS.md`; `SYSTEM-ARCHITECTURE.md`; `THREAT-MODEL.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-EXC-002`; `MEDIQ-DB-008`; `MEDIQ-IAM-002`; `MEDIQ-AUT-005` |
+
+## EXC-003-DEC-001 — 목적지 병원 사용자에게 제한된 멱등 Exchange 생성
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-09-30 |
+| 근거/권한 | `PDEC-001`; `REQ-EXC-001~002`; `AT-FUNC-001`; `SEC-API-001~003`; `SEC-AUTHZ-010~011`; `SEC-TEN-005`; `SEC-AUD-001`; `IAM-002-DEC-001`; `AUT-004-DEC-001`; `EXC-002-DEC-002`; 사용자 권고안 우선·기록 후 진행 지침 |
+| 채택 권고안 | `POST /exchange-sessions`는 인증된 IAM-002 `USER` membership이 가진 verified Hospital과 `destinationHospitalId`가 정확히 일치할 때만 요청 Session을 생성한다. `X-Tenant-ID`는 membership 후보 selector일 뿐 권한 근거가 아니며, Actor/Tenant/Hospital은 서버가 같은 transaction에서 검증한다. 목적지 Hospital이 없는 tenant-level membership, `SERVICE`, 다른 병원의 목적지, 실패한 membership은 거부한다. |
+| 요청·멱등성 | Request는 active synthetic `MQ-TEST-*` PatientReference, 서로 다른 Source/Destination Hospital UUID, trim 후 공백이 아닌 255자 이하 purpose만 받는다. 서버가 `REQUESTED` Session UUID와 시각을 생성한다. 필수 UUID `Idempotency-Key`는 verified Actor에 묶어 영구 고유하게 저장한다. 동일 Actor·key·UUID 대소문자 정규화 후 동일한 나머지 입력의 재시도는 기존 결과를 반환하고, 같은 key의 다른 request는 고정 409 conflict다. Purpose 문자열은 저장·비교 시 임의 trim/정규화를 하지 않는다. Correlation ID는 tracing이며 idempotency를 대체하지 않는다. |
+| 영상·Consent 경계 | 이 endpoint는 업무 요청 metadata만 생성한다. 아직 지원되지 않는 `requestedStudyInstanceUIDs`는 제거하여 무시하지 않는다. Consent, Authorization/TransferGrant, VIEW/DOWNLOAD/PACS_IMPORT, Study metadata, DICOM/PACS/Viewer 동작은 생성하지 않는다. Session ID는 권한 증거가 아니다. |
+| 저장·Audit·권한 | Session row와 `SESSION_CREATED/SUCCESS` Audit event를 동일 IAM-002 verified Tenant transaction에서 원자적으로 저장한다. Audit 저장 실패면 transaction 전체를 rollback하고 안전한 unavailable 오류를 반환한다. Runtime은 `exchange_sessions`의 필요한 12개 열에만 `SELECT`·`INSERT`, `audit_events`의 필요한 12개 열에만 `INSERT`를 받는다. 합산 privilege inventory는 기존 70에서 100 column-privilege rows로 증가하며 table-wide/write-update/delete/DDL/PUBLIC/default 권한은 추가하지 않는다. 기존 forced Tenant RLS는 유지한다. |
+| 고려한 대안 | (1) 단순 POST 후 매 요청마다 새 Session을 만드는 안은 네트워크 재시도에 중복 Consent 업무가 생겨 idempotency를 도입한다. (2) `X-Correlation-ID`를 idempotency로 재사용하는 안은 관측용과 재실행 억제 의미가 달라 기각한다. (3) tenant-level 또는 `SERVICE` caller도 허용하는 안은 목적지 책임을 확인할 수 없어 기각한다. (4) 지원할 수 없는 Study UID를 받고 무시하는 안은 API 성공을 오인시키므로 기각한다. (5) Session 생성 시 Consent/Grant 또는 영상 접근까지 허용하는 안은 별도 권한 경계를 위반해 기각한다. |
+| Acceptance/추적 | `REQ-EXC-007`; `TC-EXC-003-API-001~012`; `AT-FUNC-001`; `TC-AUT-004-FC-001` route-specific authentication/error subset; `TC-EXC-003-DB-001~006`; `MEDIQ-EXC-003` |
+| 잔여 위험 | Source Hospital 존재는 FK로 확인하지만, cross-Tenant source Hospital의 active 상태와 DICOM endpoint capability를 이 생성 요청에서 검증하지 않는다. 그 검증은 후속 DICOM retrieval/transfer preflight Gate에서 반드시 수행한다. HTTP authentication/error, synthetic request creation Acceptance는 이 Ticket 범위이며 `GATE-IMP-04` full Exchange, GET BOLA, Consent/Grant, image access, Audit global completeness 및 PACS E2E를 완료시키지 않는다. |
+| 관련 문서 | `OPENAPI.yaml`; `REQUIREMENTS.md`; `DATA-MODEL.md`; `ERD.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-EXC-003` |
+
+## DCM-001-DEC-001 — Typed DICOM Gateway Port와 Ticket Namespace 정렬
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `MEDIQ-DCM-001~005` 구현계획; DICOM Interoperability Profile v1.2; `TECH-STACK-DECISION.md` §8.3; `SYSTEM-ARCHITECTURE.md` §33; Synthetic/Test-only P0 boundary |
+| 확인된 불일치 | Implementation Plan은 `MEDIQ-DCM-001`을 DicomGateway Port로, `MEDIQ-DCM-002`를 Orthanc Adapter로 정의하지만 Technology Decision/DICOM Profile은 별도 이름 `MEDIQ-DICOM-001`을 streaming spike로 참조한다. 두 구현 ticket namespace를 병렬로 만들지 않는다. |
+| 채택 권고안 | `MEDIQ-DCM-001`을 framework-neutral TypeScript port와 compile-time conformance만 정의하는 선행 Ticket으로 사용한다. 보다 상세한 승인 계약인 Technology Decision §8.3을 적용해 QIDO Study query, WADO Study metadata, per-instance DICOM stream, rendered-frame stream, per-instance STOW stream, destination Study verification, capability query를 명시한다. `MEDIQ-DCM-002`는 Orthanc Adapter와 실제 compatibility/streaming spike를 담당하며 구 `MEDIQ-DICOM-001` spike 표현은 이 Ticket으로 crosswalk한다. |
+| Port 보안·데이터 경계 | Port는 caller가 준 URL·credential을 받지 않는다. 요청은 서버에서 이미 검증된 Hospital ID, correlation ID, 필수 `AbortSignal` 및 필요한 server-resolved local Patient ID/UID만 받는다. Adapter의 endpoint와 credential은 trusted registry/config에서 resolve한다. Patient name, accession, 원시 DICOM JSON, HTTP headers/body를 일반 QIDO projection·오류에 그대로 실어 보내지 않는다. |
+| Streaming 권고 | Node WHATWG `ReadableStream<Uint8Array>`를 쓰고 WADO/STOW 단위는 단일 Instance 또는 단일 Frame이다. Study 전체 `Buffer[]`/메모리 적재를 Port 계약으로 허용하지 않는다. cancellation은 upstream까지 연결할 계약이며 실제 backpressure, byte limit, multipart parsing, timeout/TLS 및 Orthanc 호환성 증명은 DCM-002 이후 Acceptance다. 정확한 QIDO·byte 상한은 이 결정에서 임의로 고정하지 않는다. |
+| 고려한 대안 | (1) `queryStudies/retrieveStudy/storeStudy/checkCapability` 네 개의 느슨한 동작만 두면 Instance streaming, frame, metadata, partial STOW 및 verification 경계가 숨겨지므로 기각. (2) 별도 `MEDIQ-DICOM-*` sequence를 새로 만들면 승인 구현계획과 중복되므로 기각. (3) URL/credential을 Port 호출자가 넘기게 하면 SSRF 및 credential disclosure boundary가 불명확해져 기각. (4) Study 전체를 하나의 `Buffer`로 반환하면 memory ceiling/backpressure를 깨뜨리므로 기각. |
+| 적용 범위 | `MEDIQ-DCM-001`의 TypeScript Port와 compile-only type conformance. 네트워크 adapter, Authorization, endpoint lookup, HTTP route, Study query 실행, WADO/STOW payload, database grant/schema, viewer/import side effect는 추가하지 않는다. |
+| Acceptance/추적 | `TC-DCM-001-PORT-001~006`; `MEDIQ-DCM-001`; `AT-DICOM-001~004`는 후속 adapter/integration gate로 유지 |
+| 잔여 위험 | Compile-time Port conformance는 Orthanc interoperability, trusted endpoint resolution, TLS/auth, streaming/backpressure/cancellation, authorization 또는 DICOM support claim을 입증하지 않는다. 또한 Destination PatientMapping의 병원별 Local Patient ID와 byte-preserving 원본 DICOM의 `PatientID` 사이 변환 규칙이 확정되지 않았으므로, STOW payload 구현 전에 별도 권고안으로 해결한다. |
+| 관련 문서 | `TECH-STACK-DECISION.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `SYSTEM-ARCHITECTURE.md`; `IMPLEMENTATION-PLAN.md`; `ACCEPTANCE-TESTS.md`; `MEDIQ-DCM-001` |
+
+## DCM-002-DEC-001 — Synthetic Orthanc DICOMweb Adapter·Transport·Patient ID Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected; `MEDIQ-DCM-002` scoped implementation recorded; full product transfer remains NOT RUN |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; 사용자의 권고안 선행 작성·그에 따른 진행 지침; `MEDIQ-DCM-002`; `DCM-001-DEC-001`; `ORG-003-DEC-001`; DICOM Profile §§8–15, 19–20; `SEC-TLS-001`; Synthetic/Test-only 경계 |
+| 채택 권고안 | `MEDIQ-DCM-002`는 API 프로세스 내부 `DicomGateway`의 Orthanc DICOMweb adapter 및 실제 local Test Orthanc A/B 호환성/streaming spike에 한정한다. A의 허용 작업은 QIDO/WADO, B의 허용 작업은 QIDO(destination verification)/STOW다. Adapter는 B→A, C, 미등록·비활성 endpoint를 거부하며 Controller·public route·Authorization/PACS Import workflow에는 연결하지 않는다. |
+| Endpoint·credential | DCM-002 Test profile은 server-owned, immutable A/B configuration provider를 사용한다. `hospitalId + operation`으로만 설정을 고른다. 허용 role pair는 `ORG-003-DEC-001`에 정렬하되 runtime `hospital_endpoints` 조회는 하지 않는다. 해당 테이블의 runtime SELECT 권한이 없고 이 adapter-only Ticket에는 verified Tenant DB context/업무 Authorization이 연결되지 않으므로, endpoint를 DB에서 동적으로 조회하는 것은 후속 Gate다. 허용 authority는 정확히 Compose service host `orthanc-a` 또는 `orthanc-b`, port `8042`, `/dicom-web` root로 제한하고 caller-provided URL·header·credential을 금지한다. Fetch redirect는 `error`로 차단한다. Credential은 local synthetic Test secret 환경 설정에서만 가져오며 DB·URL·log·HTTP response에 넣지 않는다. |
+| Transport | Local DCM-002의 합성 Test Orthanc 호출에 한해, `database`·`hospital-a`·`hospital-b` internal-only Compose network와 host-published port 없음, 정확한 Test service authority 및 test profile 명시 조건에서 HTTP/basic auth를 허용한다. 이 예외는 local Test credential과 Synthetic DICOM만을 대상으로 하며 `SEC-TLS-001`/DICOM Security Acceptance의 PASS가 아니다. production/non-test configuration은 HTTPS와 정상 certificate validation을 강제하고 invalid/untrusted certificate에 insecure fallback을 제공하지 않는다. mTLS는 별도 productionization decision이다. |
+| QIDO·Projection | `application/dicom+json`만 수락한다. 요청 query key는 승인된 Hospital-local `PatientID`, Study UID, bounded limit/offset으로 구성한다. 응답은 `StudyInstanceUID`, `StudyDate`, `ModalitiesInStudy`, `NumberOfStudyRelatedInstances` allowlist로 정규화하고 PatientName·AccessionNumber·raw response/header/body를 버린다. JSON type, UID/VR/value cardinality, result count 및 body byte ceiling 불일치는 protocol error로 fail closed한다. |
+| WADO·Streaming | Metadata는 최소 Study/Series/Instance UID와 Modality만 반환하며 UID hierarchy mismatch를 거부한다. P0 byte transfer는 Classic CT, Explicit VR Little Endian, per-instance로 제한한다. WADO request는 `multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1`를 명시한다. Response에 transfer-syntax가 생략되면 DICOM PS3.18 §8.7.3.4의 `application/dicom` default를 적용하고, 명시된 다른 syntax는 거부한다. Orthanc A 고정 fixture는 streamed WADO bytes가 승인된 manifest SHA-256/size와 일치했다. WADO multipart/related는 `@ubercode/multipart-stream@1.1.0`의 part-level Node Readable, `AbortSignal`, idle/total timeout, `maxPartBytes`, `maxHeaderBytesPerPart` 기능을 활용해 정확히 한 `application/dicom` part만 반환한다. 이 small/single-maintainer dependency는 자동으로 trusted가 아니다. package source·lockfile·license와 cleanup/backpressure 경로를 검토했고, malformed/truncated/multiple/oversized-header/oversized-body/idle-timeout 및 Orthanc Acceptance를 통과했다. DICOM Part 10 File Meta Information 재검증과 외부 Hospital corpus는 후속 Integrity/Preflight gate다. Malformed/truncated/multi-part/oversized/unsupported media는 거부하고 partial stream을 취소한다. STOW request는 한 instance씩 multipart stream으로 구성한다. 직접 만든 ad-hoc MIME parser와 Study-sized buffering은 금지한다. `dicomweb-client`는 buffered behavior를 실제로 배제하지 못해 채택하지 않으며 Node fetch/Web Streams adapter를 사용한다. |
+| Initial bounds | DCM-002 synthetic P0 runtime guardrail은 QIDO page 최대 100 studies, metadata 최대 2,000 instances, 단일 DICOM instance 최대 64 MiB, multipart header 최대 16 KiB, 동시 DICOM operation 최대 2로 한다. Fetch-to-response-header deadlines는 QIDO 15 s, WADO/STOW 30 s이며 connection setup도 이 상한에 포함한다. Body read-idle은 60 s, total은 QIDO 30 s/WADO 120 s/STOW 180 s다. Caller cancellation composes with these finite caps; tests use shorter injected deadlines to exercise cancellation. These are validated local P0 runtime caps, not general Hospital SLA or DICOM standard limits. A later profile change requires a separate recommendation, measurement and decision record. |
+| STOW·Patient ID | `AGENTS.md` §5의 Mandatory Preflight gate 때문에 DCM-002에서는 어떠한 Orthanc B 실 STOW도 실행하지 않는다. STOW request framing/response normalization은 synthetic mocked contract tests로만 검증하고, 실제 A fixture byte/hash streaming 및 B QIDO baseline은 read-only로 확인한다. Payload 설계는 byte-preserving이며 PatientID 또는 기타 DICOM attribute를 수정·transcode하지 않는다. 목적지 mapping 값과 payload `PatientID`가 다르거나 이를 증명할 수 없으면 향후 PACS Import Preflight가 STOW 전에 거부해야 한다. 이 adapter-only Ticket은 Mapping/Consent/Authorization/Grant/Preflight, real patient matching, wrong-mapping no-STOW를 증명하지 않는다. STOW 응답 200/202만으로 성공을 선언하지 않고 per-instance outcome 및 별도 destination QIDO verification을 요구한다. timeout/response loss는 UNKNOWN으로 취급하고 adapter에서 blind retry하지 않는다. |
+| Timeout·취소·오류 | caller `AbortSignal`을 upstream fetch/body stream까지 전달하고 operation별 finite deadline 및 idle/read cap을 둔다. 제한 초과·취소 시 response와 parser를 취소하고 partial stream을 실패 처리한다. upstream status, body, auth detail, patient/DICOM metadata는 오류·로그에 복사하지 않고 fixed error class와 correlation ID만 전달한다. QIDO GET만 제한 재시도 후보이며 STOW POST retry는 금지한다. |
+| 고려한 대안 | 모든 환경에서 HTTP 허용은 `SEC-TLS-001`을 깨므로 기각한다. 현재 local HTTP gap을 숨기고 TLS PASS로 간주하는 것도 기각한다. DB endpoint runtime SELECT를 지금 여는 안은 port에 verified Tenant context가 없고 업무 Authorization 미완성 상태라 기각한다. direct caller URL/credential은 SSRF/secret disclosure 때문에 기각한다. Study-level buffering 또는 ad-hoc MIME parsing은 memory/partial-data 위험으로 기각한다. `@remix-run/multipart-parser` 후보는 source inspection에서 `MultipartPart.content: Uint8Array[]`로 한 part 전체를 메모리에 유지함을 확인해 streaming body contract와 맞지 않아 기각한다. Mature `dicer` 후보는 explicit max-header-bytes cap이 없고 Node stream bridge가 필요해 이 Profile의 limit contract에 불리하므로 우선 선택하지 않는다. byte-rewrite 방식은 mapping/clinical identity reconciliation 정책이 없으므로 기각한다. |
+| 범위·미완료 | local synthetic adapter HTTP compatibility, DICOM part streaming, 실제 A read-only compatibility 및 B read-only baseline까지만 구현/검증한다. B 실 STOW는 Mandatory Preflight와 실제 mapping 검증이 선행될 때까지 금지하며, 본 Ticket에서는 STOW mock contract만 시험한다. TLS positive path, protected API/Authorization, operation-time Consent/Grant/revocation fencing, Mandatory Preflight/no-STOW, patient mapping workflow, integrity/provenance/audit, arbitrary Hospital onboarding, viewer/download, production credential/PKI, retry/idempotency workflow 및 complete A→B E2E는 본 결정·Acceptance로 완료 처리하지 않는다. `SEC-TLS-001`은 별도 positive HTTPS/certificate Acceptance까지 미완료다. |
+| Acceptance/추적 | `TC-DCM-002-CFG-001~003`, `QIDO-001~002`, `WADO-001~004`, `STOW-001~003`(mock contract only), `VER-001`(read-only baseline), `SEC-001~004`, `RUN-001~002`; `AT-DICOM-001~004`·`AT-SEC-012/013`은 broader protected-product gate로 계속 유지 |
+| 관련 문서 | `AGENTS.md` §1.1; `DICOM-INTEROPERABILITY-PROFILE.md`; `TECH-STACK-DECISION.md`; `SYSTEM-ARCHITECTURE.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-DCM-002` |
+
+## PACS-001-DEC-001 — PACS Import Coordinator Preconditions and Execution Order
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — planning/Acceptance adopted; coordinator implementation NOT STARTED |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; user's recommendation-first instruction; `MEDIQ-PACS-001~008`; `PACS-004-DEC-001`; `DCM-002-DEC-001`; `REQ-PACS-001~005`; `SEC-DICOM-004/005`; DICOM Profile §§10.2–10.3; `AGENTS.md` §§4–6 |
+| 현황 근거 | `PacsImportMappingGateService` proves only exact Authorization plus destination PatientMapping eligibility, not a complete import. PACS-007 now provides the durable internal operation/idempotency ledger and scoped RLS/atomic-Audit evidence, but no coordinator consumes it. The adapter has mock-only STOW evidence; operation-time revocation fencing, positive TLS path, DICOM PatientID-to-destination mapping enforcement, destination reconciliation/verification, and end-to-end integrity/provenance/Audit remain unimplemented. |
+| 채택 권고안 | Preserve PACS-001 as the internal PACS application coordinator, but do not implement it as a hollow wrapper around `MAPPING_VALIDATED` or expose it as an HTTP operation. Reorder implementation so durable per-study transfer operation state/idempotency and unknown-result reconciliation semantics are defined and implemented before any effect-capable coordinator/STOW path. Then the coordinator must compose operation-time `PACS_IMPORT` Authorization (`study:pacs-transfer`), exact Session/Study/Package/Source and destination bindings, Consent/Grant freshness, PatientMapping, endpoint allowlist/TLS, bounded byte-preserving source retrieval, integrity/provenance/Audit, STOW, and destination verification. |
+| Patient identity binding | For P0 byte-preserving DICOM, every required source instance must have a single, validated PatientID that exactly equals the server-resolved destination mapping's localPatientId. Missing, malformed, inconsistent or unequal identity evidence denies before STOW. Do not rewrite DICOM patient attributes in P0. This synthetic exact-match rule is not real-world patient identity proof or a cross-hospital matching claim. This carries forward the conservative rule already recorded in `DCM-002-DEC-001`. |
+| Unknown and retry behavior | Persist an operation/idempotency claim before initiating STOW. If request transmission may have started but a definitive response is unavailable, preserve `RESULT_UNKNOWN`; never blind-retry STOW. Reconcile only through bounded read-only destination queries and an explicit operation-state transition. Do not hold a database transaction open across WADO/STOW network streaming; define a fresh operation-time Authorization/revocation fence at the side-effect boundary. |
+| 적용 순서 | `MEDIQ-PACS-007` durable transfer lifecycle/idempotency and least-privilege DB/RLS Acceptance are PASS. Next implement the PACS-001 coordinator only after a recommendation/Acceptance-first review against that contract. PACS-002/003/004 policy and binding checks remain mandatory inputs, not claims of complete product enforcement. Positive TLS, integrity/provenance/Audit, no-STOW denial, destination verification and full `AT-FUNC-012`/`AT-SEC-012`/`AT-E2E-003` remain release gates. |
+| 고려한 대안 | (1) STOW immediately after `MAPPING_VALIDATED` — rejected because Consent/Grant/operation fences, identity equality, durable state and the full Preflight are not proven. (2) Build an empty coordinator that only calls the mapping gate — rejected because it adds no accepted workflow behavior and could misrepresent readiness. (3) Rewrite PatientID or other DICOM attributes to fit the destination — rejected for P0 because the project baseline is byte-preserving and no DICOM-aware transformation policy/validation exists. (4) Blindly retry after response loss — rejected because duplicate destination writes cannot be excluded. |
+| Acceptance/traceability | `TC-PACS-001-CMD-001`, `PRE-001`, `PID-001`, `STATE-001`, `UNKNOWN-001`, `COMP-001`; full `AT-FUNC-012`, `AT-SEC-012/013`, and `AT-E2E-003` remain NOT RUN until the protected full path is integrated and tested. |
+| 변경 범위 | This decision only tightens P0 preconditions and implementation dependency order. It adds no product route, DB schema/grants, DICOM rewrite, live PACS write, or changed MVP capability. |
+| 관련 문서 | `AGENTS.md`; `IMPLEMENTATION-PLAN.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `DATA-MODEL.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `MEDIQ-PACS-001/007` |
+
+## PACS-001-DEC-002 — PatientID Binding Gate as a No-Side-Effect PACS-001 Slice
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — implementation may proceed within this narrow slice; full coordinator remains incomplete |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `PACS-001-DEC-001`; `REQ-PACS-003`; `SEC-DICOM-006`; DICOM Profile §10.2; `MEDIQ-DCM-002` read-only Orthanc integration; user's recommendation-first instruction |
+| 현황 근거 | PACS-007 durable operation/idempotency is scoped PASS and PACS-004 checks exact destination PatientMapping eligibility, but the current WADO metadata projection omits DICOM PatientID. The full coordinator still lacks operation-time preflight orchestration, TLS, Integrity/Provenance/Audit completion, dispatch fencing and destination verification. |
+| 채택 권고안 | Before the full coordinator, add an internal, side-effect-free PatientID binding primitive. WADO Study metadata must project exactly one PatientID for every returned SOP Instance into the internal DICOM metadata type. A pure gate accepts only a non-empty Study and a canonical synthetic `TEST-*` PatientID for the verified destination mapping; every source instance must equal that destination localPatientId exactly. Missing/malformed metadata is an upstream failure; malformed destination identity, any mismatch, or inconsistent per-instance values deny with fixed non-identifying reasons. Do not rewrite DICOM attributes. |
+| 개인정보/노출 경계 | PatientID may exist only in bounded in-process internal metadata needed for the check. The decision result, logs, Audit, public API and implementation evidence must not include the value. Do not add a route, DB grant, DICOM STOW call, write capability or patient-facing response. Synthetic/Test data only. |
+| Acceptance 및 검증 | Add unit cases for exact match, empty study, missing/malformed/non-canonical ID, per-instance mismatch and minimized result; extend isolated A Orthanc read-only WADO metadata integration to assert every synthetic instance's PatientID equals the manifest's synthetic mapping value. The tests must issue only QIDO/WADO GETs. A future coordinator's zero-STOW/B-unchanged proof remains a separate NOT RUN case and cannot be inferred from this primitive. |
+| 고려한 대안 | (1) Defer identity validation until the full coordinator is ready — rejected because byte-preserving destination identity is a hard precondition and adapter metadata currently drops the required evidence. (2) Rewrite PatientID to destination mapping — rejected by the approved byte-preserving policy. (3) Implement the whole coordinator or call STOW in this slice — rejected because Consent/Grant race fencing, positive TLS, Integrity/Provenance/Audit and full Mandatory Preflight are not all implemented and proven. (4) Return identity values in errors/logs — rejected as unnecessary disclosure. |
+| 적용 범위 | `MEDIQ-PACS-001` internal identity-preflight sub-gate and its pure/unit + read-only synthetic Orthanc evidence only. Ticket remains `PARTIAL` until the full coordinator and remaining `TC-PACS-001-*`/`AT-FUNC-012`/`AT-SEC-012/013`/`AT-E2E-003` gates pass. |
+| 잔여 위험 | This exact synthetic PatientID equality is not real-patient identity proof. A validated primitive is not Authorization or permission to transfer. The application has not yet proven that every production transfer path invokes the gate before STOW; actual no-STOW and unchanged-destination proof is still required. |
+| 관련 문서 | `AGENTS.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `P0-EXECUTION-SCHEDULE.md`; `MEDIQ-PACS-001` |
+
+## PACS-001-DEC-003 — Session-Serialized Operation-Time Authorization Fence
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — scoped no-side-effect fence implementation and five scoped Acceptance cases PASS; full PACS-001 remains PARTIAL |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `PACS-001-DEC-001/002`; `PACS-007-DEC-001`; `REQ-GRT-004`; `SEC-AUTHZ-001/002`; `SEC-DICOM-004/006`; `THR-017/019`; `AGENTS.md` §§4–6; user's standing instruction to record recommendations first and proceed within approved scope |
+| 현황 근거 | `AuthorizationGatedOperationExecutor` evaluates persisted Consent/Grant/Study evidence within the verified Tenant transaction, and Grant issue/revocation plus Consent transitions already acquire a Session advisory transaction lock. The PACS mapping gate did not yet acquire that same lock before evaluating Authorization; therefore its precheck could race a concurrent Consent withdrawal or Grant revocation. |
+| 채택 권고안 | Centralize the existing per-ExchangeSession PostgreSQL advisory transaction fence and require PACS operation-time authorization checks to acquire it **before** resolving current Consent/Grant facts and evaluating `PACS_IMPORT`. Keep the fence, fresh evidence query, mapping decision and any related DB-only work in one verified Tenant transaction. No DICOM/network I/O may occur while that transaction is open. All Consent/Grant mutation paths that participate in this contract must use the same canonical lock helper and lock key. |
+| 선형화 경계 | For a future coordinator, the authorization/dispatch commitment is the successful commit of the transaction that, while holding the Session fence, revalidates current Authorization and atomically advances the durable operation into `STOW_STARTED`. A withdrawal/revocation serialized and committed before that boundary must deny dispatch. One committed after the boundary cannot recall or promise to cancel an already committed/in-flight operation; the UI/API must not imply remote cancellation. This Ticket only tests the fence and no-side-effect eligibility gate; it does **not** create `STOW_STARTED` or issue STOW. |
+| Fail-closed 및 데이터 경계 | Missing, withdrawn, revoked, expired, mismatched or unresolvable evidence, lock failure, or DB failure denies or returns a sanitized unavailable result before the protected callback. No caller-supplied identity or authorization state is trusted. The scoped gate returns only its existing internal eligibility/denial result; it does not return patient data, create a reusable authorization token, add an HTTP route, mutate the operation ledger or call the DICOM Gateway. Synthetic/Test DB only. |
+| 고려한 대안 | (1) Check Authorization then acquire a lock — rejected because revocation could commit between the policy query and serialization. (2) Hold a DB transaction/lock over WADO/STOW streaming — rejected because long network I/O inside a transaction harms availability and still cannot atomically commit a remote PACS side effect. (3) Treat a Grant revoke as cancellation of already committed work — rejected because remote cancellation/recall is not guaranteed. (4) Add an effect-capable coordinator now — rejected until the remaining Mandatory Preflight, Integrity/Provenance/Audit, endpoint and destination-verification gates are implemented. |
+| Acceptance 및 검증 | `TC-PACS-001-FENCE-001~005` passed at the scoped internal-gate boundary: unit tests show the shared lock precedes the fresh policy query and lock failure prevents the callback; isolated PostgreSQL integration shows a revocation committed before the next fenced check denies, concurrent exact-recipient Grant revocation waits until the DB-only callback commits, the post-revocation check denies, and persisted withdrawn Consent denies; `pacs_transfer_operations` count is unchanged and no DICOM Gateway/STOW call exists in this path. The test is not a transfer test; it did not query Hospital B Orthanc, so product-level B-unchanged proof remains `TC-PACS-001-PID-003`/`AT-SEC-012` work. |
+| 변경 범위 | Internal authorization executor and PACS mapping/preflight eligibility gate only, plus a shared Session-fence utility and scratch-only integration evidence. No public route/OpenAPI, schema/migration/privilege, durable operation transition, STOW, B write or product capability change. |
+| 잔여 위험 | The Session fence protects only paths that use the shared helper and same database. This scoped proof does not establish the final coordinator's full Preflight or its atomic `STOW_STARTED` decision, cross-process PACS cancellation, destination integrity/verification, or the complete `AT-SEC-012`/A→B E2E. |
+| 관련 문서 | `AGENTS.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PACS-001/007`; Consent and Grant mutation Tickets |
+
+## PACS-001-DEC-004 — Complete Mandatory Preflight and Atomic STOW Dispatch Boundary
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — recommendation selected; implementation remains gated by Acceptance prerequisites |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `PACS-001-DEC-001~003`; `PACS-007-DEC-001`; `AGENTS.md` §§4–6; `REQ-PACS-001~005`; `SEC-DICOM-003~006`; `THR-017/019/020`; user instruction to record recommendation/Acceptance first and proceed within approved scope |
+| 현황 및 문제 | PACS-001 now has separate identity-binding and Session-fence eligibility primitives; PACS-007 has a durable operation ledger. Neither proves a full Mandatory Preflight or invokes a coordinator. Endpoint/TLS enforcement, complete Integrity/Provenance/Audit evidence, operation-time revalidation through the durable dispatch claim, product zero-STOW/B-unchanged negatives, destination verification and bounded reconciliation are not complete. |
+| 채택 권고안 | Keep the HTTP import route and all STOW calls disabled until the complete product Acceptance passes. Implement the future coordinator as a server-only, synthetic-Test operation with two bounded phases: (1) authenticate and authorize the exact Source retrieval, resolve all references from persisted server-owned Session/Study/Package/Consent/Grant/Mapping/Endpoint records, and retrieve only the authorized bounded package; (2) verify exact per-instance PatientID binding, byte/integrity digest, provenance, destination mapping and verified HTTPS endpoint, then open a short verified-Tenant database transaction, acquire the shared Session fence, re-read mutable Consent/Grant/Session/Mapping evidence, re-evaluate exact `PACS_IMPORT` scope, and atomically persist the operation's legal `PREFLIGHT_PASSED`→`STOW_STARTED` transition and required Audit event. Commit releases the DB lock; only after that commit may the coordinator issue one STOW request. No WADO/STOW/network wait may occur while the transaction or advisory lock is held. |
+| Mandatory Preflight facts | Server-verified Actor/Tenant and exact Session participants/state/expiry; exact source Study and package binding; current unwithdrawn Consent with the exact action; active, non-revoked, unexpired TransferGrant bound to the same patient/session/package/study, recipient, destination and `PACS_IMPORT` action/scope; exact persisted destination PatientMapping (`VALID`, validation evidence present, synthetic canonical PatientID equality for every source instance); enabled role-correct allowlisted A/B endpoints with HTTPS, trusted CA and hostname verification; bounded retrieval/package and unchanged DICOM bytes; passing integrity and provenance evidence; idempotent operation claim; and available minimized Audit write. Missing, stale, contradictory, cross-Tenant or unresolvable evidence fails closed. Client-supplied Patient ID, Local Patient ID, DICOM UID, Hospital, URL, endpoint credential or authorization evidence is never authoritative. |
+| Atomicity / failure boundary | The linearization point is the successful DB commit that includes the final fenced Authorization recheck, durable `STOW_STARTED` operation state and required Audit. If a revocation/withdrawal commits before that point, do not call STOW. A revocation after that point does not guarantee remote cancellation/recall. If Audit, CAS, transaction or lock acquisition fails, roll back and do not call STOW. Once dispatch is committed, make at most one network attempt; timeout, process loss or ambiguous response becomes durable `RESULT_UNKNOWN` and is never blindly retried. Reconciliation is a separate bounded read-only workflow. Mark `COMPLETED` only after destination verification of the expected SOP Instance UID set and passing integrity/provenance/Audit evidence. |
+| Acceptance 및 검증 | `TC-PACS-001-PRE-002~006`, `TC-PACS-001-DISPATCH-001~005`, `TC-PACS-001-COMP-002` and `TC-PACS-001-SEC-002` are specified in `ACCEPTANCE-TESTS.md`. All are `NOT RUN` until the coordinator and required Integrity/Provenance/Audit/endpoint dependencies exist. Positive live synthetic STOW is a later gate; no current implementation or decision alone enables it. |
+| 범위 제한 | This decision records the normative design/Acceptance sequence only. It does not add a route, Controller, worker, runtime grant, database schema, dispatch-capable service, STOW call, or production/real-PHI authority. The next code Ticket must have its own implementation record, exact traceability, full failure/negative tests and product B-unchanged evidence before any positive STOW test is enabled. |
+| 고려한 대안 | (1) Hold the Session DB lock across WADO/STOW — rejected because remote waits must not hold a database transaction and do not make the remote side effect atomic. (2) Treat a prior `ALLOW` or `MAPPING_VALIDATED` as reusable dispatch permission — rejected because Consent/Grant can change and mapping is not image authorization. (3) Retry STOW after a lost response — rejected because duplicate PACS writes cannot be excluded. (4) Mark success from the STOW response alone — rejected because destination verification and Integrity/Provenance/Audit are required. (5) Enable route/STOW now and finish controls later — rejected by the default-deny/mandatory-preflight invariant. |
+| 잔여 위험 | Before implementation, confirm Integrity/Provenance/Audit services expose authoritative read/write evidence and endpoint/TLS registry validation is fail closed. Even after dispatch commit, remote cancellation is not guaranteed; a lost response requires conservative `RESULT_UNKNOWN` and reconciliation. `AT-SEC-012/013`, `AT-FUNC-012`, `AT-E2E-003` remain required product gates. |
+| 관련 문서 | `AGENTS.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `DATA-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PACS-001/007`; `MEDIQ-INT-*`; `MEDIQ-PROV-*`; `MEDIQ-AUD-*` |
+
+## PACS-004-DEC-001 — Destination PatientMapping Preflight Gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — implementation PARTIAL; composite `AT-SEC-012` NOT RUN |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; 사용자의 권고안 선작성·기록 후 진행 지침; `MEDIQ-PACS-004` 계획; `PAT-003/004`; `REQ-PAT-004`; `SEC-IAM-007~009`; `AT-SEC-012`; `AGENTS.md` §§4–6의 DENY/FAIL-CLOSED, same-tenant and Mandatory Preflight requirements |
+| 현황 근거 | `PACS-001~003` product coordinator, operation route and full destination binding are absent. AUT-005 provides Study evidence only; `AuthorizationGatedOperationExecutor` and PatientMapping repository exist but are not wired to PACS. The DCM adapter is not registered in a product route. No global PACS denial-audit operation exists, while `PostgresExchangeSessionAuditRepository` already supports metadata-only atomic audit writes. |
+| 채택 권고안 | Build an internal PACS mapping gate that constructs the exact `PACS_IMPORT` AuthorizationContext from strict internal reference inputs, invokes `AuthorizationGatedOperationExecutor`, and only inside its exact-ALLOW callback resolves the persisted ExchangeSession and one exact destination-Hospital/PatientReference mapping on the same verified Tenant transaction. Reuse `validateDestinationPatientMapping`; missing, ambiguous, invalid status, mismatched binding, missing validation evidence and persistence errors fail closed. Invalid mapping after ALLOW writes a metadata-only `PACS_TRANSFER_FAILED` audit with fixed reason `PATIENT_MAPPING_INVALID` in the same transaction. |
+| Output and effect boundary | `MAPPING_VALIDATED` is an internal eligibility fact only, not `PACS_IMPORT` permission. Denial results expose no local Patient ID, DICOM UID/payload, credential or policy evidence. The gate has no DICOM Gateway/STOW dependency; live PACS writes are prohibited. Even a valid mapping cannot cause an import because Integrity/Provenance, complete Preflight, protected product route and transfer coordinator are not yet implemented. |
+| Scope | `MEDIQ-PACS-004` internal service, exact verified-transaction lookup, mapping decision, denial Audit, unit/contract and available synthetic integration checks. Preserve existing schema and the exact eight-column PatientMapping read grant; no new migration/grants. Do not register a public endpoint or modify OpenAPI for this gate. Keep composite `AT-SEC-012` NOT RUN pending invocation by the actual protected PACS Import path and Test Orthanc no-STOW/destination-unchanged evidence. |
+| 고려한 대안 | (1) Add STOW immediately after `VALID` mapping — rejected because Mapping is not full authorization/preflight and `AGENTS.md` also requires integrity/provenance and all other Mandatory Preflight facts. (2) Add a public mapping-check API — rejected because it would expose an incomplete check as an apparent permission and expand route scope before HTTP safe-error/BOLA/ingress gates. (3) Return `pacsImportAllowed=true` from the mapping decision — rejected because it conflates eligibility with Authorization. (4) broaden PatientMapping DB grants — rejected because the approved exact-column grant is sufficient for read and no write is needed. |
+| Acceptance/traceability | `TC-PACS-004-REQ-001`, `AUTH-001`, `BIND-001`, `DB-001`, `MAP-001~003`, `AUD-001~002`, `SEC-001`; the internal gate is PARTIAL and composite `AT-SEC-012` remains NOT RUN until the real product path is tested. |
+| 잔여 위험 | This internal gate is not an actual import endpoint and does not itself close races between Authorization/revocation and a later STOW. A future coordinator must revalidate/fence Consent/Grant and session/destination state through the side-effect boundary, complete endpoint/TLS and integrity/provenance Preflight, and prove audit + zero-STOW semantics end-to-end. |
+| 관련 문서 | `AGENTS.md`; `IMPLEMENTATION-PLAN.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `DOMAIN-MODEL.md`; `DATA-MODEL.md`; `OPENAPI.yaml`; `ACCEPTANCE-TESTS.md`; `MEDIQ-PACS-004` |
+
+## PACS-007-DEC-001 — Durable PACS Transfer Operation and Idempotency
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — implementation and scoped Acceptance PASS; product PACS transfer remains incomplete |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `PACS-001-DEC-001`; `REQ-PACS-004`; `THR-019`; `AT-FUNC-012`; `AT-E2E-003`; existing Exchange/Audit/idempotency and least-privilege DB patterns |
+| 채택 권고안 | Add a durable, Tenant-RLS-protected per-Session/per-Study PACS transfer operation record before enabling any STOW caller. Bind a client Idempotency-Key to the server-canonical semantic request fingerprint and verified Actor/Session/Study. Enforce one operation claim per Session/Study and optimistic/compare-and-set legal state transitions. Persist the operation state and corresponding metadata-only Audit atomically. |
+| State semantics | `CREATED → PREFLIGHT_PASSED → STOW_STARTED → VERIFYING → COMPLETED`; pre-effect rejection is `DENIED`; a definitive no-write failure is `FAILED`; partial storage is `PARTIAL`; any post-dispatch ambiguous response/process loss is `RESULT_UNKNOWN`. `RESULT_UNKNOWN` is not retryable: only bounded read-only destination reconciliation may resolve it to a proven terminal result; if the destination state remains inconclusive, preserve `RESULT_UNKNOWN`. Never convert an HTTP 200/202 alone into `COMPLETED`. |
+| Concurrency and external-effect boundary | The service must commit the operation claim/`STOW_STARTED` transition and audit before opening the external STOW request; no DB transaction may remain open during DICOM streaming. A state compare-and-set/unique constraint must prevent concurrent or idempotent duplicate STOW starts. Fresh Consent/Grant/action/destination/mapping checks are required in the transaction that claims dispatch. That commit is the operation's authorization linearization point: a later revocation blocks new claims but cannot promise recall of a transfer already admitted for dispatch. Record this limitation; no blind retry or remote-recall claim. |
+| Data and database boundary | Persist only internal Session/Study/Actor references, idempotency material, semantic request digest, state and timestamps/outcome counts needed for reconciliation. Do not persist DICOM payload, local Patient ID, raw response/body, endpoint credential or patient details. New migration/RLS and exact runtime column privileges require their own catalog verification; do not grant table-wide, default, PUBLIC, DDL, DELETE or TRUNCATE access. |
+| 고려한 대안 | (1) Keep state only in memory — rejected because process restart loses whether STOW may have started. (2) Retry POST after timeout — rejected because duplicate write cannot be excluded. (3) Hold a database transaction/lock across WADO/STOW — rejected due long transaction, resource exhaustion and unrelated workflow blocking. (4) Treat Provenance `IN_PROGRESS` as sufficient idempotency — rejected because the existing model has no unique operation key, compare-and-set dispatch claim or `RESULT_UNKNOWN` state. |
+| Acceptance/traceability | `TC-PACS-007-DOM-001`, `STATE-001`, `IDEM-001`, `CONC-001`, `DB-001`, `RLS-001`, `AUD-001`, `UNK-001`, `SEC-001`; full STOW/no-STOW and destination outcome remain under PACS-001/005/006 and `AT-FUNC-012`/`AT-SEC-012`/`AT-E2E-003`. |
+| 적용 순서 | `MEDIQ-PACS-007` is implemented and its internal state/idempotency/RLS/least-privilege Acceptance passed before an effect-capable coordinator. Next recommendation-first step is PACS-001 coordinator requirements and Acceptance. Scope excludes HTTP route, DICOM network calls, successful transfer, automatic retry and full reconciliation worker. |
+| 잔여 위험 | The PACS-001 internal no-side-effect Session fence and current Consent/Grant revalidation sub-gate is implemented and scratch-tested, but the future coordinator has not proven that every effect-capable path enforces it atomically with durable `STOW_STARTED`. Full Mandatory Preflight and bounded read-only reconciliation remain unimplemented. A process may fail after `STOW_STARTED` commits but before/after partial receipt; remain `RESULT_UNKNOWN` and do not infer absence from one premature QIDO response. |
+| 관련 문서 | `AGENTS.md`; `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-PACS-007` |
+
+## INT-001-DEC-001 — Bounded Source Integrity Manifest Primitive
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — algorithm sub-gate implementation authorized; end-to-end source evidence remains open |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; 사용자의 권고안 선작성 후 채택안에 따라 진행 지침; `REQ-INT-001`; `SEC-INT-001~002`; `INV-INT-001~004`; `DICOM-INTEROPERABILITY-PROFILE.md` §§15, 23; P0 synthetic-only and no-STOW boundaries in `AGENTS.md` |
+| 채택 권고안 | Implement an internal bounded streaming manifest builder with an injected lazy stream opener, using the exact `SHA256-MANIFEST-V1` framing: domain separator `MEDIQ-DICOM-MANIFEST\0V1\0`, a 32-bit big-endian instance count, then instances sorted by ASCII SOP Instance UID; each tuple is 32-bit big-endian UID-byte length, UID bytes, 64-bit big-endian actual byte length, and the raw 32-byte SHA-256 digest of that instance's exact `application/dicom` stream. The public-facing system does not expose per-instance hashes or UIDs from this primitive. |
+| Bounded processing | Read one object stream at a time with backpressure; never aggregate DICOM payloads in a study-sized Buffer. Enforce at most 2,000 nonempty instances, 64 MiB per instance, and 2 GiB total actual bytes for this P0 capture primitive. Reject duplicate/invalid UIDs, non-DICOM media type, empty or truncated streams, declared Content-Length mismatch, abort, and any bound violation. The 2 GiB value is a MediQ P0 guardrail for this primitive, not a DICOM standard or a production throughput guarantee; transfer/storage-wide size and duration decisions remain open. |
+| Failure and integration boundary | Any incomplete/invalid input returns no manifest and can never produce `VERIFIED`. This first sub-gate has no concrete DICOM Gateway adapter/endpoint client, database writer, HTTP route, Audit claim, Viewer/Download path, or STOW effect; its only I/O seam is a caller-supplied lazy stream opener, which this Ticket tests with synthetic in-memory streams. A later authorized source-capture workflow must bind server-resolved Session/Study/PatientMapping/Consent/Grant facts, keep network I/O outside DB transactions, reauthorize before evidence persistence, emit Audit/Provenance, and make failed/incomplete integrity block completion. Until then, the product source evidence workflow remains incomplete and unavailable. |
+| 고려한 대안 | (1) Buffer/concatenate every study — rejected because memory scales with study size. (2) Hash concatenated bytes without a canonical object manifest — rejected because the result does not bind the digest to an unambiguous ordered set of SOP Instances. (3) Wire this primitive directly to WADO/PACS now — rejected because current product retrieval lacks the complete authorization/preflight/audit/provenance operation path. (4) Call this end-to-end integrity PASS — rejected because destination comparison and transfer completion gates do not exist. |
+| Acceptance/traceability | `TC-INT-001-HASH-001~008` exercise canonical known vectors/order invariance, exact byte hashing, UID/count validation, streaming bounds, content-length/media-type checks, cancellation/read failure, safe result/error surface, and absence of network/DB/route/STOW integration. Source-to-destination capture, persisted evidence, mismatch completion blocking, Audit/Provenance, and P0 A→B remain NOT RUN. |
+| 잔여 위험 | This component alone neither proves which PACS supplied the bytes nor that the caller was authorized; it does not create durable source evidence and must not be used as an authorization signal. The selected aggregate cap needs workload evaluation before any broader clinical compatibility or performance claim. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DOMAIN-MODEL.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-INT-001` |
+
+## AUD-001-DEC-001 — 공통 Audit Event writer 경계
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — generic writer implementation authorized within this scoped boundary |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-AUD-001~003`; `SEC-AUD-001~003`; `AT-AUD-001~003`; `MEDIQ-DB-007/008`; 사용자의 권고안 선작성 및 그에 따른 진행 지침 |
+| 채택 권고안 | 현재 `PostgresExchangeSessionAuditRepository`의 Session·Consent·Grant·PatientMapping-denial 이벤트를 유지하되, metadata-only `AuditEvent` allowlist/검증과 공통 parameterized `PostgresAuditEventWriter`를 둔다. 기존 업무별 메서드는 같은 verified IAM-002 Tenant transaction의 `PoolClient`를 사용해 공통 writer에 위임한다. Writer는 transaction을 열거나 commit하지 않는다. |
+| 허용 이벤트 | 고정 조합만 허용: `SESSION_CREATED/SUCCESS`, `CONSENT_REQUESTED|CONSENT_APPROVED|CONSENT_WITHDRAWN/SUCCESS`, `AUTHORIZATION_GRANTED/ALLOW`, `AUTHORIZATION_DENIED/DENY`, `GRANT_DENIED/DENY` (the verified Grant issue/revocation paths approved by `AUD-002-DEC-001`), `GRANT_CREATED|GRANT_REVOKED/SUCCESS`, `PACS_TRANSFER_FAILED/FAILURE`. `resource_type` 및 `reason_code`는 제품 코드의 고정 allowlist로 제한한다. 별도 사전 결정/Acceptance 없이 새 이벤트·조합을 자동 허용하지 않는다. |
+| 경계와 원자성 | 정확히 기존 `audit_events` 12개 승인 컬럼만 사용한다. 신규 migration/grant, table-wide 권한, Audit read/API, route 등록은 하지 않는다. 기존 Session/Consent/Grant/매핑거부 기록 호출자는 같은 검증된 Tenant transaction을 유지하고, Audit 오류는 generic persistence error로 변환되어 업무 변경과 함께 rollback되어야 한다. RLS가 현재 transaction의 Tenant와 Audit row tenant 일치를 강제한다. |
+| 데이터 최소화 | Actor/Tenant/Session/resource/correlation은 내부 UUID reference만 받는다. DICOM UID/payload, Local Patient ID, free text, credential/token/key, DB driver detail은 입력·저장·오류에 추가하지 않는다. timestamp는 유효한 날짜만 허용하고 ID/action/result/resource/reason은 형식 및 allowlist로 검증한다. |
+| 대안 및 판단 | (1) 업무별 중복 INSERT 유지 — 현재 동작은 보존하지만 신규 writer 경계와 검증이 중복됨. (2) 범용 임의 action/free-text event API — 데이터 품질·PHI 유입·잘못된 result 조합 위험으로 거부. (3) Audit API/read·retention/WORM까지 함께 구현 — P0 범위를 불필요하게 넓히므로 분리. 제한된 공통 writer만 선택한다. |
+| 명시적 미완료 | 본 Ticket은 전체 필수 이벤트 발생률/호출부 완전성, unauthenticated/global denial 수집, event taxonomy 확장, query API, retention, tamper resistance/WORM, external sink, end-to-end A→B 감사 완전성을 PASS 처리하지 않는다. 특히 verified Tenant가 없는 인증 실패 이벤트를 이 RLS 기반 writer가 저장한다고 주장하지 않는다. |
+| Acceptance/추적 | `TC-AUD-001-WRITER-001~009`; global `AT-AUD-001~003`, `STC-AUD-001~003`, `AT-FUNC-014~016`, `AT-SEC-018~020`는 이 scoped writer로 자동 PASS되지 않음; `MEDIQ-AUD-001`; `THR-034/039` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUD-001` implementation record |
+
+### 변경 이력
+
+| 날짜 | 결정 ID | 변경 |
+|---|---|---|
+| 2026-09-30 | `PDEC-001` | 권고안 기반 결정 절차를 상시 운영 기준으로 등록 |
+| 2026-10-01 | `AUD-001-DEC-001` | 기존 업무별 Audit 의미를 보존하는 metadata-only 공통 writer와 제한된 이벤트 allowlist, 동일 Tenant transaction 원자성 Acceptance를 확정; 전역 이벤트 완전성·조회·보존·불변성은 별도 Gate |
+| 2026-09-30 | `DB-008-DEC-001` | Registry 상태 허용값 및 owner-pair 무결성 권고안을 사용자 승인에 따라 채택 |
+| 2026-09-30 | `ORG-001-DEC-001` | 단계 계획·도메인 기준에 따른 합성 A/B/C Organization/Tenant seed 권고안 채택 |
+| 2026-09-30 | `ORG-002-DEC-001` | 기존 Organization/Tenant fixture에 대응하는 합성 Hospital A/B/C insert-only seed 권고안 채택 |
+| 2026-09-30 | `ORG-003-DEC-001` | 역할 기반 A/B endpoint registry와 capability 증거 기반 enable 권고안 채택 |
+| 2026-09-30 | `PAT-001-DEC-001` | P0 PatientReference는 합성 코드만 허용하고 DB runtime 권한을 열지 않는 권고안 채택 |
+| 2026-09-30 | `DB-009-DEC-001` | P0 최소권한 role·Tenant RLS·업무 인가 경계와 synthetic global PatientReference 예외를 확정 |
+| 2026-09-30 | `PAT-002-DEC-001` | P0 합성 Source PatientMapping 범위와 인증·Tenant·업무 Authorization 선행 Gate를 권고안으로 확정 |
+| 2026-09-30 | `EXC-001-DEC-001` | ExchangeSession domain-only 범위와 생성·재구성 불변조건 권고안 채택 |
+| 2026-09-30 | `EXC-002-DEC-001` | Internal repository/SQL contract 범위, runtime access Gate 및 CANCELLED requirement 정합화 권고안 채택 |
+| 2026-09-30 | `EXC-005-DEC-001` | ExchangeSession 허용 상태 edge, terminal lock 및 pure-domain 우선 구현 권고안 채택 |
+| 2026-09-30 | `IAM-001-DEC-001` | OIDC/JWKS global default-deny middleware와 보호 API 선행 dependency 순서 권고안 채택 |
+| 2026-09-30 | `IAM-001-DEC-002` | trusted ingress·issuer·rate-limit Acceptance 전 API 외부 노출 금지 권고안 채택 |
+| 2026-09-30 | `IAM-002-DEC-001` | 후보 Tenant는 identity membership 검증용 선택자만 허용하고, exact Actor 조회와 최소 column grants/RLS/transaction wrapper로 trusted context를 확정하는 권고안 채택 |
+| 2026-09-30 | `AUT-001-DEC-001` | Authorization Context 형식·출처 검증만 우선 구현하고 정책 결정·route·DB 권한은 후속 Gate로 분리 |
+| 2026-09-30 | `AUT-002-DEC-001` | 미설정·불완전·비명시적 정책결과·예외는 DENY; 실제 allow policy와 업무 경로는 AUT-003 이후로 제한 |
+| 2026-09-30 | `AUT-003-DEC-001` | 서버 조회 Evidence의 exact Session/Consent/Grant/Resource/Recipient/Action binding 정책; ID 정합성 유지; runtime resolver/API는 별도 Gate |
+| 2026-09-30 | `AUT-004-DEC-001` | HTTP 구현 전 내부 authorization-gated executor를 우선 시험하고 HTTP/data/BOLA Acceptance는 원래 ID로 미완료 유지 |
+| 2026-09-30 | `AUT-005-DEC-001` | 정확한 column SELECT와 동일한 verified transaction을 쓰는 PostgreSQL Study evidence reader; route 및 PACS 부작용은 닫음 |
+| 2026-09-30 | `CON-001-DEC-001` | P0 ConsentArtifact를 불변 pure-domain 범위로 구체화; P1 action·법적 효력·API/DB/Authorization 승격 차단 |
+| 2026-09-30 | `PAT-003-DEC-001` | 목적지 PatientMapping을 exact binding·VALID+validatedAt 순수 Domain 검증으로 제한; HTTP/DB/PACS 권한 승격 차단 |
+| 2026-09-30 | `PAT-004-DEC-001` | 매핑 저장소 결과→Domain deny 변환, duplicate-row 및 DB 오류 fail-closed mock Acceptance; runtime DB/PACS 권한은 닫음 |
+| 2026-09-30 | `EXC-002-DEC-002` | scratch-only 임시 권한으로 ExchangeSession repository 실DB/RLS Acceptance를 수행하고 영구 runtime 권한/API는 닫아 두는 권고안 채택 |
+| 2026-09-30 | `EXC-003-DEC-001` | verified 목적지 병원 USER, request idempotency, atomic success Audit을 갖춘 제한된 Exchange 생성 API 권고안 채택 |
+| 2026-09-30 | `CON-002-DEC-001` | synthetic PENDING Consent만 내부 저장하고 transaction-scoped version allocator와 scratch-only exact grants로 persistence/concurrency를 검증하는 권고안 채택 |
+| 2026-10-01 | `CON-002-DEC-001` 정정 | 신규 임시 GRANT와 유효 권한 총계를 구분해 기록: baseline SELECT 10/2에 SELECT 3/1을 추가해 유효 SELECT 13/3, INSERT 13/3; inventory 100→120→100 |
+| 2026-10-01 | `CON-003-DEC-001` | 목적지 병원 Session 생성자만 PENDING Consent를 요청; Consent/Session/Audit 원자 저장, 의미상 retry 재응답 및 정확한 additive column grants를 채택 |
+| 2026-10-01 | `CON-004-DEC-001` | 합성 signed OIDC patient claim에 결속한 technical Consent 승인, atomic Session/Consent/Audit 전이 및 exact three-column UPDATE grant를 채택; 법적 동의·Authorization/Grant는 분리 유지 |
+| 2026-10-01 | `CON-005-DEC-001` | 만료와 무관한 claim-bound synthetic Consent withdrawal, atomic Consent/Audit·idempotent replay, exact `withdrawn_at` UPDATE 1열 및 no-Session/Grant/PACS side effect를 채택 |
+| 2026-10-01 | `CON-006-DEC-001` | P0 Authorization Consent Action을 `VIEW/DOWNLOAD/PACS_IMPORT`로 제한하고 세 action의 exact Grant-scope mapping 및 invalid evidence deny를 채택; HTTP/Grant issuance는 제외 |
+| 2026-10-01 | `CON-007-DEC-001` | 기존 세 Consent 성공 Audit의 필드 결속 Acceptance를 추가하고 `CONSENT_REQUESTED`의 보안 요구사항 누락을 정합화; global denial Audit은 별도 Gate로 유지 |
+| 2026-10-01 | `CON-008-DEC-001` | 누락·철회 Consent의 fail-closed DB evidence→Authorization→보호 callback 거부를 세 P0 action으로 검증; Grant 발급·제품 HTTP 경로는 별도 Gate로 유지 |
+| 2026-10-01 | `GRT-001-DEC-001` | 불변 P0 TransferGrant metadata entity, 세 P0 scope, non-authorizing temporal/lifecycle helper 및 P1/one-time/Persistence 경계 확정 |
+| 2026-10-01 | `GRT-003-DEC-001` | Consent·Session·Package 및 destination requester에 결속한 actor-scoped Grant 발급, 30분 상한, DB-backed idempotency, 원자 Audit과 정확한 18개 추가 column privilege 권고안 채택 |
+| 2026-10-01 | `GRT-004-DEC-001` | verified exact recipient Actor만 Grant 철회, Session lock+row lock, idempotent replay, 원자 Audit, `status/revoked_at` 2-column UPDATE 및 remote-recall 비보장 권고안 채택 |
+| 2026-10-01 | `GRT-005-DEC-001` | 기존 shared pure Authorization policy로 정확한 P0 Grant action/scope 연결을 시험하고 실제 보호 route/side effect와 분리 |
+| 2026-10-01 | `GRT-006-DEC-001` | Grant domain·issue·revoke response를 metadata allowlist로 제한하고 DICOM/key/credential payload 유출을 compile/unit boundary에서 차단 |
+| 2026-10-01 | `GRT-007-DEC-001` | server-time strict expiry, parent Session/Consent boundary, 30분 issuance cap을 기존 policy에 재사용하고 protected operation enforcement와 분리 |
+| 2026-10-01 | `DCM-001-DEC-001` | DICOM Gateway 상세 TypeScript Port, per-instance WHATWG streaming 계약과 `MEDIQ-DCM-001/002` 대 `MEDIQ-DICOM-001` ticket crosswalk 권고안 채택 |
+| 2026-10-01 | `DCM-002-DEC-001` | server-owned A/B resolver, bounded streaming Orthanc adapter를 채택; A read-only integration/B baseline과 STOW mock만 수행하고 Mandatory Preflight 전 실제 STOW 금지; TLS/product gates remain open |
+| 2026-10-01 | `PACS-004-DEC-001` | exact PACS_IMPORT Authorization 뒤 같은 Tenant transaction에서 목적지 mapping을 검증하는 internal-only no-STOW gate; full Preflight/API/live STOW와 AT-SEC-012 완료 주장은 별도 유지 |
+| 2026-10-01 | `PACS-001-DEC-001` | Mapping gate만으로는 coordinator/STOW를 열지 않으며, PatientID 일치·durable idempotent operation state·RESULT_UNKNOWN/재조정·revocation fence를 선행 조건으로 확정; 구현 순서를 PACS-007→PACS-001로 조정 |
+| 2026-10-01 | `PACS-001-DEC-002` | Full coordinator 전 synthetic-only·no-side-effect PatientID identity gate를 먼저 구현하고, internal metadata exposure·no-rewrite·no-STOW 경계를 정함 |
+| 2026-10-01 | `PACS-001-DEC-003` | 같은 Session transaction advisory fence 아래 fresh Consent/Grant authorization을 재검증하고 철회와 DB dispatch-commit 순서를 직렬화하는 no-side-effect gate 권고안을 채택; 실제 STOW/cancellation 보장은 별도 유지 |
+| 2026-10-01 | `PACS-001-DEC-004` | Complete Mandatory Preflight, final fenced Authorization reread, atomic durable `STOW_STARTED`+Audit commit, commit-before-single-STOW, `RESULT_UNKNOWN` no-retry, and destination-verification Acceptance recorded; actual coordinator/STOW remains gated |
+| 2026-10-01 | `PACS-007-DEC-001` | Per-Session/Study PACS transfer claim, persisted idempotency/state, CAS dispatch, atomic Audit, conservative RESULT_UNKNOWN and no-blind-retry semantics adopted before coordinator/STOW |
+| 2026-10-01 | `INT-001-DEC-001` | Bounded canonical `SHA256-MANIFEST-V1` streaming primitive and 64 MiB/2 GiB/2,000-object guardrails adopted; PACS/network/persistence/product evidence integration remains gated |
+| 2026-10-01 | `AUD-002-DEC-001` | Verified-Tenant Grant denials write distinct atomic authorization and Grant business-denial Audit events |
+| 2026-10-01 | `PROV-001-DEC-001` | Initial PACS_IMPORT Provenance bound to one operation, pending-only, with required operation/destination/study and no late first-write |
+| 2026-10-02 | `INT-001-DEC-002` | Source-capture Integrity Evidence schema/writer sub-gate: operation-bound, immutable PENDING baseline; exact grants are scratch-only until authorized capture is wired |
+
+## AUD-002-DEC-001 — 검증된 Tenant 문맥의 Grant 거부 Audit
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — implementation authorized within this scoped boundary |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-AUD-001`; `SEC-AUD-001~003`; `AT-SEC-005/006`; `TC-GRT-003-API-018`; current Grant issue/revocation code and verified IAM-002 Tenant transaction; `MEDIQ-AUD-001` exact 12-column metadata-only writer |
+| 문제 정의 | 요구사항은 `AUTHORIZATION_DENIED`와 `GRANT_DENIED`를 별도 security event로 열거하고 `AT-SEC-005/006`은 Consent 누락·철회에 따른 Grant 거부를 `GRANT_DENIED`로 요구한다. 현재 Grant issue/revoke 경로는 검증된 Tenant transaction 안에서 `AUTHORIZATION_DENIED/DENY`만 남기므로 업무 결과 event가 빠져 있다. |
+| 채택 권고안 | 검증된 Tenant context까지 도달한 Grant 발급·철회 거부에서 `AUTHORIZATION_DENIED/DENY`와 `GRANT_DENIED/DENY`를 각각 정확히 한 건 기록한다. 두 event는 동일한 Tenant/Actor/Session/correlation/time 및 고정 `GRANT_ISSUE_DENIED` 또는 `GRANT_REVOKE_DENIED` reason을 공유한다. `GRANT_DENIED`는 Grant가 생성되지 않은 경우도 포함하므로 `EXCHANGE_SESSION` resource를 가리키며, Session을 안전하게 확인하지 못한 경우 Session/resource reference를 모두 null로 둔다. 각각의 Audit UUID는 달라야 하며 두 write와 업무 판정은 같은 IAM-002 transaction에 있어 한 write라도 실패하면 모두 rollback/실패 처리한다. |
+| 대안 및 판단 | (1) 두 event를 함께 기록 — 권고. `AUTHORIZATION_DENIED`는 정책 판정, `GRANT_DENIED`는 요청된 Grant 업무행위의 거부를 표현해 기존 요구사항 두 항목과 `AT-SEC-005/006`을 보존한다. 둘은 중복이 아닌 서로 다른 의미이며 correlation과 동일 fixed reason으로 연결한다. (2) `AUTHORIZATION_DENIED`를 `GRANT_DENIED`로 대체 — generic authorization outcome을 잃어 채택하지 않는다. (3) 현재처럼 generic event만 유지 — 기존 Acceptance와 SEC-AUD-001을 충족하지 않아 채택하지 않는다. |
+| 포함 범위 | 현재 Grant issue/revocation 내부 service의 verified Tenant 거부 경로만. Fixed action/result/resource/reason allowlist 확장, 기존 metadata-only exact 12-column writer 재사용, denial/replay/runtime evidence 갱신. DB schema/migration/grant/API response shape 변경 없음. |
+| 명시적 미완료 | Bearer authentication failure 및 Tenant 검증 전 거부를 tenant-RLS `audit_events`에 넣지 않는다. Viewer/Download/PACS transfer/Integrity/Session-completion action은 실제 업무 producer와 Authorization/Preflight 경로가 없으므로 생성하거나 PASS로 주장하지 않는다. `ACCESS_DENIED`와 전역 Audit completeness, Audit read/retention/tamper/WORM/SIEM은 계속 별도 Gate다. |
+| 데이터 최소화·원자성 | `GRANT_DENIED`의 resource는 ExchangeSession UUID reference뿐이며 환자정보·local Patient ID·DICOM UID/payload·자유문자·token/key/credential은 포함하지 않는다. Tenant RLS·최소 12-column INSERT 권한·caller-owned transaction 유지. 두 event 중 하나만 남는 partial commit은 허용하지 않는다. |
+| Acceptance/추적 | `TC-AUD-002-EVENT-001~008`; 기존 `TC-GRT-003-API-018`, `AT-SEC-005/006`; global `STC-AUD-001`은 계속 open; `MEDIQ-AUD-002`; `THR-039` |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `MEDIQ-AUD-002` |
+
+## PROV-001-DEC-001 — PACS operation에 결속된 PENDING Provenance
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — 이 Ticket의 범위에서 구현 진행 |
+| 결정일 | 2026-10-01 |
+| 근거/권한 | `PDEC-001`; `REQ-PROV-001~002`; `SEC-INT-003`; `AT-PROV-001`; `PACS-007-DEC-001`; `INT-001-DEC-001`; 사용자의 상시 권고안 우선 지침 |
+| 문제 정의 | 기존 `provenance_records`는 Session/Study/Source/Destination을 담지만 durable `pacs_transfer_operations`와 직접 연결되지 않는다. 따라서 동일 작업의 기록 재시도·중복 방지 및 operation→Provenance 추적을 DB가 증명하지 못한다. 기존 runtime role에도 Provenance 기록 권한이 없다. |
+| 채택 권고안 | `PACS_IMPORT` Provenance에 nullable `operation_id` FK와 부분 UNIQUE를 추가한다. 모든 `PACS_IMPORT` row에는 operation, destination, Study binding이 필수이며, 다른 transfer type은 legacy 호환을 위해 nullable로 유지한다. 내부 writer는 caller가 이미 검증한 Tenant transaction 안에서 persisted operation, Session, Package, Study를 DB에서 함께 찾아 Source/Destination/Study/Package/Session 결속을 도출하고, operation 상태가 `CREATED` 또는 `PREFLIGHT_PASSED`일 때만 신규 `PENDING` row 하나를 기록한다. operation당 한 Provenance row만 허용하고 exact replay는 같은 row를 반환한다. 입력은 server-owned operation ID와 timestamp뿐이며, 호출자가 Patient/Hospital/Study identity 또는 결과 상태를 지정하지 않는다. |
+| 결과 상태 제한 | 이 Ticket은 항상 `PENDING`만 생성하며 `IN_PROGRESS`, `COMPLETED`, `FAILED` 전이·전송 성공 주장·Integrity 판정은 수행하지 않는다. Provenance를 먼저 같은 DB transaction에 저장할 수 있는 groundwork이며, coordinator의 `STOW_STARTED`와 Audit 원자성은 후속 통합 Gate다. |
+| 대안 및 판단 | (1) Operation FK 없이 Session/Study로만 연계 — 현재 모호성을 해소하지 못하므로 제외. (2) `PACS_IMPORT`에 operation을 필수화하고 다른 유형은 nullable 유지 — 기존/비-PACS Provenance와 호환하면서 PACS 경계를 강화하므로 채택. (3) 성공·실패까지 writer가 갱신 — 실제 side effect, destination verification, integrity가 아직 연결되지 않아 허위 상태 위험 때문에 기각. (4) 임시 권한만으로 DB 시험 — runtime에서 사용할 수 없는 writer가 되므로 정확한 SELECT/INSERT만 영구 부여하되 UPDATE/DELETE/Table-level 권한은 금지한다. |
+| 범위 | `provenance_records.operation_id` FK/부분 UNIQUE 및 `PACS_IMPORT` check; exact 13-column SELECT + 13-column INSERT; 강제 Tenant RLS; 내부 operation-bound pending writer와 replay/conflict/fail-closed behavior; synthetic PostgreSQL Acceptance 및 DB-008 reset/reapply/regression. 총 runtime column privilege inventory는 183→209가 예상되며 DB catalog로 확인한다. |
+| 명시적 비범위 | HTTP/API route, DICOM QIDO/WADO/STOW, PACS coordinator, cloud/storage, source integrity evidence writer, destination verification, Audit event 신규 producer, Provenance 상태 업데이트/완료, unauthenticated/no-Tenant failure 기록. no-Tenant event는 Tenant RLS business Audit에 위조하여 쓰지 않는다. |
+| 보안·원자성 | RLS와 기존 `pacs_transfer_operations` tenant/scope binding을 유지한다. Hospital/Package/Study/Session 값은 DB에서 도출하고 Tenant C/no-context에는 row를 노출하지 않는다. INSERT와 operation/Audit 변화의 결합은 caller-owned transaction에 맡기며, 이번 writer 단독으로 operation 상태나 Audit을 변경하지 않는다. 위조 operation, 허용 외 state, 일관성 불일치, identity conflict는 fixed persistence error로 거부한다. |
+| Acceptance/추적 | `TC-PROV-001-001~010` (including missing Study binding); `MEDIQ-PROV-001`; global `AT-PROV-001`/`AT-E2E-*`와 full P0는 이 Ticket만으로 PASS가 아님; `THR-019`, `THR-043` |
+| 관련 문서 | `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `ERD.md`; `SECURITY-REQUIREMENTS.md`; `THREAT-MODEL.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `docs/implementation/MEDIQ-PROV-001/` |
+
+## INT-001-DEC-002 — operation-bound source Integrity Evidence persistence sub-gate
+
+| 항목 | 내용 |
+|---|---|
+| 상태 | APPROVED BY STANDING USER INSTRUCTION — scoped schema/repository acceptance authorized; end-to-end capture remains open |
+| 결정일 | 2026-10-02 |
+| 근거/권한 | `PDEC-001`; `INT-001-DEC-001`; `REQ-INT-001/003`; `SEC-INT-001`; `INV-INT-001~004`; existing `pacs_transfer_operations`, `integrity_evidence` schema, forced Tenant RLS and no-route/no-STOW boundary |
+| 문제 정의 | Hash builder만으로는 결과를 Session/Package/Study/operation에 영속 결속하지 못한다. 반면 실제 authorized WADO capture caller는 아직 없으므로 persistent runtime INSERT를 먼저 부여하면 현재 경로가 없는 runtime role이 위조 Source digest metadata를 기록할 수 있다. |
+| 채택 권고안 | `integrity_evidence`에 nullable `operation_id` FK (`ON DELETE RESTRICT`)와 `(operation_id, verification_stage)` 부분 UNIQUE를 추가한다. `SOURCE_CAPTURE` row는 operation·Study·algorithm·source digest·positive object count를 반드시 포함하고 destination digest/count와 `verified_at`은 NULL, status는 항상 `PENDING`으로 제한한다. 내부 repository는 verified Tenant transaction의 `PoolClient`만 사용하고 operation ID와 `SHA256-MANIFEST-V1` manifest 외부값으로 Session/Package/Study를 받지 않는다. DB join으로 binding을 도출하며 신규 row는 operation이 `CREATED`일 때만 허용한다; exact replay는 same immutable digest/count를 반환하고 conflict는 거부한다. |
+| 최소권한 경계 | repository SQL은 정확한 12-column `SELECT`와 12-column `INSERT`만 필요로 한다. 통합 Acceptance 동안에만 scratch DB에서 이 24개 column privilege를 부여하고, rollback/cleanup 후 persistent runtime catalog를 209로 복원한다. `integrity_evidence`에 permanent runtime grant는 authorized source-capture application path와 success/failure Audit atomicity가 연결될 때 별도 권고·Acceptance로 검토한다. |
+| 상태 의미 | `SOURCE_CAPTURE/PENDING`은 one source manifest가 기록됐다는 bookkeeping일 뿐, authorized PACS provenance, end-to-end `VERIFIED`, destination receipt, successful STOW 또는 Transfer `COMPLETED`가 아니다. Source capture는 Mandatory Preflight/operation transition 전에 완료되어야 하므로 신규 evidence를 `CREATED` 외 상태에서 backfill하지 않는다. |
+| 고려한 대안 | (1) Session/Study만으로 unique화 — durable operation retry와 연결되지 않아 거부. (2) 즉시 permanent runtime grant — authorized source-capture caller와 atomic Audit가 아직 없어 false-evidence write surface를 열 수 있으므로 거부. (3) 최초 row를 `VERIFIED` 또는 `END_TO_END`로 표기 — Destination 비교가 없으므로 거부. (4) DB transaction을 열어 WADO stream을 읽는 단일 callback — 2 GiB까지 가능성 있는 network I/O 동안 transaction/fence를 잡게 되어 거부; 실제 capture는 auth-before-read / network-outside-tx / auth-again-before-write로 별도 구현한다. |
+| 범위 | `MEDIQ-INT-001`의 persistence sub-gate: migration/schema, pure/internal repository, scratch-only PostgreSQL/RLS/least-privilege/rollback tests 및 관련 문서. Persistent grants, DICOM network read, PatientID check, Authorization/Consent/Grant callsite, Audit producer, HTTP route, destination comparison, update/terminal state, STOW는 미포함. |
+| Acceptance/추적 | `TC-INT-001-DB-001~010`; `TC-INT-001-HASH-001~008`; `MEDIQ-INT-001`; `THR-020/021`; global `AT-FUNC-014`, `AT-SEC-018`, `AT-E2E-003` remains NOT RUN |
+| 잔여 위험 | This repository does not prove the manifest came from Test Orthanc A or that source retrieval was authorized. Do not wire it to an API or DICOM adapter until a separate authorized source-capture service performs PatientMapping, Consent/Grant/Authorization, reauthorization after network I/O, and same-transaction Audit/evidence persistence. |
+| 관련 문서 | `REQUIREMENTS.md`; `SECURITY-REQUIREMENTS.md`; `DATA-MODEL.md`; `DOMAIN-MODEL.md`; `ERD.md`; `THREAT-MODEL.md`; `DICOM-INTEROPERABILITY-PROFILE.md`; `ACCEPTANCE-TESTS.md`; `IMPLEMENTATION-PLAN.md`; `docs/implementation/MEDIQ-INT-001/` |

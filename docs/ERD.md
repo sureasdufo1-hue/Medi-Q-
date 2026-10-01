@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `ERD.md`
-**Version:** v1.3 Synthetic Health Data Preview Amendment
+**Version:** v1.4 Durable PACS Transfer Operation Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Target RDBMS:** PostgreSQL
@@ -18,7 +18,7 @@
 본 문서에서는:
 
 ```text
-17개 Table
+18개 Table
 PK
 FK
 Cardinality
@@ -231,6 +231,7 @@ erDiagram
         uuid source_hospital_id FK
         uuid destination_hospital_id FK
         uuid requester_actor_id FK
+        uuid idempotency_key UK
         varchar purpose
         varchar state
         timestamptz created_at
@@ -268,6 +269,7 @@ erDiagram
         uuid recipient_tenant_id FK
         uuid recipient_hospital_id FK
         uuid recipient_actor_id FK
+        uuid idempotency_key "nullable; unique partial tenant+actor+key"
         uuid imaging_package_id FK
         varchar status
         timestamptz issued_at
@@ -476,6 +478,8 @@ hospitals.organization_id
 → organizations.organization_id
 ```
 
+이 단일 FK는 Organization 존재를 확인한다. Hospital과 Tenant의 소유 Organization 일치는 REL-003의 복합 FK로 강제한다.
+
 ---
 
 ## REL-003
@@ -496,6 +500,15 @@ hospitals.tenant_id
 ```
 
 Tenant는 Hospital의 SaaS Isolation Boundary다.
+
+Hospital이 별도의 Tenant 소속 Organization을 가리키지 못하도록 다음 owner-pair key를 적용한다.
+
+```text
+UNIQUE tenants(tenant_id, organization_id)
+FK hospitals(tenant_id, organization_id)
+  → tenants(tenant_id, organization_id)
+ON DELETE RESTRICT
+```
 
 ---
 
@@ -546,6 +559,17 @@ actors.tenant_id
 Actor의 `hospital_id`는 Nullable이다.
 
 따라서 Service 또는 Tenant-level Actor는 특정 Hospital에 속하지 않을 수 있다.
+
+`hospital_id`가 지정된 Actor는 같은 Tenant의 Hospital만 참조할 수 있다.
+
+```text
+UNIQUE hospitals(tenant_id, hospital_id)
+FK actors(tenant_id, hospital_id)
+  → hospitals(tenant_id, hospital_id)
+ON DELETE RESTRICT
+```
+
+PostgreSQL의 기본 `MATCH SIMPLE` 동작에서 `hospital_id`가 NULL이면 복합 FK 검사는 생략되므로 Tenant-level Actor를 유지한다. 이 구조 제약은 Runtime Authorization 또는 Tenant RLS를 대체하지 않는다.
 
 ---
 
@@ -831,6 +855,8 @@ transfer_grants.consent_id
 → consents.consent_id
 ```
 
+GRT-003 issue API는 `recipient_actor_id`, `imaging_package_id`, `idempotency_key`를 구체적으로 설정한다. 기존 내부 Grant 행의 actor/package는 레거시 nullable 정책을 유지하고, 키도 NULL일 수 있다. 멱등성 Unique는 키가 존재하는 행에만 적용된다.
+
 ---
 
 # 18. Grant Recipient Relationships
@@ -1079,6 +1105,13 @@ integrity_evidence.package_id
 integrity_evidence.study_ref_id
 → study_references.study_ref_id
 ```
+
+```text
+integrity_evidence.operation_id
+→ pacs_transfer_operations.operation_id
+```
+
+The nullable operation FK is `ON DELETE RESTRICT`. A partial unique index on `(operation_id, verification_stage)` allows at most one evidence row per operation stage. For `SOURCE_CAPTURE`, database checks enforce operation/Study binding, fixed algorithm/digest shape, positive source count, `PENDING` status, and no destination or verification result.
 
 ---
 
@@ -2313,7 +2346,7 @@ API는 **Database 중심이 아니라 MediQ Domain Action 중심**으로 설계�
 
 # FINAL ERD POLICY
 
-> **MediQ P0 ERD는 `DATA-MODEL.md`에서 승인된 17개 Table만 사용하며 새로운 Entity를 추가하지 않는다.**
+> **MediQ P0 ERD는 `DATA-MODEL.md`에서 승인된 현재 18개 Table을 사용하며, 추가 Entity는 recommendation-first 결정과 승인된 Ticket 없이 만들지 않는다.**
 
 > **`PatientReference → PatientMapping → ExchangeSession → Consent → TransferGrant → ImagingPackage → Integrity/Provenance/Audit` 관계를 중심으로 구성하고, Source/Destination Hospital 및 Tenant 관계를 명시적으로 유지한다.**
 
@@ -2325,7 +2358,7 @@ API는 **Database 중심이 아니라 MediQ Domain Action 중심**으로 설계�
 
 # Viewer Relationship Amendment — 2026-09-15
 
-P0 ERD의 승인된 17개 Table은 변경하지 않는다. ViewerSession과 TemporaryImagingObject는 현 단계에서 논리적/runtime 관계로 표시한다.
+P0 ERD의 승인된 현재 18개 Table은 변경하지 않는다. ViewerSession과 TemporaryImagingObject는 현 단계에서 논리적/runtime 관계로 표시한다.
 
 ```text
 Actor
@@ -2356,7 +2389,7 @@ ViewerSession (runtime / short-lived)
             AuditEvent
 ```
 
-ViewerSession ID, Study UID 또는 Temporary storage reference는 단독으로 권한을 부여하지 않는다. P1 `MobileVault`와 `SecureMedicalCapsule`은 별도 extension model이며 P0 17-table ERD에 추가하지 않는다.
+ViewerSession ID, Study UID 또는 Temporary storage reference는 단독으로 권한을 부여하지 않는다. P1 `MobileVault`와 `SecureMedicalCapsule`은 별도 extension model이며 현재 P0 18-table ERD에 추가하지 않는다.
 
 **공통 기준:** Hospital PACS가 Source of Record이고 MediQ Cloud는 Permanent PACS/장기 Archive가 아니다. P0 Viewer 데이터는 Source PACS에서 온디맨드로 조회한다.
 
@@ -2364,7 +2397,7 @@ ViewerSession ID, Study UID 또는 Temporary storage reference는 단독으로 �
 
 # P1 Mobile Security Relationship Amendment — 2026-09-15
 
-다음은 P1 논리 관계이며 P0 승인 17개 Table 또는 현재 Migration을 변경하지 않는다.
+다음은 P1 논리 관계이며 P0 승인 18개 Table 또는 현재 Migration을 변경하지 않는다.
 
 ```text
 PatientReference
@@ -2451,3 +2484,69 @@ Relationship rules:
 4. `HOSPITAL_NOTIFICATION`과 `EXPLAINABLE_TIMELINE_PROJECTION` 삭제는 `AUDIT_EVENT` 또는 `PROVENANCE_RECORD`를 삭제하지 않는다.
 5. 판독문·의뢰서 Entity와 Binary/Payload 관계는 이 P1 ERD에 추가하지 않는다.
 6. P0 Aggregate와 FK를 변경하는 실제 Migration은 별도 구현 Ticket과 Rollback Plan을 요구한다.
+
+---
+
+# P0 Durable PACS Transfer Operation ERD Amendment — 2026-10-01
+
+`MEDIQ-PACS-007` adds `pacs_transfer_operations` as the 18th P0 product table. This amendment is part of the current approved schema; prior 17-table counts in dated implementation records remain historical snapshots.
+
+```mermaid
+erDiagram
+    TENANTS ||--o{ PACS_TRANSFER_OPERATIONS : owns
+    ACTORS ||--o{ PACS_TRANSFER_OPERATIONS : initiates
+    EXCHANGE_SESSIONS ||--o{ PACS_TRANSFER_OPERATIONS : scopes
+    STUDY_REFERENCES ||--o{ PACS_TRANSFER_OPERATIONS : transfers
+
+    PACS_TRANSFER_OPERATIONS {
+        uuid operation_id PK
+        uuid tenant_id FK
+        uuid exchange_session_id FK
+        uuid study_ref_id FK
+        uuid actor_id FK
+        uuid idempotency_key
+        varchar request_digest
+        varchar state
+        integer version
+        varchar reason_code
+        integer source_object_count
+        integer destination_object_count
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz stow_started_at
+    }
+```
+
+Unique constraints enforce one operation per `(exchange_session_id, study_ref_id)` and one `(tenant_id, actor_id, idempotency_key)`. All four parent FKs use restrictive deletion. Audit references an operation through the existing metadata `resource_type/resource_id` fields without a direct FK; no DICOM/Payload entity or PACS credential relationship is added. Runtime SELECT/INSERT/UPDATE is column-scoped and Tenant RLS is enabled + forced. The table does not imply a transfer endpoint or permission.
+
+---
+
+# P0 Operation-bound Pending Provenance ERD Amendment — 2026-10-01
+
+`PROV-001-DEC-001` binds `PACS_IMPORT` Provenance to the durable operation without adding a new product table.
+
+```mermaid
+erDiagram
+    PACS_TRANSFER_OPERATIONS ||--o| PROVENANCE_RECORDS : records
+    EXCHANGE_SESSIONS ||--o{ PROVENANCE_RECORDS : scopes
+    IMAGING_PACKAGES ||--o{ PROVENANCE_RECORDS : packages
+    STUDY_REFERENCES ||--o{ PROVENANCE_RECORDS : identifies
+    HOSPITALS ||--o{ PROVENANCE_RECORDS : source
+    HOSPITALS ||--o{ PROVENANCE_RECORDS : destination
+
+    PROVENANCE_RECORDS {
+        uuid provenance_id PK
+        uuid operation_id FK "nullable except PACS_IMPORT"
+        uuid exchange_session_id FK
+        uuid package_id FK
+        uuid study_ref_id FK
+        uuid source_hospital_id FK
+        uuid destination_hospital_id FK
+        uuid integrity_id FK
+        varchar transfer_type
+        varchar transfer_status
+        timestamptz created_at
+    }
+```
+
+`operation_id` is uniquely indexed when non-null. A PACS_IMPORT row requires both operation and destination; exact tenant-scoped writer privileges are limited to SELECT/INSERT. Initial status is `PENDING` only; no transfer outcome or Integrity verification is implied.

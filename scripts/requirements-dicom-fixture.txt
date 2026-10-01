@@ -1,0 +1,2 @@
+# pydicom 3.0.2 wheel SHA-256 from the official PyPI release record.
+pydicom==3.0.2 --hash=sha256:abf971a5440f84dbaf42c4b6758e30e62480902584f8b270b9a5d146e278a07b

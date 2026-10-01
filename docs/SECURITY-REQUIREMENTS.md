@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `SECURITY-REQUIREMENTS.md`
-**Version:** v1.7 Synthetic Patient Explanation RAG Amendment
+**Version:** v2.0 PACS Patient Identity and Unknown-Result Preconditions
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Status:** Approved Baseline
@@ -397,7 +397,7 @@ Unauthenticated
 → DENY
 ```
 
-**Acceptance:** `STC-IAM-004-PLANNED`
+**Acceptance:** `TC-IAM-001-AUTH-001`, `TC-IAM-001-AUTH-006`
 
 ---
 
@@ -408,7 +408,7 @@ Unauthenticated
 
 유효하지 않은 Credential 또는 Authentication Context를 이용한 요청은 거부해야 한다.
 
-**Acceptance:** `STC-IAM-005-PLANNED`
+**Acceptance:** `TC-IAM-001-AUTH-003~005`
 
 ---
 
@@ -419,7 +419,7 @@ Unauthenticated
 
 만료된 Authentication Context는 보호 Resource 접근에 사용할 수 없어야 한다.
 
-**Acceptance:** `STC-IAM-006-PLANNED`
+**Acceptance:** `TC-IAM-001-AUTH-003` (expired and not-yet-valid tokens)
 
 ---
 
@@ -457,7 +457,7 @@ Missing Required Context
 → DENY
 ```
 
-**Acceptance:** `STC-AUTHZ-001-PLANNED`
+**Acceptance:** `TC-AUT-001-CTX-001~005` (context completeness/shape only); decision behavior remains `MEDIQ-AUT-002~004` and related authorization Acceptance.
 **Traceability:** `REQ-AUT-001`
 
 ---
@@ -474,7 +474,7 @@ No Explicit Allow
 → DENY
 ```
 
-**Acceptance:** `STC-AUTHZ-002-PLANNED`
+**Acceptance:** `TC-AUT-002-DD-001~005`
 
 ---
 
@@ -490,9 +490,18 @@ Policy Error
 → DENY
 ```
 
-**Acceptance:** `STC-AUTHZ-003-PLANNED`
+**Acceptance:** `TC-AUT-002-DD-006` (evaluator); `TC-AUT-004-APP-001~004` (application boundary); HTTP safe-error and protected-resource behavior remain `TC-AUT-004-FC-001~004` and `AT-SEC-017`.
 
 ---
+
+## SEC-AUTHZ-012 — Server-Owned Authorization Evidence
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Authorization facts는 server-owned persistence에서 exact internal identifiers로 parameterized query하여, IAM-002가 verified membership을 확인한 동일 transaction client로 읽어야 한다. Runtime 권한은 필요한 column `SELECT`로만 제한하고 row access는 기존 forced RLS를 통과해야 한다. Caller-supplied evidence, partial/fallback facts, unsupported resource parent mapping, missing row 또는 query failure는 모두 `DENY`한다. Evidence reader는 UID, local patient ID, storage reference, DICOM payload를 Authorization result에 포함하거나 로그에 기록하지 않는다.
+
+**Acceptance:** `TC-AUT-005-DB-001~007`; route/data non-disclosure는 `AT-SEC-003` 및 `TC-AUT-004-FC-*` 별도 Gate.
 
 # 12. Consent Security Requirements
 
@@ -508,7 +517,7 @@ No Valid Consent
 → Grant DENY
 ```
 
-**Acceptance:** `STC-CONSENT-001-PLANNED`
+**Acceptance:** `TC-CON-008-AUT-001~003` (synthetic PostgreSQL evidence and internal protected-operation boundary only); actual Grant issuance denial remains open.
 **Traceability:** `REQ-CON-003`
 
 ---
@@ -525,8 +534,36 @@ WITHDRAWN
 → New Grant DENY
 ```
 
-**Acceptance:** `STC-CONSENT-002-PLANNED`
+**Acceptance:** `TC-CON-008-AUT-004~006` (synthetic PostgreSQL evidence and internal protected-operation boundary only); actual Grant issuance denial remains open.
 **Traceability:** `REQ-CON-004`
+
+## SEC-CONSENT-007 — Synthetic Patient Claim-bound Withdrawal and Atomic Audit
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+The synthetic Consent withdrawal endpoint accepts the verified OIDC bearer principal only. `mediq_patient_ref_id` must originate from the JWT after signature, issuer, audience, time and UUID checks; request body, query, arbitrary header, or UI state cannot select the patient. The verified actor must be an active tenant-level `USER` without a Hospital binding and must not be the Session requester. The server reads the Session and Consent inside the same IAM-002 Tenant/RLS transaction and requires the URL IDs, Consent PatientReference, Session PatientReference and signed claim to match exactly.
+
+Only `ACTIVE` Consent with `withdrawn_at IS NULL` may transition to `WITHDRAWN`. Withdrawal remains available even if Consent/Session expiry has passed or the ExchangeSession is terminal, because expiry or workflow completion does not erase the patient's ability to record a withdrawal. An already-withdrawn exact object may be replayed without another success Audit. `PENDING`, `EXPIRED`, `REJECTED`, inconsistent timestamp/state, missing/invisible objects, wrong claim/actor, RLS/AuthN/DB/Audit errors fail closed without object-existence disclosure.
+
+The request uses the same per-Session transaction advisory lock as the Consent lifecycle. Updating only `consents.status`, `consents.withdrawn_at`, and `consents.updated_at`, plus inserting one `CONSENT_WITHDRAWN` success Audit, is one atomic transaction. It does not mutate ExchangeSession state or Grant/PACS/image data. Grant issuance must use the same lock and re-read Consent before later allowing a Grant; every protected access must independently reject withdrawn Consent. This control cannot retract an already completed transfer, previously downloaded file, or offline copy, and does not claim legal-consent or remote-revocation semantics.
+
+The runtime role receives only the additive `UPDATE(withdrawn_at)` column privilege; existing Consent status/timestamp and Audit privileges are reused. Forced Tenant RLS remains mandatory. No table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE or other UPDATE grant is permitted.
+
+**Acceptance:** `TC-CON-005-API-001~013`; `AT-FUNC-007`; `AT-SEC-006`
+**Traceability:** `REQ-CON-004`, `SEC-CONSENT-002`, `SEC-CONSENT-006`, `SEC-API-001/002`, `SEC-DB-005/006`, `SEC-AUD-001`, `THR-004`
+
+## SEC-CONSENT-008 — P0 Allowed Action and Grant Scope Validation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+P0 object Authorization accepts only Consent Action values `VIEW`, `DOWNLOAD`, and `PACS_IMPORT`. The requested Action must be an exact member of the server-resolved Consent action set. A Consent evidence set containing `MOBILE_EXPORT`, any unknown value, or a duplicate is invalid and must yield `DENY`, even if the current request is for an otherwise permitted P0 action. Grant scopes must map one-to-one to their exact P0 action (`study:view`, `study:download`, `study:pacs-transfer`); unknown, P1, mismatched, duplicate, or additional scopes not covered by Consent actions yield `DENY`.
+
+This pure-policy rule does not prove Grant issuance denial, HTTP BOLA, trusted persistence provenance, or prevention of Viewer/Download/PACS side effects. P1 Mobile Export remains outside P0; a schema enum that can represent that future value does not enable it in P0.
+
+**Acceptance:** `TC-CON-006-AUTH-001~005`; existing `TC-AUT-003-OBJ-001/005/009` (pure policy only)
+**Traceability:** `REQ-CON-006`, `REQ-GRT-004`, `SEC-GRANT-005`, `SEC-API-002`, `THR-005`
 
 ---
 
@@ -558,6 +595,36 @@ Request: Hospital C
 
 ---
 
+## SEC-CONSENT-005 — Consent Request Actor and Atomicity
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Consent Request 생성은 verified `USER` Actor가 자기 Hospital을 destination으로 하는, 본인이 생성한 `REQUESTED` ExchangeSession에 대해서만 허용해야 한다. Patient/Source/Destination context는 client가 제출한 값을 신뢰하지 않고 같은 IAM-002 Tenant/RLS transaction에서 저장된 Session으로부터 가져온다. 새 Consent는 항상 `PENDING`이며 Consent+action rows, Session의 `REQUESTED→CONSENT_PENDING` 전이와 `CONSENT_REQUESTED` 성공 Audit은 하나의 transaction에서 함께 commit되거나 함께 rollback되어야 한다. 동일 미결 요청 재시도는 중복 Consent/Audit를 만들지 않는다.
+
+이 요청은 환자 승인, 법적 동의, Authorization `ALLOW`, TransferGrant, Viewer/Download/PACS 권한을 생성하지 않는다. DB 접근은 migration에 기록된 정확한 column-level `SELECT`/`INSERT` 및 `exchange_sessions(state, updated_at)` `UPDATE`만 허용하고 forced RLS를 유지한다.
+
+**Acceptance:** `TC-CON-003-API-001~009`
+**Traceability:** `REQ-CON-001/002/005`, `AT-FUNC-005`
+
+`MEDIQ-CON-001` Acceptance verifies only the synthetic P0 Consent domain shape. `MEDIQ-CON-002` adds only internal PENDING metadata persistence under synthetic scratch grants and Tenant RLS; neither Ticket passes `SEC-CONSENT-001~004`. `MEDIQ-CON-003` adds only the authenticated destination-Hospital request path and atomic PENDING/Session/Audit workflow under `SEC-CONSENT-005`; it does not prove patient identity, legal consent, `SEC-CONSENT-001~004` enforcement, Grant issuance denial, or protected image access. Stored Consent or RLS visibility is not Authorization.
+
+## SEC-CONSENT-006 — Synthetic Patient Claim-bound Technical Approval
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+`approveConsent`는 유효한 configured OIDC issuer/audience/서명으로 검증된 bearer JWT의 `mediq_patient_ref_id` claim만 synthetic patient principal로 사용할 수 있다. Claim을 request body, URL, 일반 header 또는 UI 상태에서 받지 않는다. Claim은 UUID 형식이어야 하고 active `USER` Actor가 hospital-bound가 아니어야 하며 해당 exchange의 병원 요청 Actor와 동일해서는 안 된다. Session과 Consent는 같은 IAM-002 verified Tenant/RLS transaction에서 조회하고, Session ID·Consent ID·Consent `patient_ref_id`·Session `patient_ref_id`·서명 Claim이 모두 일치해야 한다.
+
+승인 가능한 상태는 미만료 `CONSENT_PENDING` Session과 단일 `PENDING` Consent다. Session advisory lock으로 동시 승인을 직렬화한다. Consent `PENDING→ACTIVE`/issued timestamp, Session `CONSENT_PENDING→CONSENTED`, `CONSENT_APPROVED` Audit는 한 transaction에서 함께 commit/rollback한다. Claim 불일치, wrong Actor, not found/invisible object, 만료·철회·다른 상태, RLS/DB/AuthN/쓰기/Audit 실패는 default deny/fail closed하며 보호 데이터나 객체 존재를 노출하지 않는다. 정확히 같은 완료 승인은 idempotent replay로 처리하고 Audit를 중복 기록하지 않는다.
+
+이 signed claim은 캡스톤 합성 데이터의 test identity binding일 뿐 환자 본인확인, 법적 의료정보 제공 동의, 충분한 설명 또는 운영 IDP 연계를 증명하지 않는다. `ACTIVE`는 Authorization `ALLOW`, Grant, Viewer/Download/PACS 권한이 아니며 해당 endpoint는 Grant·영상·PACS side effect를 수행하지 않는다. DB 권한은 `consents(status, issued_at, updated_at)` UPDATE 3개만 추가한다. 기존 Session `(state, updated_at)` UPDATE와 Audit INSERT 권한 및 forced RLS를 유지하고 table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE/other UPDATE는 금지한다.
+
+**Acceptance:** `TC-CON-004-API-001~010`
+**Traceability:** `AT-FUNC-006`, `REQ-CON-003/005`, `SEC-API-001/002`, `SEC-DB-005/006`, `SEC-AUD-001`, `THR-004`
+
+---
+
 # 13. Transfer Grant Security Requirements
 
 ## SEC-GRANT-001 — Scoped Grant
@@ -579,7 +646,7 @@ expires_at
 status
 ```
 
-**Acceptance:** `STC-GRANT-001-PLANNED`
+**Acceptance:** `TC-GRT-001-DOM-001~010` (domain metadata validation) and `TC-GRT-002-PER-001~008` (scratch-only persistence/RLS boundary; issuance, HTTP, cross-entity binding and protected operation enforcement remain separate)
 **Traceability:** `REQ-GRT-001`
 
 ---
@@ -596,7 +663,7 @@ Expired
 → DENY
 ```
 
-**Acceptance:** `STC-GRANT-002-PLANNED`
+**Acceptance:** `TC-GRT-007-EXP-001~008` (PASS — strict server-time expiry policy; protected-operation integration remains separate)
 **Traceability:** `REQ-GRT-005`
 
 ---
@@ -643,7 +710,7 @@ study:view
 → PACS_IMPORT DENY
 ```
 
-**Acceptance:** `STC-GRANT-005-PLANNED`
+**Acceptance:** `TC-GRT-005-AUTH-001~008` (pure shared object-authorization policy; no HTTP or PACS side-effect claim)
 **Traceability:** `REQ-GRT-004`
 
 ---
@@ -664,7 +731,47 @@ Private Key
 Long-lived Secret
 ```
 
-**Acceptance:** `STC-GRANT-006-PLANNED`
+**Acceptance:** `TC-GRT-001-DOM-010`; `TC-GRT-006-PAY-001~004` (domain and issue/revoke serialization allowlist)
+
+---
+
+## SEC-GRANT-007 — Consent-bound actor-scoped issuance
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Grant issue는 IAM-002 verified `USER`가 자신의 목적지 Hospital에서 해당 Session을 생성한 경우에만 허용한다. Server facts 기준으로 Session·Patient·Source/Destination·ACTIVE Consent·Consent actions·Package binding·status·expiry를 재검증하고 default-deny한다. Recipient Actor/Tenant/Hospital은 서버 context에서 파생하며 exact non-null Package binding을 저장한다. 발급용 policy와 이미 발급된 Grant를 사용하는 object Authorization을 혼동하거나 순환 대체하지 않는다. 발급 성공은 영상 열람·다운로드·전송 권한이 아니다.
+
+**Acceptance:** `TC-GRT-003-API-001~012`, `TC-GRT-003-API-017~020`.
+**Traceability:** `REQ-GRT-003`, `REQ-GRT-007`.
+
+---
+
+## SEC-GRANT-008 — Grant issue idempotency and exact DB privilege
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Grant issue는 verified Tenant·Actor에 결속된 UUID `Idempotency-Key`를 받아야 한다. 동일 key의 의미상 동일 request는 동일 Grant를 반환하고, key 재사용으로 다른 binding/scope를 만들 수 없어야 한다. Session/advisory transaction lock, unique constraint, parent/scope insert 및 Audit은 원자적으로 처리한다. Runtime DB 권한은 지정된 Grant columns에 한정하며 table-wide/PUBLIC/default/DDL/DELETE/TRUNCATE/broad UPDATE를 허용하지 않는다.
+
+**Acceptance:** `TC-GRT-003-API-013~017`, `TC-GRT-003-DB-001~006`.
+**Traceability:** `REQ-GRT-007`, `SEC-DB-005/006`, `SEC-AUD-001/002`.
+
+---
+
+## SEC-GRANT-009 — Exact-recipient Grant revocation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Only the exact verified destination USER Actor bound to the Grant may revoke it in P0. Tenant, Hospital, Actor, route Session and Grant must match server-owned evidence; `SERVICE`, tenant-only membership, another Actor/Hospital/Tenant and caller-supplied identity/state are denied. Consent/Session/Grant expiry state must not block revoking an otherwise ACTIVE Grant.
+
+The service must serialize revocation with Grant issuance and Consent transitions for the same Session, lock the exact Grant row, conditionally change only `status` and `revoked_at`, and atomically write one minimized `GRANT_REVOKED/SUCCESS` Audit. Already-REVOKED replay preserves the original timestamp and creates no duplicate success Audit. Runtime SQL permission is exactly `UPDATE(status, revoked_at)`; table-wide UPDATE and changes to scopes, bindings, expiry or creation metadata are forbidden. Forced RLS remains required.
+
+This control does not prove the denial or termination of already-running Viewer/Download/PACS operations and does not remotely erase already delivered/offline copies. Protected operation handlers must independently revalidate Consent/Grant under a race-safe boundary before any side effect.
+
+**Acceptance:** `TC-GRT-004-REV-API-001~012`; `TC-GRT-004-REV-DB-001~004`.
+**Traceability:** `REQ-GRT-008`, `SEC-DB-005/006`, `SEC-AUD-001~006`, `THR-042`.
 
 ---
 
@@ -723,6 +830,20 @@ A→B Exchange에 참여하지 않은 Tenant C는 해당 Grant를 사용할 수 
 
 ---
 
+## SEC-TEN-004 — Registry Owner-Pair Integrity
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Registry는 Hospital의 `(tenant_id, organization_id)`가 같은 Tenant 행에 속하고, `hospital_id`가 지정된 Actor의 `(tenant_id, hospital_id)`가 같은 Tenant의 Hospital을 가리키도록 복합 FK로 강제해야 한다. `actors.hospital_id = NULL`인 Tenant-level Actor는 허용한다.
+
+이 DB 구조 제약은 Registry 소유 관계 오류를 저장 단계에서 거부하는 defense-in-depth다. Runtime Tenant Authorization, Consent/Grant 평가, RLS 또는 보호 Resource 접근 검증을 대체하지 않는다.
+
+**Acceptance:** `TC-DB-008-REG-009`
+**Traceability:** `REQ-TEN-002`
+
+---
+
 # 15. Patient Mapping Security Requirements
 
 ## SEC-IAM-007 — Missing Mapping
@@ -737,7 +858,7 @@ Missing Mapping
 → PACS_IMPORT DENY
 ```
 
-**Acceptance:** `STC-IAM-007-PLANNED`
+**Acceptance:** `TC-PAT-003-DOM-002`, `TC-PAT-004-PER-001`; PACS side-effect denial remains `AT-SEC-012` (planned PACS-004 integration gate)
 **Traceability:** `REQ-PAT-004`
 
 ---
@@ -754,7 +875,7 @@ Ambiguous Mapping
 → DENY
 ```
 
-**Acceptance:** `STC-IAM-008-PLANNED`
+**Acceptance:** `TC-PAT-003-DOM-003~004`, `TC-PAT-004-PER-002~003`; PACS side-effect denial remains `AT-SEC-012` (planned PACS-004 integration gate)
 
 ---
 
@@ -765,7 +886,7 @@ Ambiguous Mapping
 
 명시적으로 검증된 Test Patient Mapping만 PACS Import에 사용할 수 있어야 한다.
 
-**Acceptance:** `STC-IAM-009-PLANNED`
+**Acceptance:** `TC-PAT-003-DOM-001, DOM-005~006`, `TC-PAT-004-PER-002`; PACS authorization remains separately gated
 
 ---
 
@@ -810,7 +931,7 @@ Exchange Session ID를 알고 있다는 사실만으로 의료영상 접근권�
 
 보호된 MediQ API는 Authentication Context를 요구해야 한다.
 
-**Acceptance:** `STC-API-001-PLANNED`
+**Acceptance:** `TC-IAM-001-AUTH-001`, `TC-IAM-001-AUTH-006~007`
 
 ---
 
@@ -837,7 +958,7 @@ Authorization
 ```
 
 **Threat:** IDOR / BOLA
-**Acceptance:** `STC-API-002-PLANNED`
+**Acceptance:** `TC-AUT-003-OBJ-001~012` (policy contract); `AT-SEC-003` (protected HTTP BOLA/IDOR integration, pending route)
 
 ---
 
@@ -860,6 +981,19 @@ Authorization
 보호 Resource의 소유 Tenant 또는 허가된 Exchange Context를 검증하지 않고 Resource를 반환해서는 안 된다.
 
 **Acceptance:** `STC-API-004-PLANNED`
+
+---
+
+## SEC-API-005 — Idempotent Exchange Request Creation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+`POST /exchange-sessions`는 검증된 Actor에 scope된 필수 UUID `Idempotency-Key`를 요구해야 한다. 같은 Actor와 key로 동일한 request를 재시도하면 최초 Session 결과를 반환하고 새 Session이나 성공 Audit을 추가 생성하지 않아야 한다. 같은 Actor/key를 다른 Patient·Source·Destination·Purpose 입력과 재사용하면 고정 `409` conflict로 거부해야 한다. `X-Correlation-ID`는 관측용이며 idempotency key를 대체하지 않는다. Idempotency key는 자격증명이나 권한이 아니다.
+
+이 Control은 Session request metadata 생성에만 적용한다. Session ID나 성공 응답은 Consent, Authorization, Transfer Grant, VIEW/DOWNLOAD/PACS_IMPORT 권한을 부여하지 않는다. 요청·응답 오류에는 Patient/병원 세부정보, SQL, Secret 또는 내부 오류를 노출하지 않는다.
+
+**Acceptance:** `TC-EXC-003-API-006~008`, `TC-EXC-003-DB-003~004`
 
 ---
 
@@ -1005,6 +1139,19 @@ Grant에 지정된 Destination이 아닌 PACS Endpoint로 의료영상을 전송
 
 ---
 
+## SEC-DICOM-006 — Byte-Preserving Patient Identity Binding
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+P0 PACS Import must not send a byte-preserving DICOM instance unless its single validated PatientID exactly matches the verified destination Hospital PatientMapping `localPatientId`. Missing, malformed, conflicting or mismatched identity evidence must fail closed before any STOW-RS request. The P0 system must not rewrite PatientID or other DICOM attributes. The synthetic exact-match rule is not identity proof for real patients.
+
+An ambiguous STOW outcome must be persisted as `RESULT_UNKNOWN` and must not trigger a blind retry. A durable operation/idempotency claim and read-only reconciliation path are required before the PACS coordinator can issue STOW.
+
+**Acceptance:** `TC-PACS-001-PID-001/002` (internal identity preflight scoped PASS); `TC-PACS-001-PID-003` (coordinator no-STOW remains NOT RUN); `TC-PACS-001-UNKNOWN-001`, `AT-SEC-012/013`, `AT-E2E-003`
+
+---
+
 # 22. Transport Security Requirements
 
 ## SEC-TLS-001 — TLS Required
@@ -1038,6 +1185,8 @@ verify=false
 와 같은 설정은 명시적인 Test-only 환경 이외에는 허용하지 않는다.
 
 **Acceptance:** `STC-TLS-002-PLANNED`
+
+**Execution status (2026-10-01):** `MEDIQ-TLS-001` passes the local synthetic API↔Test Orthanc portion (`TC-TLS-001-*`), including CA/hostname validation, HTTP downgrade rejection, and read-only DICOM probes. Client↔MediQ ingress TLS, production certificate lifecycle and overall `SEC-TLS-001/002` acceptance remain open; this scoped result must not be reported as global TLS completion.
 
 ---
 
@@ -1230,7 +1379,7 @@ MISMATCH
 → FAIL
 ```
 
-**Acceptance:** `STC-INT-001-PLANNED`
+**Acceptance:** `TC-INT-001-HASH-001~008`; `TC-INT-001-DB-001~010` (hash and operation-bound PENDING persistence sub-gates only; authorized source/destination verification remains NOT RUN)
 **Traceability:** `REQ-INT-001`
 
 ---
@@ -1282,6 +1431,8 @@ Integrity Result
 AUTHENTICATION_FAILURE
 AUTHORIZATION_GRANTED
 AUTHORIZATION_DENIED
+SESSION_CREATED (SUCCESS only; atomic with the Session row)
+CONSENT_REQUESTED
 CONSENT_APPROVED
 CONSENT_WITHDRAWN
 GRANT_CREATED
@@ -1294,7 +1445,9 @@ ACCESS_DENIED
 INTEGRITY_FAILURE
 ```
 
-**Acceptance:** `STC-AUD-001-PLANNED`
+EXC-003 records only successful Session creation in the same transaction as its row. GRT-003 records Grant issue allow/create events together with the Grant and records policy denials only after a verified Tenant context exists. `AUD-002-DEC-001` additionally requires the verified Grant issue/revocation denial paths to record both `AUTHORIZATION_DENIED` and `GRANT_DENIED` atomically. Denial/unavailable-event coverage outside these routes and global Audit completeness remain separate controls; Tenant-less authentication failures are not written to the tenant-RLS table.
+
+**Acceptance:** `TC-AUD-001-WRITER-001~009` covers the scoped common writer/currently wired event paths; `TC-AUD-002-EVENT-001~008` covers verified-Tenant Grant denial pairs; `TC-CON-007-AUD-001~005` (Consent event context); `TC-GRT-003-API-013~020` (Grant issue events); `TC-EXC-003-API-003`, `TC-EXC-003-API-010`, `TC-EXC-003-DB-005`; global Audit gate `STC-AUD-001-PLANNED` remains open.
 
 ---
 
@@ -1720,23 +1873,35 @@ Audit
 | Security Requirement | Functional Requirement | Security Control           | Security Test   |
 | -------------------- | ---------------------- | -------------------------- | --------------- |
 | SEC-IAM-001          | REQ-AUT-001            | Actor Identification       | STC-IAM-001     |
-| SEC-IAM-007          | REQ-PAT-004            | Patient Mapping Validation | STC-IAM-007     |
-| SEC-AUTHZ-001        | REQ-AUT-001            | Explicit Authorization     | STC-AUTHZ-001   |
+| SEC-IAM-007          | REQ-PAT-004            | Missing destination mapping fails closed | `TC-PAT-003-DOM-002`, `TC-PAT-004-PER-001` (mock/domain); `AT-SEC-012` (PACS no-STOW pending) |
+| SEC-IAM-008          | REQ-PAT-004            | Ambiguous destination mapping fails closed | `TC-PAT-003-DOM-003~004`, `TC-PAT-004-PER-002~003` (mock/domain); PACS no-STOW pending |
+| SEC-IAM-009          | REQ-PAT-003            | Only explicitly validated synthetic mapping is eligible | `TC-PAT-003-DOM-001, DOM-005~006`, `TC-PAT-004-PER-002` (mock/domain only) |
+| SEC-AUTHZ-001        | REQ-AUT-001            | Explicit Authorization     | `TC-AUT-001-CTX-001~005` (context shape only); policy tests remain AUT-002~004 |
+| SEC-AUTHZ-002        | REQ-AUT-002            | Exact explicit-allow/default-deny evaluator | `TC-AUT-002-DD-001~005` |
+| SEC-AUTHZ-003        | REQ-AUT-003            | Policy exception becomes deny | `TC-AUT-002-DD-006`, `TC-AUT-004-APP-001~004` (application); HTTP `TC-AUT-004-FC-001~004` pending |
+| SEC-AUTHZ-012        | REQ-AUT-005            | Server-owned same-transaction evidence; minimum SELECT; fail-closed resource support | `TC-AUT-005-DB-001~007` (synthetic DB integration only) |
 | SEC-CONSENT-001      | REQ-CON-003            | Consent Enforcement        | STC-CONSENT-001 |
 | SEC-CONSENT-002      | REQ-CON-004            | Consent Withdrawal         | STC-CONSENT-002 |
-| SEC-GRANT-002        | REQ-GRT-005            | Expiration                 | STC-GRANT-002   |
+| SEC-CONSENT-007      | REQ-CON-004            | Claim-bound withdrawal API, atomic Audit, exact UPDATE grant | `TC-CON-005-API-001~013` |
+| SEC-CONSENT-008      | REQ-CON-006            | P0 Consent Action and exact Grant-scope validation | `TC-CON-006-AUTH-001~005` (pure policy only) |
+| SEC-GRANT-002        | REQ-GRT-005            | Expiration                 | `TC-GRT-007-EXP-001~008` (pure policy/issuance TTL; protected-operation integration remains separate) |
 | SEC-GRANT-003        | REQ-GRT-003            | Recipient Binding          | STC-GRANT-003   |
-| SEC-GRANT-005        | REQ-GRT-004            | Scope Enforcement          | STC-GRANT-005   |
+| SEC-GRANT-005        | REQ-GRT-004            | Scope Enforcement          | `TC-GRT-005-AUTH-001~008` (pure policy; route/side effects separate) |
+| SEC-GRANT-007        | REQ-GRT-003/007        | Consent-bound verified Actor/Session/Package issue authorization | `TC-GRT-003-API-001~012`, `017~020` |
+| SEC-GRANT-008        | REQ-GRT-007            | Actor-scoped idempotency, atomic Audit and exact column privileges | `TC-GRT-003-API-013~017`, `TC-GRT-003-DB-001~006` |
+| SEC-GRANT-009        | REQ-GRT-008            | Exact recipient-only revocation, status/revoked_at update only, atomic one-time Audit | `TC-GRT-004-REV-API-001~012`, `TC-GRT-004-REV-DB-001~004` |
 | SEC-TEN-001          | REQ-TEN-002            | Tenant Isolation           | STC-TEN-001     |
-| SEC-API-002          | REQ-AUT-001            | Object Authorization       | STC-API-002     |
+| SEC-API-002          | REQ-AUT-004            | Object Authorization       | `TC-AUT-003-OBJ-001~012` (policy); `AT-SEC-003` (HTTP integration pending) |
+| SEC-API-005          | REQ-EXC-007            | Actor-scoped idempotent Exchange request creation | `TC-EXC-003-API-006~008`, `TC-EXC-003-DB-003~004`; concurrent HTTP case pending |
 | SEC-DICOM-001        | REQ-DICOM-001          | QIDO Authorization         | STC-DICOM-001   |
 | SEC-DICOM-002        | REQ-DICOM-002          | WADO Authorization         | STC-DICOM-002   |
 | SEC-DICOM-003        | REQ-DICOM-003          | STOW Authorization         | STC-DICOM-003   |
+| SEC-DICOM-006        | REQ-PACS-003/004       | Exact byte-preserving PatientID binding; durable RESULT_UNKNOWN/no-blind-retry and operation-time Consent/Grant fence prerequisites | `TC-PACS-001-PID-001/002` and `FENCE-001~005` internal sub-gates PASS; PACS-007 durable unknown/no-retry boundary PASS; product coordinator invocation/no-STOW/B-unchanged, endpoint/TLS enforcement, reconciliation and STOW NOT RUN |
 | SEC-AUTHZ-008        | REQ-DWN-001            | Download Scope             | STC-DWN-001     |
 | SEC-DICOM-004        | REQ-PACS-001           | PACS Precondition          | STC-PACS-001    |
 | SEC-TLS-001          | REQ-SYS-001            | Encrypted Transport        | STC-TLS-001     |
-| SEC-INT-001          | REQ-INT-001            | Integrity Verification     | STC-INT-001     |
-| SEC-AUD-001          | REQ-AUD-001            | Security Audit             | STC-AUD-001     |
+| SEC-INT-001          | REQ-INT-001            | Integrity Verification     | `TC-INT-001-HASH-001~008` primitive PASS only; authorized source/destination verification NOT RUN |
+| SEC-AUD-001          | REQ-AUD-001            | Security Audit             | `TC-AUD-002-EVENT-001~008` (verified Grant-denial pair only); `TC-GRT-003-API-013~018`; `TC-EXC-003-DB-005`; global `STC-AUD-001` pending |
 | SEC-ERR-003          | REQ-ERR-004            | Fail Closed                | STC-ERR-003     |
 
 상세 Acceptance Test는 `ACCEPTANCE-TESTS.md`에서 확정한다.
@@ -2230,3 +2395,123 @@ UI Automation, Screenshot, 발표 영상과 자료집에서도 `DEMO MODE`, 합�
 10. P1 장애나 Stale 상태는 P0 인가와 교환 상태를 변경하거나 우회해서는 안 된다.
 
 위 통제의 Negative Test는 `hospital-workflow/HOSPITAL-CLINICAL-WORKFLOW-TRACEABILITY.md`에 정의되어 있으며 모두 `NOT RUN`이다.
+
+# 37. PostgreSQL Credential and Role Isolation — 2026-09-29
+
+## SEC-DB-001 — Bootstrap Credential Isolation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+PostgreSQL bootstrap/admin credential은 로컬 DB 초기화와 명시적으로 승인된 role provisioning에만 사용한다. API·Worker의 런타임 환경에 bootstrap credential을 주입하지 않는다.
+
+**Acceptance:** `TC-ENV-008-DB-001`
+
+## SEC-DB-002 — Runtime Least Privilege
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Application runtime은 전용 non-superuser role을 사용하고 `CREATEDB`, `CREATEROLE`, `BYPASSRLS` 또는 상속된 상위 role을 가져서는 안 된다. 현재 schema가 없는 환경에서는 runtime에 database `CONNECT`와 schema `USAGE`만 부여하고 DDL을 거부한다. 향후 각 migration에서 필요한 테이블 권한을 객체별로 명시적으로 부여하며 넓은 `ALTER DEFAULT PRIVILEGES`는 사용하지 않는다. Tenant 보안은 application/domain authorization 및 승인된 RLS 설계를 우회하지 않는다.
+
+**Acceptance:** `TC-ENV-008-DB-002`, `TC-ENV-008-DB-003`
+
+## SEC-DB-003 — Migration Role Separation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Migration credential은 runtime 및 bootstrap credential과 달라야 하며 API·Worker에 주입하지 않는다. P0 개발 DB에서 migration role은 승인된 schema의 객체 변경에 필요한 최소 권한만 가진다. DB-level `CREATE`, `CREATEDB`, `CREATEROLE`, `SUPERUSER`, `BYPASSRLS`는 부여하지 않는다. 일회성 migrator는 명시적 `migration` profile 및 database 전용 내부 network에서만 실행하고, versioned SQL을 advisory lock과 migration별 transaction으로 적용하며, migration history를 migrator 소유 ledger에 기록한다. Migration 권한을 실제 schema/table에 적용할 때는 해당 migration과 권한 변경을 함께 검토하고 기록한다.
+
+**Acceptance:** `TC-ENV-008-DB-004`, `TC-DB-001-MIG-001`–`TC-DB-001-MIG-007`
+
+## SEC-DB-004 — Credential and Connection Validation
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+필수 설정 누락, placeholder, 잘못된 runtime profile, DB URL과 전용 role/password/database 간 불일치, DB 인증 실패는 시작 또는 사전 검증을 실패시켜야 한다. 로컬 설정 파일은 Git에서 제외하고, 진단 출력에 비밀번호·URL 전체 또는 환경변수 값이 나타나지 않게 한다. 컨테이너 profile은 내부 서비스 DNS를 사용하며 DB host port를 열지 않는다.
+
+**Acceptance:** `TC-ENV-008-DB-005`
+
+DB-002는 registry schema의 승인된 FK/UNIQUE/CHECK/RESTRICT와 secret-column 부재를 synthetic test로 확인했다(`TC-DB-002-REG-001~008`). DB-003은 PatientReference/Mapping schema의 approved status·FK·unique constraints와 rollback을 synthetic-only로 확인했다(`TC-DB-003-REG-001~008`). 두 결과 모두 runtime table privilege, Tenant RLS, 실제 mapping authorization, API 연결 및 SQL injection 검증을 포함하지 않으며, 해당 내용은 제품 DB/API 업무 Ticket에서 별도 시험한다.
+
+## SEC-DB-005 — Explicit Runtime Object Privileges
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Runtime 로그인은 schema owner/migration owner가 아니며 database/schema DDL, role creation, `BYPASSRLS`, inherited elevated role, `PUBLIC` 업무 table grants 또는 포괄적인 future default grants를 가져서는 안 된다. 각 업무 Ticket은 필요한 table/column 및 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 중 실제 명령만 명시적으로 부여한다. 기본은 무권한이며 privilege가 없거나 검증되지 않은 객체는 접근을 거부한다. `TRUNCATE`, `REFERENCES`, `TRIGGER`, sequence 사용은 별도 근거가 없으면 금지한다.
+
+P0 `patient_refs` 예외는 DB-009 decision에서 승인한 합성 코드만 대상으로 한다. Runtime은 승인 컬럼의 `SELECT`·`INSERT`만 가지며 DB CHECK도 `MQ-TEST-*` pattern을 강제한다. `UPDATE`·`DELETE`·`TRUNCATE`와 public API 노출은 금지한다. 이 global synthetic namespace에 RLS가 적용된다고 주장하지 않는다.
+
+`PAT-002-DEC-002`는 기존 `patient_mappings` 8개 승인 컬럼(`mapping_id`, `patient_ref_id`, `hospital_id`, `local_patient_id`, `status`, `validated_at`, `created_at`, `updated_at`)에 대한 `SELECT`만 허용한다. 내부 reader는 IAM-002 verified active `USER`와 같은 Tenant/Hospital transaction을 요구하고 verified Hospital predicate만 사용한다. `INSERT`·`UPDATE`·`DELETE`·`TRUNCATE`·DDL, `PUBLIC`/default/table-wide grants 및 API route는 금지한다. 이 범위는 합성 mapping read에 한정되고, patient identity proof·role-based capability·영상 열람/다운로드/전송 권한을 주지 않는다. 정확한 catalog, RLS, cross-Hospital/Tenant denial 및 write denial은 `TC-PAT-002-DB-001`에서 별도로 검증한다.
+
+`EXC-003-DEC-001`은 `exchange_sessions`의 정확한 12개 승인 컬럼에 `SELECT`와 `INSERT`만, `audit_events`의 정확한 12개 승인 컬럼에 `INSERT`만 부여한다. Exchange 생성 Audit은 Session 생성과 같은 verified IAM-002 Tenant transaction에서 저장하며 Audit 실패 시 둘 다 rollback한다. 다른 Session/Audit 컬럼, table-wide privilege, `UPDATE`·`DELETE`·`TRUNCATE`·DDL, `PUBLIC`/default grant는 부여하지 않는다. 현재 `mediq_runtime` column-privilege inventory는 승인된 전체 목록과 정확히 100행이어야 한다. Session 생성 API는 활성 합성 PatientReference와 목적지 병원 verified `USER` membership에만 한정되고 영상 접근 권한은 만들지 않는다.
+
+**Acceptance:** `TC-DB-009-PRIV-001~006`, `TC-EXC-003-DB-001~006`
+
+## SEC-DB-006 — Tenant Row-Level Security and Transaction Context
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Tenant 소유/참여에 따라 보호되는 P0 업무 테이블은 RLS를 `ENABLE` 및 `FORCE`하고 명시적 policy가 없거나 tenant context가 없으면 접근을 허용하지 않는다. Tenant이 직접 저장되지 않은 행은 승인된 Hospital 또는 Exchange 관계를 통해 Tenant를 도출한다. legitimate A↔B Exchange 행은 해당 Session의 source/destination 참여 Tenant 범위에 한해 RLS에서 보일 수 있으며, 제3 Tenant는 보이지 않아야 한다.
+
+인증된 요청의 Tenant는 검증된 Actor/Identity에서 서버가 확정한다. 클라이언트가 전달한 tenant ID를 권위 있는 값으로 사용하지 않는다. DB 접근은 transaction wrapper 안에서 tenant context를 transaction-local로 설정하고, 모든 쿼리·commit/rollback이 같은 transaction을 사용한다. context 설정 실패, 누락, 빈값 또는 잘못된 값은 fail closed하고 connection pool 재사용 시 이전 Tenant 값이 남지 않게 한다.
+
+RLS는 업무 Authorization을 대체하지 않는다. custom GUC 기반 context는 빠진 predicate와 pool 누수를 완화하는 defense-in-depth이며, 같은 런타임 role에서 임의 SQL을 실행하는 공격자의 context 변경까지 방지하는 인증수단으로 간주하지 않는다. Parameterized query, 입력검증, Authorization Engine 및 SQL injection negative tests를 함께 유지한다. Production/실환자 release는 signed DB context 또는 동등한 stronger binding의 별도 검토를 요구한다.
+
+전역 canonical `patient_refs`는 병원 간 동일 PatientReference를 연결하기 위해 Tenant 소유 행이 아닌 P0 synthetic-only namespace로 유지한다. 이 테이블은 SEC-DB-005의 제한된 grant와 synthetic DB CHECK로 보호한다. 실제 환자 정보/인구학 데이터 또는 patient-ref API를 추가하기 전에는 별도 scope·privacy·authorization 결정, 데이터 모델 검토 및 acceptance가 필수다.
+
+**Acceptance:** `TC-DB-009-RLS-001~009`, `TC-DB-009-AUTH-001~004`
+
+## SEC-TEN-005 — Database Tenant Context Is Not Business Authorization
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Database RLS에서 row가 보이더라도 보호행위는 자동 허용되지 않는다. Backend는 Actor, Tenant, Hospital, ExchangeSession, Consent, TransferGrant, 정확한 Resource/Scope, Action, Recipient/Destination, 상태와 expiry를 별도로 평가한다. client-supplied IDs/claims, session existence 또는 RLS visibility alone은 권한이 아니다. Cross-Tenant는 명시적으로 승인된 Exchange 범위만 허용하고 제3 Tenant는 거부한다. PACS side effect는 Mandatory Preflight 이후에만 허용한다.
+
+**Acceptance:** `TC-DB-009-AUTH-001~004`; 기존 `SEC-AUTHZ-*`, `SEC-GRANT-*`, `SEC-TEN-001~003` tests
+
+## SEC-AUTHZ-010 — Authenticated Tenant Context Resolution
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+Tenant/Actor context는 검증된 authentication credential과 trusted registry/membership mapping으로 서버가 확정한다. Request body, query, arbitrary header, UUID, Hospital ID 또는 Viewer URL에서 권한 context를 직접 채택하지 않는다. 선택 tenant가 인증된 identity의 membership과 불일치하면 거부한다. 인증 context가 없거나 검증 서비스가 실패하면 fail closed한다.
+
+**Acceptance:** `TC-IAM-002-CTX-001~004`, `TC-IAM-002-DB-001`, `TC-IAM-002-TX-001~003`; HTTP/business API enforcement는 `MEDIQ-IAM-001~003` 및 `MEDIQ-AUT-*`에서 별도 검증한다. 기존 `TC-DB-009-AUTH-001~002`는 보호 업무 endpoint Acceptance로 유지한다.
+
+## SEC-AUTHZ-011 — Authorization Before Persistence or Side Effect
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+모든 보호된 DB read/write 또는 DICOM side effect 전에 서버의 업무 Authorization을 수행한다. DB RLS는 tenant row visibility의 추가 경계이고 Consent, Grant, scope/action, object ownership 또는 Mandatory Preflight의 decision point가 아니다. Authorization failure, dependency failure, stale/missing state는 deny-by-default로 처리하며 client에 내부 DB/정책 상세를 노출하지 않는다.
+
+**Acceptance:** `TC-DB-009-AUTH-003~004`; 기존 `TC-SEC-*`, `TC-FUNC-*`, `TC-E2E-*`
+
+# 38. Internal Operational Health Endpoints — 2026-09-29
+
+## SEC-OPS-HEALTH-001 — Liveness and Readiness Disclosure Boundary
+
+**Classification:** CAPSTONE-P0
+**Priority:** MUST
+
+GET /api/v1/health/live는 API process liveness만, GET /api/v1/health/ready는 runtime-role SELECT 1 및 설정된 Test Orthanc A/B의 authenticated /system reachability만 평가한다. 두 응답은 민감정보를 포함하지 않고 Cache-Control: no-store를 사용한다. Readiness failure는 고정된 generic 503 {"status":"not_ready"}만 반환하며 exception, host, endpoint, dependency 이름, version, credential 또는 환자·DICOM 정보를 노출하지 않는다. Liveness는 dependency 실패와 무관하게 process가 응답 가능하면 성공한다.
+
+두 경로는 local Compose internal network에서만 허용해야 한다. Host port, public ingress 또는 사용자용 UI를 통해 노출하지 않는다. dependency probe는 각각 최대 1.5초로 제한하고 실패 시 fail closed한다. Health probe는 업무 감사 이벤트를 생성하지 않으며 로그에 URL, credential, response body를 남기지 않는다.
+
+**Acceptance:** TC-ENV-009-HEALTH-005~008
+
+---
+
+# P0 Operation-bound Pending Provenance Security Amendment — 2026-10-01
+
+`PROV-001-DEC-001` requires each PACS_IMPORT Provenance row to bind to one durable PACS operation by a restrictive foreign key and unique operation reference. A first-time row is permitted only before external dispatch (`CREATED` or `PREFLIGHT_PASSED`), and its result must remain `PENDING` in this scope. Source, destination, Session, Package and Study bindings must be derived from persisted server-side records in the same verified Tenant transaction, never accepted as caller-selected identity. Forced Tenant RLS and exact SELECT/INSERT column privileges apply; no update/delete privilege is granted by this Ticket.
+
+This record does not itself authorize image access, prove PACS dispatch, completion, destination verification or integrity. No HTTP route, PACS call, STOW or no-Tenant Audit synthesis is permitted by this amendment. A missing late Provenance row must fail closed rather than be backfilled after dispatch could have begun.
+
+**Acceptance:** `TC-PROV-001-001~010`; `MEDIQ-PROV-001`. Full `AT-PROV-001` and the P0 security/E2E gates remain separate.

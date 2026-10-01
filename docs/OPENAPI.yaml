@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: MediQ API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     MediQ Capstone Technical MVP API.
 
@@ -34,7 +34,7 @@ info:
     - 보안 검증 실패 시 Fail Closed를 적용한다.
     - 실제 환자 데이터 및 실제 의료기관 Production 데이터는 P0에서 사용하지 않는다.
 
-  x-mediq-baseline-amendment: 2026-09-15-viewer-architecture
+  x-mediq-baseline-amendment: 2026-09-29-env009-operational-health
 
 servers:
   - url: https://localhost:8443/api/v1
@@ -58,8 +58,89 @@ tags:
     description: Short-lived authorized DICOMweb viewer sessions and delivery
   - name: Evidence
     description: Provenance and audit evidence
+  - name: Operations
+    description: Internal process liveness and dependency readiness probes; no patient data
 
 paths:
+
+  /health/live:
+    get:
+      tags: [Operations]
+      operationId: getHealthLiveness
+      summary: Report API process liveness
+      description: |
+        Internal operational probe only. Reports that the API process can serve requests.
+        It does not report dependency health, identity, version, environment, or patient data.
+        The route must not be publicly exposed and responses must not be cached.
+      security: []
+      responses:
+        '200':
+          description: API process is alive
+          headers:
+            Cache-Control:
+              description: Prevents intermediary or client caching of operational state
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: alive
+
+  /health/ready:
+    get:
+      tags: [Operations]
+      operationId: getHealthReadiness
+      summary: Report API and required dependency readiness
+      description: |
+        Internal operational probe only. Returns ready only when the API can authenticate
+        to PostgreSQL using its runtime role and can authenticate to both configured Test
+        Orthanc services. Failure details, service names, endpoints, credentials, version,
+        and patient data are never returned. The route must not be publicly exposed.
+      security: []
+      responses:
+        '200':
+          description: API and required dependencies are ready
+          headers:
+            Cache-Control:
+              description: Prevents intermediary or client caching of operational state
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ready
+        '503':
+          description: API or a required dependency is unavailable
+          headers:
+            Cache-Control:
+              description: Prevents intermediary or client caching of operational state
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: not_ready
 
   /exchange-sessions:
     post:
@@ -67,13 +148,18 @@ paths:
       operationId: createExchangeSession
       summary: Create medical imaging exchange
       description: |
-        새로운 의료영상 교환 업무를 생성한다.
+        새로운 synthetic P0 Exchange 요청 metadata를 생성한다. 이 동작은
+        Consent, TransferGrant 또는 의료영상 접근 권한을 생성하지 않는다.
 
-        requester_actor_id 및 caller tenant는 Request Body로 신뢰하지 않고
-        인증된 Security Context에서 결정한다.
+        X-Tenant-ID는 membership을 확인하기 위한 untrusted selector이며,
+        Actor/Tenant/Hospital은 verified authentication membership에서 결정한다.
+        목적지 병원과 verified Hospital이 일치하는 active USER만 요청할 수 있다.
+        Idempotency-Key는 verified Actor 범위에서 재시도를 중복 생성 없이 처리한다.
 
         ExchangeSession은 ImagingPackage와 별도의 Domain Object다.
       parameters:
+        - $ref: '#/components/parameters/TenantCandidate'
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
@@ -84,6 +170,20 @@ paths:
       responses:
         '201':
           description: Exchange created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Correlation-ID:
+              schema:
+                type: string
+                format: uuid
+            Idempotency-Replayed:
+              description: Present as true when the response reuses an identical prior request result.
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
@@ -96,6 +196,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}:
     get:
@@ -198,12 +300,18 @@ paths:
       operationId: requestConsent
       summary: Create consent request
       description: |
-        ExchangeSession에 대한 ConsentArtifact를 생성하고
-        Session을 CONSENT_PENDING 상태로 전환한다.
+        Verified destination Hospital USER가 자신이 생성한 REQUESTED Session에
+        Consent request를 생성한다. Patient/Source/Destination context는 저장된
+        Session에서 도출하고, Consent/action·Session 전이·success Audit은 한
+        Tenant transaction에서 함께 commit한다.
 
-        Consent는 단순 Boolean 값이 아니며 별도 Evidence Artifact다.
+        동일한 PENDING 요청의 semantic retry는 기존 Artifact를 재응답하고
+        Idempotency-Replayed: true를 반환한다. 다른 요청은 conflict다.
+        Consent는 단순 Boolean이 아닌 별도 technical Evidence Artifact이며,
+        PENDING 생성은 환자의 실제/법적 동의나 영상 접근 권한이 아니다.
       parameters:
         - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/TenantCandidate'
         - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
@@ -214,16 +322,38 @@ paths:
       responses:
         '201':
           description: Consent request created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Correlation-ID:
+              schema:
+                type: string
+                format: uuid
+            Idempotency-Replayed:
+              description: Present as true when an identical pending Consent request is reused.
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /exchange-sessions/{sessionId}/actions/view:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}/consents/{consentId}/approve:
     post:
@@ -231,12 +361,18 @@ paths:
       operationId: approveConsent
       summary: Approve synthetic technical consent
       description: |
-        Capstone Technical Consent Workflow에서 Consent를 ACTIVE로 만든다.
+        Synthetic/Test P0 workflow only. `mediq_patient_ref_id` is read only
+        from the verified signed OIDC access-token claim. Request body, URL
+        extension, client header, UI state, or Hospital Actor context cannot
+        select the PatientReference. Claim, server-owned Session, and the one
+        PENDING Consent must bind exactly. A verified active USER Actor with
+        no Hospital binding is required; the Hospital requester cannot approve.
 
-        본 Action은 실제 법률상 의료정보 제공 동의의 유효성을
-        주장하지 않는다.
-
-        Consent 승인 자체는 Resource 접근 Authorization이 아니다.
+        Success atomically activates the technical Consent, moves the Session
+        to CONSENTED, and writes `CONSENT_APPROVED` Audit. Identical completed
+        approval is replay-safe. It does not establish legal consent or patient
+        identity and does not grant Authorization, TransferGrant, image, Viewer,
+        Download, or PACS access.
       parameters:
         - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/ConsentId'
@@ -244,16 +380,34 @@ paths:
       responses:
         '200':
           description: Consent activated
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Correlation-ID:
+              schema:
+                type: string
+                format: uuid
+            Idempotency-Replayed:
+              description: Present as true when an identical completed approval is reused.
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}/consents/{consentId}/withdraw:
     post:
@@ -261,9 +415,19 @@ paths:
       operationId: withdrawConsent
       summary: Withdraw consent
       description: |
-        Consent를 WITHDRAWN 상태로 변경한다.
+        Synthetic/Test P0 technical withdrawal only. The patient reference is
+        taken only from the verified signed OIDC `mediq_patient_ref_id` claim;
+        body, query, caller-supplied patient header or UI state cannot select it.
+        The claim, server-owned Session and Consent must bind exactly, and the
+        active tenant-level USER must not be the Hospital requester.
 
-        WITHDRAWN Consent를 근거로 신규 TransferGrant를 발급해서는 안 된다.
+        Only an ACTIVE Consent can transition to WITHDRAWN. Withdrawal remains
+        available after Consent/Session expiry or terminal Session state. The
+        Consent update and one CONSENT_WITHDRAWN Audit commit atomically; an
+        identical completed withdrawal is replay-safe. The Session, Grant rows,
+        PACS and already-delivered imaging are not changed or remotely recalled.
+        Every future Grant/access decision must re-read Consent and deny a
+        WITHDRAWN Consent. This does not establish legal consent/withdrawal.
       parameters:
         - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/ConsentId'
@@ -271,16 +435,34 @@ paths:
       responses:
         '200':
           description: Consent withdrawn
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Correlation-ID:
+              schema:
+                type: string
+                format: uuid
+            Idempotency-Replayed:
+              description: Present as true when an identical completed withdrawal is reused.
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}/grants/issue:
     post:
@@ -288,8 +470,15 @@ paths:
       operationId: issueTransferGrant
       summary: Issue scoped transfer grant
       description: |
-        ACTIVE Consent와 Authorization Policy를 평가한 후
-        제한된 TransferGrant를 발급한다.
+        Verified destination USER requester와 현재 Session, ACTIVE Consent,
+        정확한 ImagingPackage binding을 재검증한 뒤 actor-scoped TransferGrant를 발급한다.
+
+        Recipient Tenant/Hospital/Actor와 expiry는 server가 결정한다.
+        Grant 유효기간은 최대 30분이며 Session/Consent 만료를 넘지 않는다.
+        동일 Idempotency-Key와 동일 의미의 재요청은 기존 Grant를 반환한다.
+
+        이 endpoint는 이후 VIEW/DOWNLOAD/PACS_IMPORT를 허용하지 않는다.
+        각 보호 작업은 Grant를 포함한 별도 Object Authorization과 Preflight를 통과해야 한다.
 
         Grant Scope는 Consent Allowed Action을 초과할 수 없다.
 
@@ -300,6 +489,7 @@ paths:
         - study:pacs-transfer
       parameters:
         - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
@@ -308,6 +498,17 @@ paths:
             schema:
               $ref: '#/components/schemas/IssueGrantRequest'
       responses:
+        '200':
+          description: Idempotent replay of the originally issued Grant
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: "true"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferGrant'
         '201':
           description: Grant issued
           content:
@@ -337,13 +538,37 @@ paths:
       tags: [Grant]
       operationId: revokeTransferGrant
       summary: Revoke transfer grant
+      x-mediq-requirements: [REQ-GRT-008]
+      x-mediq-security: [SEC-GRANT-009, SEC-AUTHZ-010, SEC-AUTHZ-011, SEC-TEN-005]
+      x-mediq-acceptance: [TC-GRT-004-REV-API-001~012, TC-GRT-004-REV-DB-001~004]
+      description: |
+        verified IAM-002 `USER` 중 이 Grant의 exact recipient Tenant/Hospital/Actor만
+        같은 Session 경로에서 철회할 수 있다. Request body는 받지 않는다.
+
+        ACTIVE Grant는 Consent/Session/Grant 만료 상태와 무관하게 `REVOKED`로 바꾼다.
+        동일 Actor의 이미 완료된 철회 retry는 원래 `revokedAt`을 보존하고 동일 결과를
+        반환하며, 두 번째 성공 Audit을 추가하지 않는다. EXPIRED/CONSUMED는 409다.
+        상태 변경과 단일 GRANT_REVOKED/SUCCESS Audit은 원자적으로 처리한다.
+
+        이 API는 Grant metadata를 철회할 뿐 오프라인으로 전달된 Capsule을 회수하거나
+        이미 시작된 Viewer/Download/PACS 작업을 중단한다고 보장하지 않는다.
       parameters:
         - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/GrantId'
         - $ref: '#/components/parameters/CorrelationId'
       responses:
         '200':
-          description: Grant revoked
+          description: Grant revoked or idempotent replay of an existing revocation
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              description: Present as `true` when the Grant was already revoked.
+              schema:
+                type: string
+                const: "true"
           content:
             application/json:
               schema:
@@ -354,6 +579,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /exchange-sessions/{sessionId}/actions/view:
     post:
@@ -427,6 +654,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ViewerSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -578,6 +807,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '502':
           $ref: '#/components/responses/UpstreamFailure'
 
@@ -808,6 +1039,24 @@ components:
         type: string
         format: uuid
 
+    TenantCandidate:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      description: Untrusted membership selector only; never an authority claim.
+      schema:
+        type: string
+        format: uuid
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID unique per verified requester Actor and logical create request.
+      schema:
+        type: string
+        format: uuid
+
   responses:
 
     BadRequest:
@@ -840,6 +1089,13 @@ components:
 
     Conflict:
       description: Domain state or invariant conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ServiceUnavailable:
+      description: A required identity or persistence dependency is unavailable
       content:
         application/json:
           schema:
@@ -883,17 +1139,6 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-        requestedStudyInstanceUIDs:
-          type: array
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          description: |
-            Optional source study selection.
-            When supplied, the application may register the corresponding
-            ImagingPackage and StudyReference metadata.
 
     ExchangeSession:
       type: object
@@ -1019,6 +1264,10 @@ components:
         imagingPackageId:
           type: string
           format: uuid
+          description: |
+            Optional scope selector. When supplied, the server verifies that the package is
+            AVAILABLE, not deleted/expired, and belongs to this Session, Patient and Source.
+            Omit it for Session-level request scope; this does not authorize every resource.
         allowedActions:
           type: array
           minItems: 1
@@ -1100,17 +1349,10 @@ components:
       additionalProperties: false
       required:
         - consentId
-        - recipientHospitalId
+        - imagingPackageId
         - scopes
-        - expiresAt
       properties:
         consentId:
-          type: string
-          format: uuid
-        recipientHospitalId:
-          type: string
-          format: uuid
-        recipientActorId:
           type: string
           format: uuid
         imagingPackageId:
@@ -1122,9 +1364,6 @@ components:
           uniqueItems: true
           items:
             $ref: '#/components/schemas/GrantScope'
-        expiresAt:
-          type: string
-          format: date-time
 
     GrantScope:
       type: string
@@ -1244,6 +1483,9 @@ components:
         expiresAt:
           type: string
           format: date-time
+          description: |
+            Optional requested validity ceiling. Must be a valid future date-time and cannot
+            outlive the ExchangeSession. It does not make the PENDING request active.
 
     ViewerActorType:
       type: string

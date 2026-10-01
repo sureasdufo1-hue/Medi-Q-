@@ -59,6 +59,24 @@ OPENAPI.yaml
 
 ---
 
+# Operational API Health Amendment — 2026-09-29
+
+The API container exposes only two internal operational routes in this environment:
+
+~~~text
+GET /api/v1/health/live
+  └── API process can serve a request; does not depend on PostgreSQL or PACS
+
+GET /api/v1/health/ready
+  ├── runtime-role PostgreSQL SELECT 1
+  ├── authenticated Hospital A Test Orthanc /system
+  └── authenticated Hospital B Test Orthanc /system
+~~~
+
+The API is attached to the three internal Compose networks to act as the mediation boundary; it publishes no host port. Readiness returns only a generic status and uses bounded probes. The routes do not implement business functionality or grant resource access. Their OpenAPI/security contract is defined in OPENAPI.yaml and SECURITY-REQUIREMENTS.md; acceptance details are in ACCEPTANCE-TESTS.md.
+
+---
+
 # 2. Normative Architecture Inputs
 
 Architecture는 다음 문서를 따른다.
@@ -367,6 +385,8 @@ Policy Evaluation
 ALLOW / DENY
 ```
 
+P0 default-deny evaluator는 유효한 Context와 등록된 policy가 모두 있어야 평가를 호출한다. 결과가 정확한 `ALLOW`일 때만 허용하고, policy 미설정·불완전 Context·미지원 결과·policy 예외는 `DENY`한다. AUT-002 evaluator와 AUT-003 object/resource policy는 현재 API/DB/PACS 경로에 등록되지 않는다. 보호된 경로 연결은 trusted DB evidence resolver, Consent/Grant grants 및 HTTP/data/side-effect Acceptance가 완료된 뒤에만 허용한다.
+
 ---
 
 ## 8.5 Grant Module
@@ -454,6 +474,12 @@ Orthanc-specific API
 ```
 
 즉 Orthanc 특화 구현은 Adapter 내부로 제한한다.
+
+2026-10-01 implementation status: `services/api/src/dicom/infrastructure/orthanc-dicomweb.adapter.ts` implements the typed adapter for the synthetic Test profile; its immutable resolver permits A QIDO/WADO and B QIDO/STOW roles only. It has no Controller/provider registration and therefore is not reachable as a product operation. DCM-002 verified A QIDO/WADO/frame and B read-only baseline; STOW was contract-tested against a mock only. The adapter does not perform Consent/Authorization/Grant checks, Mandatory Preflight, PatientMapping reconciliation, product Integrity/Provenance/Audit or production TLS. A PACS import caller must pass all of those gates before invoking STOW.
+
+2026-10-01 PACS-004/PACS-001 implementation status: internal `PacsImportMappingGateService` is registered as an application provider without a Controller. It creates `PACS_IMPORT` context and, after acquiring the shared ExchangeSession transaction fence, re-reads current Consent/Grant Authorization evidence and (only after exact Authorization `ALLOW`) the persisted Session and destination PatientMapping on the same verified Tenant transaction. Invalid mapping writes a minimized denial Audit; a valid result is only `MAPPING_VALIDATED`, not import permission. The shared operation-time fence is covered by API and isolated PostgreSQL revoke/withdrawal/concurrency/no-operation-state Acceptance, but the PACS gate has no DICOM Gateway dependency and does not invoke PACS. The effect-capable import coordinator, atomic Authorization + durable `STOW_STARTED`, complete Mandatory Preflight and `AT-SEC-012` Orthanc product no-STOW/B-unchanged integration remain NOT RUN. Do not interpret this internal gate as a PACS Import API or as enabling STOW.
+
+2026-10-01 PACS-007 implementation status: internal `PacsTransferOperation` domain/repository and `pacs_transfer_operations` PostgreSQL table are implemented with Forced Tenant RLS, exact column grants, Session lock/CAS, atomic metadata Audit and durable `RESULT_UNKNOWN` no-retry semantics. Clean/reset/reapply and predecessor database regressions passed (18 product tables; 183 runtime column privileges). No route, application provider, DICOM call, STOW or reconciliation worker is registered. This ledger is a prerequisite for the future PACS-001 coordinator, not Authorization or permission to transfer. Operation-time Consent/Grant fence, PatientID binding, endpoint/TLS, full Mandatory Preflight, integrity/provenance and destination verification remain required before any STOW.
 
 ---
 
@@ -1057,6 +1083,8 @@ Audit
 
 현재 이는 법적 전자동의 시스템이 아니라 Technical PoC다.
 
+P0 합성 승인 경로는 요청 body가 아닌 검증된 signed OIDC의 `mediq_patient_ref_id` claim으로 synthetic principal을 구분하고, claim·저장 Session·PENDING Consent의 PatientReference가 일치할 때만 `ACTIVE`/`CONSENTED`/Audit를 원자 처리한다. Claim 부재 시 거부한다. 이는 실제 환자 본인확인이나 법적 동의가 아니며 Authorization·Grant·영상 접근을 부여하지 않는다.
+
 ---
 
 # 29. P0 E2E Flow — Grant
@@ -1171,19 +1199,20 @@ Audit
 
 Core Application은 DICOMweb Client Library에 직접 강하게 결합하지 않는다.
 
-Interface 예:
+Internal Port (`MEDIQ-DCM-001`):
 
 ```text
 DicomGateway
-
-queryStudies()
-
-retrieveStudy()
-
-storeStudy()
-
 checkCapability()
+queryStudies()
+retrieveStudyMetadata()
+retrieveInstanceStream()   // one DICOM Instance; cancellable stream
+retrieveFrameStream()      // one 1-based Frame; cancellable stream
+storeInstanceStream()      // one DICOM Instance; cancellable stream
+verifyDestinationStudy()  // actual destination SOP Instance UID set
 ```
+
+Port request에는 verified server-side Hospital ID, correlation ID, AbortSignal과 작업에 필요한 resolved identifiers만 전달한다. Raw endpoint URL과 PACS credential은 인자로 받지 않고 adapter가 trusted registry/config에서 해석한다. QIDO 결과는 allowlisted typed metadata projection이다. DICOM payload는 전체 Study buffer가 아니라 WHATWG `ReadableStream<Uint8Array>`의 단일 Instance/Frame 단위로 전달한다. Port 존재나 type conformance만으로 Authorization, Orthanc 호환성, TLS, multipart, timeout/backpressure, byte ceiling 또는 실제 전송을 증명하지 않는다.
 
 구현:
 
@@ -2638,3 +2667,85 @@ Architecture rules:
 - P1 Module 장애는 P0 Viewer/Transfer의 Fail Closed 정책을 완화하지 않고 독립 실패경계를 가져야 한다.
 
 API, Queue, Cache와 Persistence 기술 선택은 `MEDIQ-HCW-*` Ticket ADR에서 확정한다.
+
+# P0 Object Authorization Evaluation Boundary — AUT-003
+
+```text
+IAM-002 verified Actor/Tenant callback
+  → request-scoped PoolClient + verified identity context
+  → server-created AuthorizationContext
+  → AuthorizationEngine + resolved object policy
+  → internal evidence reader using that same PoolClient
+  → exact Session / Consent / Grant / Recipient / Action / Resource binding
+  → ALLOW or DENY only
+```
+
+`MEDIQ-AUT-003` implements the deterministic object-level rule set and its evidence-reader contract only. The evidence reader must accept the request-scoped transaction client; calling the policy without that scope returns `DENY`. The client is not an identity proof: the caller must create the Context and pass the client within the IAM-002 verified callback. The reader must fetch authoritative facts in a consistent transaction and may not accept browser/mobile-provided evidence.
+
+No PostgreSQL resolver, runtime business-table grant, Nest provider registration, protected API route, data-return path, Viewer session, Download, PACS call or Audit writer is introduced by this Ticket. A policy `ALLOW` is not an instruction to continue a side effect by itself. `AT-SEC-003`, safe HTTP error mapping, no-data/no-side-effect verification and PACS Mandatory Preflight remain required integration Gates before protected access is enabled.
+
+## P0 PostgreSQL Authorization Evidence Reader — AUT-005
+
+```text
+IAM-002 verified membership transaction
+  → same PoolClient
+  → parameterized evidence query by internal Session / Consent / Grant / StudyReference UUIDs
+  → exact SELECT-only columns + forced RLS
+  → complete facts or no evidence
+  → existing object policy returns ALLOW / DENY
+```
+
+`MEDIQ-AUT-005` adds only an internal PostgreSQL evidence reader for the resource level persisted by the current schema: `STUDY` (`study_references.study_ref_id`). It resolves Session, Consent and allowed actions, Grant and scopes, ImagingPackage and StudyReference from a single read query using the verified transaction client. It does not select DICOM UID, `storage_ref`, local Patient ID or payload. `SERIES` and `INSTANCE` are denied until an approved persisted child-to-Study binding exists. Runtime authority is limited to 41 exact column-level `SELECT` privileges; existing FORCE RLS remains in effect. The adapter is not registered as an HTTP route or PACS/Viewer operation. An `ALLOW` result is not data delivery, an audit completion, or a transfer success.
+
+## P0 Synthetic PatientMapping internal read boundary — PAT-002-DEC-002
+
+```text
+Verified IAM-002 USER credential + active Hospital membership
+  → server-resolved Tenant/Hospital transaction on one PoolClient
+  → compare untrusted requested Hospital with verified membership Hospital
+  → mismatch / missing context: deny before mapping SQL
+  → exact-Hospital PatientMapping SELECT (8 approved columns; forced Tenant RLS)
+  → internal caller only
+```
+
+The current implementation is a narrow synthetic-only repository access path, not a public business operation. `mediq_runtime` receives `SELECT` on exactly the eight existing `patient_mappings` columns; all writes and DDL remain denied. The verified membership Hospital, never a client-provided candidate, is used as the repository predicate. No Controller, route, provider registration, OpenAPI operation, role-based mapping administration, Consent/Grant action, Viewer/Download session or PACS side effect is wired. Same-Hospital active `USER` membership is the accepted P0 boundary for this internal mapping read; the registry has no workforce capability model, so the fact that every active `USER` in that Hospital can use this internal read remains an explicit residual risk. `VALID` and a returned mapping do not prove identity or authorize medical-image access. HTTP/no-data/safe-error and product Authorization remain separate gates.
+
+---
+
+# P0 Database Access, Tenant RLS and Authorization Boundary — 2026-09-30
+
+## Trust and enforcement order
+
+```text
+Verified Credential
+  → begin DB transaction; use untrusted Tenant candidate only to scope exact membership lookup
+  → trusted Actor / Tenant resolution (server-side, from exact verified issuer+subject + active registry membership)
+  → object/action Authorization (Actor + Tenant + Session + Consent + Grant + Resource + Scope)
+  → parameterized repository query
+  → PostgreSQL object privileges + Tenant RLS as defense-in-depth
+  → commit/rollback; transaction context is discarded
+```
+
+The client does not choose an authoritative Tenant by request body, query, arbitrary header, UUID, or URL. A Tenant candidate is only a selector for the exact Actor membership lookup; it is never copied directly into the trusted context. Before membership succeeds, no product repository or protected callback receives the transaction. A database connection without a verified server context does not perform protected business queries. Failure to resolve identity, authorize the object/action, set the context, or complete the transaction fails closed.
+
+## Runtime database privileges
+
+- The API runtime login remains non-owner, non-superuser, `NOBYPASSRLS`, `NOINHERIT`, and without DDL/role-creation privileges. Migration/bootstrap credentials are not present in API or Worker runtime configuration.
+- Every product migration grants only the exact tables/columns and SQL operations required by its application Ticket. No `PUBLIC` business-table grant or broad future default grant is used. Runtime access is denied when no explicit grant exists.
+- The initial P0 PatientReference exception is global and synthetic-only: `patient_refs` is limited to approved columns and `SELECT`/`INSERT`; a database constraint must reject codes outside `MQ-TEST-*`. No update/delete/truncate or public patient route is allowed.
+- `MEDIQ-IAM-002` adds only column-level `SELECT` needed to resolve an exact active Actor membership under forced Tenant RLS: Actor (`actor_id, tenant_id, hospital_id, actor_type, external_subject, status`), Tenant (`tenant_id, status`), and Hospital (`hospital_id, tenant_id, status`). It adds no write permission or business-table grant.
+- API and Worker currently have no business persistence workflow. Before Worker DB access is introduced, evaluate a distinct role and grants based on its operations rather than inheriting API authority.
+
+## Row-Level Security
+
+Tenant-owned/participating protected tables use RLS with both `ENABLE` and `FORCE`. Directly stored `tenant_id` is preferred; otherwise the policy derives tenant participation through the approved Hospital or ExchangeSession relationship. Missing/empty/malformed Tenant context and absent policy fail closed. RLS is added before the corresponding runtime table grant is activated.
+
+P0 bilateral Exchange rows may be visible to the source and destination Tenant that participate in that exact exchange; this is row visibility only. Tenant C or another nonparticipant remains excluded. Authorization still decides whether a particular actor may use a particular resource/action. `patient_refs` is intentionally outside Tenant RLS because it is a globally shared canonical reference namespace; its narrow, synthetic-only P0 exception must not be generalized to real patient records.
+
+The transaction wrapper first clears any stale session-level `mediq.tenant_id`, begins a transaction, and uses transaction-local `set_config(..., true)` only to scope the membership lookup. After exact Actor/Tenant/optional Hospital status validation, it creates the trusted immutable context and invokes application work on the same checked-out client. It commits or rolls back, resets the setting before pool release, and destroys the connection if cleanup fails. A missing context yields no visible tenant rows and protected writes fail.
+
+## RLS limitation and release gate
+
+A custom PostgreSQL setting is mutable by SQL executing as the same runtime login. Therefore this RLS design guards against omitted tenant predicates and stale pooled context, but does not cryptographically authenticate context against arbitrary SQL execution. It is not a SQL-injection control or a substitute for service authorization. Parameterized SQL and negative tests remain mandatory. Any real-patient/production release requires a separate review of signed DB context or an equivalent stronger binding, service-role split, secret/key handling, and operational evidence.
+
+Normative decisions: `DB-009-DEC-001` and `IAM-002-DEC-001` in `POLICY-DECISION-LOG.md`. `MEDIQ-IAM-002` now provides the verified identity-to-Tenant transaction wrapper and exact Actor/Tenant/Hospital resolver grants. `MEDIQ-DB-009` remains PARTIAL overall: Tenant-bound business routes and their table grants still require safe HTTP error handling, object/action Authorization, resource-specific Acceptance and applicable Consent/Grant/Preflight controls. The IAM-002 wrapper does not itself authorize a business read, write, Viewer session or PACS side effect.

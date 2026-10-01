@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `THREAT-MODEL.md`
-**Version:** v1.7 Synthetic Patient Explanation RAG Amendment
+**Version:** v1.8 PACS Transfer Unknown-Result and Identity Binding Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Method:** STRIDE-informed Asset / Trust Boundary Threat Analysis
@@ -499,9 +499,10 @@ Unauthenticated
 ### Existing Controls
 
 ```text
-Bearer Authentication
-Backend Authentication Middleware
-Default Deny
+Global OIDC/JWT Bearer guard is implemented and Acceptance-tested.
+Only explicit @PublicRoute Health handlers bypass it.
+Missing verifier fails closed (503); invalid credentials are generic 401.
+Compose does not publish an API host port.
 ```
 
 ### Security Requirements
@@ -515,14 +516,16 @@ SEC-API-001
 ### Test
 
 ```text
-STC-IAM-004
-STC-NEG-007
+TC-IAM-001-AUTH-001~007
+STC-NEG-007 (legacy broader security coverage)
 ```
 
 ### Residual Risk
 
 ```text
-LOW
+HIGH until a trusted OIDC provider is configured and Actor/Tenant membership,
+business Authorization, and rate limiting are enforced before protected product routes.
+Current tests use an ephemeral synthetic issuer and a test-only probe route.
 ```
 
 ---
@@ -569,13 +572,14 @@ SEC-TEN-001
 ### Test
 
 ```text
-STC-API-002
+TC-AUT-003-OBJ-001~012 (pure policy contract)
+AT-SEC-003 (protected HTTP object access; pending)
 STC-NEG-013
 ```
 
 ### Residual Risk
 
-LOW
+HIGH until every protected route performs the policy check before returning data or causing a side effect. AUT-003 unit policy tests do not mitigate live BOLA/IDOR by themselves.
 
 ---
 
@@ -609,12 +613,15 @@ Recipient Binding
 Explicit Exchange Authorization
 ```
 
+Registry defense-in-depth rejects Hospital Tenant/Organization owner mismatches and Actor Tenant/Hospital mismatches with composite foreign keys (`SEC-TEN-004`, `TC-DB-008-REG-009`). This does not replace runtime object authorization or RLS.
+
 ### Requirements
 
 ```text
 SEC-TEN-001
 SEC-TEN-002
 SEC-TEN-003
+SEC-TEN-004
 SEC-GRANT-004
 ```
 
@@ -640,7 +647,7 @@ LOW
 
 ### Scenario
 
-Consent가:
+Consent evidence가 P0 요청 Action 외의 `MOBILE_EXPORT` 등 P1/미지원 값을 함께 포함하거나, Consent Action 집합보다 넓은 Grant Scope를 담고 있다. 예를 들어 Consent가:
 
 ```text
 PENDING
@@ -663,6 +670,9 @@ New Grant
 ```text
 Consent State Validation
 Grant issuance policy
+Synthetic approve: verified OIDC patient-reference claim exact binding
+Atomic Consent/Session/Audit transition; fail closed and replay safe
+Synthetic withdrawal: verified patient claim, atomic Consent/Audit, session lock and replay safety
 ```
 
 ### Requirements
@@ -670,6 +680,8 @@ Grant issuance policy
 ```text
 SEC-CONSENT-001
 SEC-CONSENT-002
+SEC-CONSENT-006
+SEC-CONSENT-007
 ```
 
 ### Tests
@@ -678,6 +690,8 @@ SEC-CONSENT-002
 STC-CONSENT-001
 STC-CONSENT-002
 STC-NEG-001
+TC-CON-004-API-001~010
+TC-CON-005-API-001~013
 ```
 
 ### Residual Risk
@@ -729,7 +743,8 @@ SEC-CONSENT-003
 ### Test
 
 ```text
-STC-GRANT-005
+TC-GRT-005-AUTH-001~008
+TC-CON-006-AUTH-001~005 (pure P0 policy only)
 ```
 
 ### Residual Risk
@@ -777,7 +792,7 @@ SEC-AUTHZ-009
 ### Tests
 
 ```text
-STC-GRANT-005
+TC-GRT-005-AUTH-001~008
 STC-DWN-002
 STC-NEG-003
 STC-NEG-009
@@ -811,7 +826,7 @@ SEC-TOK-002
 ### Test
 
 ```text
-STC-GRANT-002
+TC-GRT-007-EXP-001~008
 STC-NEG-002
 ```
 
@@ -1379,6 +1394,8 @@ StudyInstanceUID validation
 Integrity Verification
 ```
 
+An operation-bound `SOURCE_CAPTURE/PENDING` manifest is constrained to one `CREATED` transfer operation and cannot be interpreted as destination verification or successful transfer. The repository is not wired to a route or DICOM caller; its runtime grant remains absent until authorized retrieval, reauthorization and atomic Audit are implemented.
+
 ### Requirements
 
 ```text
@@ -1397,6 +1414,8 @@ STC-INT-001
 ### Residual Risk
 
 LOW/MEDIUM
+
+Source digest persistence alone does not prove that bytes came from the authorized source PACS. Retain this residual until source WADO is bound to current Authorization/Consent/Grant/PatientMapping and destination evidence is compared.
 
 ---
 
@@ -1468,6 +1487,55 @@ SEC-INT-001
 ### Residual Risk
 
 LOW/MEDIUM
+
+---
+
+# THR-043 — Duplicate or Ambiguous PACS Transfer
+
+**STRIDE:** Tampering / Denial of Service
+**Asset:** Hospital B PACS / Transfer Operation State
+
+### Scenario
+
+Hospital B accepts some or all STOW instances, but MediQ loses the response or crashes. A user/worker retries the same request and causes duplicate writes, or the UI reports success without knowing the destination state.
+
+### Expected
+
+```text
+Ambiguous post-dispatch result
+→ RESULT_UNKNOWN
+→ no blind STOW retry
+→ bounded read-only destination reconciliation
+```
+
+### Controls
+
+- Durable per-Session/Study operation claim and actor-bound idempotency fingerprint.
+- Atomic compare-and-set dispatch state and atomic metadata-only Audit.
+- Commit `STOW_STARTED` before network I/O; never hold a database transaction during DICOM streaming.
+- Preserve `RESULT_UNKNOWN` across restart. Resolve only with destination evidence; inconclusive absence remains unknown.
+- Mark `COMPLETED` only after expected/destination SOP UID set equality plus integrity/provenance/Audit gates.
+- Bind the initial PACS_IMPORT Provenance row to one durable operation using a restrictive FK and unique operation reference. Permit first creation only while the operation is `CREATED` or `PREFLIGHT_PASSED`; never backfill a missing row after dispatch may have started.
+- Keep the initial Provenance status at `PENDING`. It is bookkeeping only and cannot assert STOW dispatch, destination receipt, integrity, or successful transfer.
+- P0 PatientID must exactly match verified destination mapping; source DICOM remains byte-preserving.
+
+### Requirements / Tests
+
+```text
+REQ-PACS-003/004
+SEC-DICOM-006
+PACS-001-DEC-001
+PACS-007-DEC-001
+TC-PACS-001-PID-001
+TC-PACS-007-IDEM-001 / CONC-001 / UNK-001
+PROV-001-DEC-001
+TC-PROV-001-001~010
+AT-FUNC-012 / AT-SEC-012 / AT-E2E-003
+```
+
+### Residual Risk
+
+HIGH. Durable state, CAS/idempotency, Tenant RLS and the no-blind-retry boundary are implemented and scoped-tested by PACS-007. Operation-bound initial `PENDING` Provenance and denial of late first-write are scoped-tested by MEDIQ-PROV-001, but this is not source/destination transfer evidence. Risk remains high until the PACS coordinator adds operation-time Authorization/revocation fencing, full Mandatory Preflight and actual destination reconciliation/verification. If PACS consistency cannot prove whether a write occurred, retain `RESULT_UNKNOWN`; do not infer safety to retry.
 
 ---
 
@@ -1778,6 +1846,34 @@ STC-NEG-012
 ---
 
 # 44. TB-06 — MediQ → PostgreSQL
+
+**Assets:** Runtime database data, role credentials, migration changes, database availability.
+**Trust boundary:** API/Worker container → isolated `database` network → PostgreSQL. Bootstrap provisioning is a separate local administrative path.
+
+### Threat Scenarios
+
+| Threat | STRIDE | Required control | Evidence / residual scope |
+|---|---|---|---|
+| API process compromise or connection-string mistake exposes bootstrap/superuser capability | Elevation of Privilege | `mediq_runtime` only; no `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `BYPASSRLS`, or inherited membership; bootstrap secret excluded from app config | ENV-008 role/config probes; production secret store and process isolation remain future work |
+| Runtime bug or SQL injection creates/changes schema objects | Tampering / Elevation of Privilege | Runtime receives no schema `CREATE`; deny DDL; table grants are explicit per migration, not broad defaults | ENV-008 DDL denial; application SQL-injection tests not yet run |
+| Migration credential leaks into API/Worker or is reused as runtime | Elevation of Privilege | Dedicated `mediq_migrator`, distinct local credential, excluded from runtime config; one-shot migration profile on database-only network; verify schema-only DDL, advisory lock, transactional SQL and migrator-owned history | ENV-008 and DB-001 local test evidence; production secret rotation, CI migration controls and operational approvals remain future work |
+| Weak or bypassed PostgreSQL password authentication | Spoofing | Test an authenticated correct runtime login and a wrong-password rejection over the isolated container network | ENV-008 auth probes; this does not assess production identity federation |
+| DB endpoint is exposed through host port or wrong service alias | Information Disclosure / Spoofing | Internal-only database network; container profile uses `postgres:5432`; reject host-loopback profile until explicitly approved | ENV-003/004/008 config/runtime evidence |
+| Shared/default database privileges grant access to future objects | Elevation of Privilege / Information Disclosure | Revoke `PUBLIC` access; exact per-ticket object grants; no broad default ACL; Tenant RLS on protected tables | ENV-008 + DB-009 scratch role/grant/RLS Acceptance; no runtime business CRUD grants are provisioned for protected tables |
+
+### Security Requirements and Tests
+
+```text
+SEC-DB-001  SEC-DB-002  SEC-DB-003  SEC-DB-004
+TC-ENV-008-DB-001 ... TC-ENV-008-DB-005
+TC-DB-001-MIG-001 ... TC-DB-001-MIG-007
+TC-DB-002-REG-001 ... TC-DB-002-REG-008
+TC-DB-009-PRIV-* TC-DB-009-RLS-* TC-DB-009-AUTH-*
+```
+
+### Residual Risk
+
+**MEDIUM for the capstone development environment.** Runtime/migration separation, DB-009 exact privilege boundary, 16-table Tenant RLS validation, and the IAM-002 verified identity→Tenant transaction wrapper are verified on local synthetic PostgreSQL. AUT-002 provides a pure default-deny evaluator contract; PAT-002-DEC-002 separately permits only an internal synthetic PatientMapping read for a verified active USER at the exact membership Hospital, with eight column-level SELECTs and forced RLS. No general business CRUD, public API, workforce role/capability model, Consent/Grant workflow, image authorization or PACS import path exists. All active USER actors at the same Hospital can use this internal read, and mutable custom GUC remains a synthetic-P0 residual. Automated secret rotation, live concurrent migration contention and production operational hardening remain untested. DB-008 resolves the approved registry status/owner-pair baseline. DB-003/PAT-001 persistence, IAM-002 context and AUT-002 alone do not authorize PatientMapping identity linkage or PACS import. Do not interpret database RLS visibility as application authorization; see the 2026-09-30 DB-009 residual risk below.
 
 ---
 
@@ -2096,6 +2192,7 @@ Authentication
 Authorization
 Operation failure handling
 Basic application limits where implemented
+Actor-scoped `Idempotency-Key` on Exchange request creation prevents an exact network retry from creating duplicate Session/Audit rows; reuse with changed request data is denied
 ```
 
 ### Residual Risk
@@ -2109,6 +2206,63 @@ POST-MVP / PRODUCTIONIZATION hardening
 ```
 
 P0에서는 Enterprise Rate Limiter/WAF를 필수 Gate로 하지 않는다.
+
+Idempotency는 중복 재시도 보호일 뿐 요청 빈도 제한이 아니다. 권한 있는 사용자가 매번 새 key로 요청을 만들면 Session 생성량이 증가할 수 있으므로 trusted ingress/rate limit과 abuse monitoring은 별도 productionization Gate로 남긴다. Session ID나 key는 의료영상 접근 권한이 아니다.
+
+**Exchange request traceability:** `EXC-003-DEC-001`; `SEC-API-005`; `TC-EXC-003-API-006~008`; `TC-EXC-003-DB-003~004`.
+
+## THR-041 — Grant Issue Replay, Scope Substitution and Overbroad Recipient
+
+**STRIDE:** Elevation of Privilege / Tampering
+
+### Scenario
+
+An authenticated destination user forges recipient fields, binds a Grant to a different Session/Consent/Package, expands requested scopes, or retries an issue request after losing the HTTP response. Concurrent duplicates or partial persistence could otherwise create a broader or unaudited Grant.
+
+### P0 Controls
+
+- Derive Tenant, Hospital, Actor and destination from the verified IAM context plus the persisted Exchange Session; reject recipient and expiry fields in the request body.
+- Require an active, unwithdrawn, unexpired Consent and exact Session/Patient/source/destination/Package bindings. Map each allowed Consent action to exactly one P0 Grant scope; reject unsupported, duplicate or expanded scopes.
+- Bind the issued Grant to a non-null exact Package and the verified destination Actor. Apply the server expiry cap `min(issue time + 30 minutes, Session expiry, Consent expiry)`.
+- Require an actor-scoped UUID `Idempotency-Key`, unique at the database layer. Serialize Session and key operations; identical retries return the same Grant and changed semantics conflict without mutation.
+- Persist Grant, scopes and successful allow/create Audit events atomically under the verified Tenant transaction. Record only a minimized policy-denial Audit event after Tenant context is established.
+- Runtime role receives only the 13 Grant INSERT columns, 2 specific Grant SELECT columns needed for idempotent re-read, and 3 GrantScope INSERT columns; forced RLS remains active. Total exact column grants are 144; no table-wide Grant, UPDATE, DELETE or DDL privilege is added.
+- Grant issuance creates authorization metadata only. Later object/action Authorization, Consent revalidation, operation-bound Grant validation and Mandatory Preflight remain required before Viewer/Download/PACS access.
+
+### Residual Risk
+
+MEDIUM until protected Viewer/Download/PACS operations consume and revalidate Grants under the same current authorization boundary. This Ticket does not prove legal consent, global Audit completeness, remote revocation of already-issued data, or A→MediQ→B completion.
+
+### Traceability
+
+`GRT-003-DEC-001`; `REQ-GRT-003/007`; `SEC-GRANT-007/008`; `TC-GRT-003-API-001~020`; `TC-GRT-003-DB-001~006`; `MEDIQ-GRT-003`.
+
+## THR-042 — Unauthorized or Racy Grant Revocation
+
+**STRIDE:** Elevation of Privilege / Tampering / Repudiation
+**Asset:** TransferGrant state, protected medical-image operation authorization, Audit trail
+**Initial Risk:** HIGH
+
+### Scenario
+
+A Hospital user, service actor, unrelated Tenant, or altered route identifier attempts to revoke a Grant bound to a different verified recipient. Concurrent requests race and produce duplicate transitions or success Audit, an Audit failure leaves the Grant revoked without evidence, or stale Consent/Session state blocks a legitimate risk-reducing revocation. A user may also incorrectly infer that revoking the Grant remotely erases an offline Capsule or instantly stops an already-running transfer.
+
+### P0 Controls
+
+- Require verified IAM-002 `USER` membership and exact Tenant/Hospital/recipient Actor binding; the route Session must match both Grant and persisted Session. Use non-disclosing fixed denial for missing/mismatched bindings.
+- Do not require active Consent, non-terminal Session, or unexpired Grant to revoke an ACTIVE Grant. Do not accept body-controlled recipient, state, timestamp, or scope values.
+- Serialize same-Session issue/revoke/Consent transitions using the shared transaction advisory lock, then lock the exact Grant row and conditionally update only `status` and `revoked_at`.
+- Persist the transition and one `GRANT_REVOKED/SUCCESS` Audit atomically. A state replay preserves the first timestamp, returns the same current result, and emits no duplicate success event. Audit failure rolls the state back.
+- Grant the runtime role only exact `UPDATE(status, revoked_at)` columns in addition to its prior 144-column inventory; keep forced RLS and no table-wide/PUBLIC/default/broad mutation privileges.
+- Communicate that Grant revocation changes authorization metadata only. Offline-copy recall and cancellation/fencing of in-flight Viewer/Download/PACS work are not proven by this Ticket.
+
+### Residual Risk
+
+MEDIUM/HIGH until every protected operation rechecks current Consent/Grant state with a transaction/lease/fencing rule that closes operation-vs-revocation races. This Ticket does not invalidate already-issued offline keys or data and cannot revoke untracked external copies.
+
+### Traceability
+
+`GRT-004-DEC-001`; `REQ-GRT-008`; `SEC-GRANT-009`; `TC-GRT-004-REV-API-001~012`; `TC-GRT-004-REV-DB-001~004`; `MEDIQ-GRT-004`.
 
 ---
 
@@ -2154,13 +2308,14 @@ CAPSTONE SECURITY VALIDATION
 
 | Threat                           | Primary Control      | Requirement     | Test            |
 | -------------------------------- | -------------------- | --------------- | --------------- |
-| THR-001 Unauthenticated Access   | Authentication       | SEC-IAM-004     | STC-IAM-004     |
-| THR-002 BOLA                     | Object Authorization | SEC-API-002     | STC-API-002     |
+| THR-001 Unauthenticated Access   | OIDC/JWT global guard + verified Actor/Tenant context | SEC-IAM-004, SEC-AUTHZ-010 | TC-IAM-001-AUTH-001~007; TC-IAM-002-* |
+| THR-002 BOLA                     | Exact Session/Consent/Grant/Resource/Recipient/Action binding; RLS alone is insufficient | SEC-API-002 | `TC-AUT-003-OBJ-001~012` (policy contract); `AT-SEC-003` HTTP integration pending |
 | THR-003 Cross Tenant             | Tenant Isolation     | SEC-TEN-001     | STC-TEN-001     |
-| THR-004 Consent Bypass           | Consent Enforcement  | SEC-CONSENT-001 | STC-CONSENT-001 |
-| THR-005 Consent Scope Escalation | Scope containment    | SEC-GRANT-005   | STC-GRANT-005   |
-| THR-006 Grant Escalation         | Scope Enforcement    | SEC-GRANT-005   | STC-GRANT-005   |
-| THR-007 Expired Grant            | Expiration           | SEC-GRANT-002   | STC-GRANT-002   |
+| THR-004 Consent Bypass           | Consent Enforcement  | SEC-CONSENT-001/002/006/007 | `TC-CON-004-API-001~010`, `TC-CON-005-API-001~013`, `TC-CON-008-AUT-001~006` (internal protected operation only); Grant-issuance DENY remains separate |
+| THR-005 Consent Scope Escalation | Scope containment and P0 Action allowlist | SEC-GRANT-005, SEC-CONSENT-008 | `TC-CON-006-AUTH-001~005`; `TC-GRT-005-AUTH-001~008` (pure policy; routes remain separate) |
+| THR-006 Grant Escalation         | Scope Enforcement    | SEC-GRANT-005   | `TC-GRT-005-AUTH-001~008`; `TC-GRT-001-DOM-005` only validates the allowlist shape |
+| THR-042 Unauthorized/Racy Grant Revocation | Recipient-bound atomic state change | SEC-GRANT-009 | `TC-GRT-004-REV-API-001~012`, `TC-GRT-004-REV-DB-001~004` |
+| THR-007 Expired Grant            | Expiration           | SEC-GRANT-002   | `TC-GRT-007-EXP-001~008`; protected-operation denial remains open |
 | THR-008 Wrong Recipient          | Recipient Binding    | SEC-GRANT-003   | STC-GRANT-003   |
 | THR-009 Viewer Bypass            | Viewer Authorization | SEC-AUTHZ-007   | STC-VIEW-002    |
 | THR-011 Unauthorized QIDO        | DICOM Authorization  | SEC-DICOM-001   | STC-DICOM-001   |
@@ -2168,10 +2323,11 @@ CAPSTONE SECURITY VALIDATION
 | THR-017 Wrong Destination        | Destination Binding  | SEC-DICOM-005   | STC-PACS-002    |
 | THR-018 Wrong Mapping            | Mapping Validation   | SEC-IAM-007     | STC-IAM-007     |
 | THR-019 Unauthorized STOW        | Scope Validation     | SEC-DICOM-003   | STC-DICOM-003   |
+| THR-043 Duplicate/Unknown PACS Transfer | Durable operation/idempotency; operation-bound pending-only Provenance; no blind retry | SEC-DICOM-006 | PACS-007 `IDEM/CONC/UNK` and PROV-001 `operation binding/pending only/no late first-write` scoped PASS; operation-time Authorization, source/destination evidence, reconciliation and full PACS E2E pending |
 | THR-021 Integrity Ignored        | Integrity Gate       | SEC-INT-002     | STC-INT-002     |
 | THR-023 Direct Storage Access    | Storage Protection   | SEC-DATA-001    | STC-DATA-001    |
 | THR-027 Input Manipulation       | Input Validation     | SEC-API-003     | STC-API-003     |
-| THR-030 Security Failure Bypass  | Fail Closed          | SEC-ERR-003     | STC-ERR-003     |
+| THR-030 Security Failure Bypass  | Exact ALLOW only; policy failure DENY | SEC-AUTHZ-002~003, SEC-ERR-003 | `TC-AUT-002-DD-001~006`; AT-SEC-017 integration pending |
 | THR-034 Sensitive Logs           | Log Minimization     | SEC-LOG-001     | STC-LOG-001     |
 
 ---
@@ -2821,3 +2977,67 @@ Integrity / Provenance / Audit
 | `THR-HCW-010` | P1 Module 장애가 P0 인가를 우회 | 독립 실패경계, Fail Closed, P0 Regression | 별도 P0/P1 Regression |
 
 잔여 위험: Body Part·Study Description은 비식별 정보가 아닐 수 있고 의료 맥락을 드러낼 수 있다. 후보 목록과 알림에는 업무에 필요한 최소 메타데이터만 표시하고 실제 운영 도입 전 개인정보·의료기관 정책 검토를 수행한다. 모든 시험은 `NOT RUN`이다.
+
+# 46. THR-OPS-001 — Operational Health Endpoint Disclosure
+
+**STRIDE:** Information Disclosure / Denial of Service
+
+### Scenario
+
+Unauthenticated health endpoints become externally reachable, reveal which hospital/database dependency is unavailable, cache stale readiness, or allow repeated requests to create unbounded DB/PACS probes. A liveness probe may also be coupled to a dependency and trigger restart loops during an upstream outage.
+
+### Controls
+
+- Health endpoints have no host-published port and remain on Docker internal networks; future ingress must explicitly deny these paths.
+- Liveness is process-only. Readiness checks one bounded SQL query and authenticated Orthanc /system status with 1.5-second timeouts.
+- Return only alive, ready, or not_ready; use Cache-Control: no-store; suppress dependency names, addresses, errors, credentials, version, PHI and DICOM metadata.
+- Run dependency checks in parallel and do not create audit events for each liveness/readiness poll.
+- API runtime uses the least-privilege DB role and backend-only Orthanc credentials; browser/mobile clients do not call PACS.
+
+### Requirements and Acceptance
+
+~~~text
+SEC-OPS-HEALTH-001
+TC-ENV-009-HEALTH-005 ... TC-ENV-009-HEALTH-008
+~~~
+
+### Residual Risk
+
+LOW in the current Compose boundary after container-level validation. Future reverse proxy, web frontend, or production ingress must preserve path denial and no-store behavior; public health exposure and request-flood testing remain deployment gates.
+
+---
+
+# PostgreSQL Runtime Privilege, Tenant RLS and Authorization Boundary — 2026-09-30
+
+## Threats
+
+- A broad runtime grant, owner role, inherited role, or accidental `PUBLIC` privilege exposes unrelated product tables or enables schema changes.
+- A missing tenant predicate, stale pooled connection context, or incorrectly bound Tenant exposes another Tenant's rows.
+- A caller supplies another Tenant/Actor ID, or treats a visible Exchange Session/UUID as authority.
+- A parameterized query is replaced by unsafe SQL, allowing the runtime connection to read or mutate rows outside the intended repository operation.
+- A global PatientReference is mistaken for Tenant authorization or starts carrying real identifying information.
+
+## Controls and accepted P0 boundary
+
+- Runtime is a non-owner, non-superuser, non-inheriting, non-`BYPASSRLS` role; each migration grants only documented table/column operations. API/Worker do not receive bootstrap or migration credentials.
+- RLS is enabled and forced for protected Tenant-owned/participating tables. `MEDIQ-IAM-002` resolves exact configured issuer/subject to an active Actor and active Tenant/optional Hospital before invoking protected work, uses a same-client transaction-local context, and clears or destroys the pooled connection on completion/failure. This is context binding only; missing object/action Authorization still denies product work.
+- The backend Authorization decision remains authoritative and evaluates Actor, Tenant, Hospital, Exchange, Consent, Grant, Resource, Scope, Action, Recipient/Destination and expiry. RLS row visibility alone cannot authorize Viewer, Download, PACS Import or other side effects.
+- `patient_refs` is an explicit global P0 exception only for `MQ-TEST-*` synthetic namespace. Database constraint plus application validation enforce that namespace; minimal read/insert grants do not extend to real patient information. No public API is wired.
+- Parameterized SQL, fixed generic error mapping and negative injection tests remain mandatory.
+
+## Residual risk
+
+PostgreSQL custom settings can be changed by arbitrary SQL executed under the same runtime role. The adopted transaction-local GUC therefore protects against accidental predicate omission and pooled-context leakage, but not a successful arbitrary-SQL injection that deliberately changes Tenant context. This is explicitly not a cryptographic Tenant identity boundary. CAPSTONE-P0 retains synthetic-only data and no public patient route; before production or real patient data, require review and evidence for signed/otherwise non-forgeable DB context or an equivalent isolation design, alongside SQL injection testing. Do not describe the current RLS layer as E2E, complete tenant authorization, or injection protection.
+
+## Traceability
+
+## AUT-005 trusted evidence-reader control
+
+- Authorization facts are loaded only from existing PostgreSQL records using a parameterized query on the same IAM-002 verified transaction client. The query binds internal Session, Consent, Grant and StudyReference IDs and requires a complete joined evidence set; absence or failure produces no facts and the existing policy denies.
+- `mediq_runtime` receives only 41 specific column-level `SELECT` privileges across the seven evidence tables. No table-wide access or evidence write privilege is added; FORCE RLS remains enabled. Synthetic integration tests verify exact grants and a nonparticipant Tenant receives no evidence.
+- The current schema proves a StudyReference-to-Package binding but has no persisted Series/Instance child mapping. Those resource kinds are rejected without a query; the reader does not infer a parent or trust a DICOM UID supplied by a caller.
+- The test-only runtime integration invokes the real engine/policy/executor against synthetic facts but does not register a route or perform a Viewer, Download, PACS or Audit side effect. It does not prove HTTP BOLA, revocation-race handling, or full product authorization.
+
+## Traceability
+
+`DB-009-DEC-001`; `IAM-002-DEC-001`; `AUT-005-DEC-001`; `SEC-DB-005~006`; `SEC-TEN-005`; `SEC-AUTHZ-010~012`; `TC-DB-009-*`; `TC-IAM-002-*`; `TC-AUT-005-DB-001~007`; `MEDIQ-DB-009`; `MEDIQ-IAM-002`; `MEDIQ-AUT-005`.

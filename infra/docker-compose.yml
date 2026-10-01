@@ -1,6 +1,157 @@
 name: mediq
 
 services:
+  migrator:
+    profiles:
+      - migration
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: migration
+    environment:
+      MEDIQ_RUNTIME_PROFILE: ${MEDIQ_RUNTIME_PROFILE:?Set MEDIQ_RUNTIME_PROFILE in the ignored root .env}
+      MEDIQ_ENV: ${MEDIQ_ENV:?Set MEDIQ_ENV in the ignored root .env}
+      MEDIQ_POSTGRES_DB: ${MEDIQ_POSTGRES_DB:?Set MEDIQ_POSTGRES_DB in the ignored root .env}
+      MEDIQ_MIGRATION_DATABASE_URL: ${MEDIQ_MIGRATION_DATABASE_URL:?Run local PostgreSQL role setup first}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    networks:
+      - database
+
+  api-db-integration-test:
+    profiles:
+      - test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: integration-test
+    environment:
+      MEDIQ_TEST_DATABASE_URL: ${MEDIQ_DATABASE_URL:?Run local PostgreSQL role setup first}
+      MEDIQ_IAM002_TEST_SUBJECT: ${MEDIQ_IAM002_TEST_SUBJECT:-}
+      MEDIQ_IAM002_TEST_ACTOR_ID: ${MEDIQ_IAM002_TEST_ACTOR_ID:-}
+      MEDIQ_IAM002_TEST_TENANT_A: ${MEDIQ_IAM002_TEST_TENANT_A:-}
+      MEDIQ_IAM002_TEST_TENANT_B: ${MEDIQ_IAM002_TEST_TENANT_B:-}
+      MEDIQ_IAM002_TEST_TENANT_C: ${MEDIQ_IAM002_TEST_TENANT_C:-}
+      MEDIQ_IAM002_TEST_HOSPITAL_A: ${MEDIQ_IAM002_TEST_HOSPITAL_A:-}
+      MEDIQ_AUT005_TEST_FIXTURE: ${MEDIQ_AUT005_TEST_FIXTURE:-}
+      MEDIQ_PAT002_TEST_FIXTURE: ${MEDIQ_PAT002_TEST_FIXTURE:-}
+      MEDIQ_PACS007_TEST_FIXTURE: ${MEDIQ_PACS007_TEST_FIXTURE:-}
+      MEDIQ_PACS001_FENCE_FIXTURE: ${MEDIQ_PACS001_FENCE_FIXTURE:-}
+      MEDIQ_EXC002_TEST_FIXTURE: ${MEDIQ_EXC002_TEST_FIXTURE:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    networks:
+      - database
+
+  dicom-adapter-test:
+    profiles:
+      - dicom-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: dicom-adapter-test
+    environment:
+      MEDIQ_ENV: ${MEDIQ_ENV:?Set MEDIQ_ENV in the ignored root .env}
+      ORTHANC_A_URL: ${ORTHANC_A_URL:?Set ORTHANC_A_URL in the ignored root .env}
+      ORTHANC_A_USERNAME: ${ORTHANC_A_USERNAME:?Set ORTHANC_A_USERNAME in the ignored root .env}
+      ORTHANC_A_PASSWORD: ${ORTHANC_A_PASSWORD:?Set ORTHANC_A_PASSWORD in the ignored root .env}
+      ORTHANC_B_URL: ${ORTHANC_B_URL:?Set ORTHANC_B_URL in the ignored root .env}
+      ORTHANC_B_USERNAME: ${ORTHANC_B_USERNAME:?Set ORTHANC_B_USERNAME in the ignored root .env}
+      ORTHANC_B_PASSWORD: ${ORTHANC_B_PASSWORD:?Set ORTHANC_B_PASSWORD in the ignored root .env}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+      MEDIQ_DICOM_TEST_MANIFEST: /run/fixtures/manifest.json
+    depends_on:
+      orthanc-a:
+        condition: service_healthy
+      orthanc-b:
+        condition: service_healthy
+    volumes:
+      - ../data/synthetic-ct-env007/manifest.json:/run/fixtures/manifest.json:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    networks:
+      - hospital-a
+      - hospital-b
+
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: runtime
+    environment:
+      MEDIQ_RUNTIME_PROFILE: ${MEDIQ_RUNTIME_PROFILE:?Set MEDIQ_RUNTIME_PROFILE in the ignored root .env}
+      MEDIQ_ENV: ${MEDIQ_ENV:?Set MEDIQ_ENV in the ignored root .env}
+      MEDIQ_LOG_LEVEL: ${MEDIQ_LOG_LEVEL:?Set MEDIQ_LOG_LEVEL in the ignored root .env}
+      MEDIQ_API_PORT: ${MEDIQ_API_PORT:?Set MEDIQ_API_PORT in the ignored root .env}
+      MEDIQ_POSTGRES_DB: ${MEDIQ_POSTGRES_DB:?Set MEDIQ_POSTGRES_DB in the ignored root .env}
+      MEDIQ_OIDC_ISSUER: ${MEDIQ_OIDC_ISSUER:-}
+      MEDIQ_OIDC_AUDIENCE: ${MEDIQ_OIDC_AUDIENCE:-}
+      MEDIQ_OIDC_JWKS_URI: ${MEDIQ_OIDC_JWKS_URI:-}
+      MEDIQ_DATABASE_URL: ${MEDIQ_DATABASE_URL:?Run local PostgreSQL role setup first}
+      ORTHANC_A_URL: ${ORTHANC_A_URL:?Set ORTHANC_A_URL in the ignored root .env}
+      ORTHANC_A_USERNAME: ${ORTHANC_A_USERNAME:?Set ORTHANC_A_USERNAME in the ignored root .env}
+      ORTHANC_A_PASSWORD: ${ORTHANC_A_PASSWORD:?Set ORTHANC_A_PASSWORD in the ignored root .env}
+      ORTHANC_B_URL: ${ORTHANC_B_URL:?Set ORTHANC_B_URL in the ignored root .env}
+      ORTHANC_B_USERNAME: ${ORTHANC_B_USERNAME:?Set ORTHANC_B_USERNAME in the ignored root .env}
+      ORTHANC_B_PASSWORD: ${ORTHANC_B_PASSWORD:?Set ORTHANC_B_PASSWORD in the ignored root .env}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orthanc-a:
+        condition: service_healthy
+      orthanc-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+process.env.MEDIQ_API_PORT+'/api/v1/health/ready').then((r)=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    networks:
+      - database
+      - hospital-a
+      - hospital-b
+    volumes:
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+
   postgres:
     image: postgres:18.6-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
     environment:
@@ -25,13 +176,21 @@ services:
       ORTHANC_PASSWORD: ${ORTHANC_A_PASSWORD:?Set ORTHANC_A_PASSWORD in the ignored root .env}
       ORTHANC__NAME: Hospital A Test Orthanc
       ORTHANC__DICOM_AET: MEDIQA
-    ports:
-      - "127.0.0.1:${ORTHANC_A_DICOM_HOST_PORT:-14242}:4242"
-      - "127.0.0.1:${ORTHANC_A_HTTP_HOST_PORT:-18042}:8042"
+      ORTHANC__SSL_ENABLED: "true"
+      ORTHANC__SSL_CERTIFICATE: /run/mediq/orthanc.pem
+    healthcheck:
+      test: ["CMD", "python3", "/probes/mediq-tls-healthcheck.py", "/run/mediq/test-ca.crt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
     networks:
       - hospital-a
     volumes:
       - orthanc-a-data:/var/lib/orthanc/db
+      - ../data/local-tls/orthanc-a.pem:/run/mediq/orthanc.pem:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+      - ./orthanc/mediq-tls-healthcheck.py:/probes/mediq-tls-healthcheck.py:ro
 
   orthanc-b:
     image: orthancteam/orthanc:26.9.1@sha256:d2705f2c56547e55ce9bc2250fd22d05d326493b3f3d9fa191ecb7db8ca6b5a2
@@ -40,13 +199,21 @@ services:
       ORTHANC_PASSWORD: ${ORTHANC_B_PASSWORD:?Set ORTHANC_B_PASSWORD in the ignored root .env}
       ORTHANC__NAME: Hospital B Test Orthanc
       ORTHANC__DICOM_AET: MEDIQB
-    ports:
-      - "127.0.0.1:${ORTHANC_B_DICOM_HOST_PORT:-14243}:4242"
-      - "127.0.0.1:${ORTHANC_B_HTTP_HOST_PORT:-18043}:8042"
+      ORTHANC__SSL_ENABLED: "true"
+      ORTHANC__SSL_CERTIFICATE: /run/mediq/orthanc.pem
+    healthcheck:
+      test: ["CMD", "python3", "/probes/mediq-tls-healthcheck.py", "/run/mediq/test-ca.crt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
     networks:
       - hospital-b
     volumes:
       - orthanc-b-data:/var/lib/orthanc/db
+      - ../data/local-tls/orthanc-b.pem:/run/mediq/orthanc.pem:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+      - ./orthanc/mediq-tls-healthcheck.py:/probes/mediq-tls-healthcheck.py:ro
 
 networks:
   database:

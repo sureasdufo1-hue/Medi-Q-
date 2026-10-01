@@ -3,11 +3,11 @@
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** Technology Stack Decision / Architecture Decision Record  
-**Version:** v1.2 Synthetic Patient Explanation RAG Boundary  
+**Version:** v1.3 MEDIQ-DCM-002 Orthanc Adapter Spike
 **Decision Date:** 2026-09-20  
 **Primary Scope:** CAPSTONE-P0  
 **Decision Status:** ACCEPTED FOR P0 SCAFFOLDING  
-**Implementation Status:** npm workspace + Postgres/Orthanc Compose configuration IMPLEMENTED / CONFIG-TESTED; application code and container runtime NOT IMPLEMENTED / NOT TESTED
+**Implementation Status:** npm workspace/Compose, DB gates and existing PAT/Auth scopes are documented in their records; `MEDIQ-DCM-002` adds an internal test-profile Orthanc adapter with A QIDO/WADO/frame and B read-only QIDO integration PASS, streaming/hash and bounded mock STOW tests. Adapter is not registered in a product route. Live STOW, Mandatory Preflight, product operation Authorization, production HTTPS/TLS, integrity/provenance/audit and A→B transfer remain NOT RUN.
 
 ---
 
@@ -34,7 +34,7 @@ Migration           Drizzle Kit generated SQL + mandatory SQL review
 
 Test PACS           Orthanc 1.13 + DICOMweb plugin
 DICOM Metadata      dcmjs
-DICOMweb             Adapter over standards-based HTTP; dicomweb-client where validated
+DICOMweb             Internal TypeScript adapter over native fetch/Web Streams
 Large Payload       Node Web Streams / native fetch-undici pipeline
 
 JWT Verification    jose 6
@@ -46,7 +46,7 @@ Browser E2E         Playwright 1.63
 Integration/E2E     Docker Compose + real PostgreSQL + Orthanc A/B
 ```
 
-기술을 설치했다는 사실은 구현 또는 검증을 의미하지 않는다. 본 문서는 구현 방향을 고정하지만 모든 현재 상태는 `DOCUMENTED`다.
+기술을 선택했다는 사실은 애플리케이션 구현 또는 전체 P0 검증을 의미하지 않는다. Runtime 상태와 범위별 증거는 §4에 기록한다.
 
 Azure는 현재 기본 P0 Deployment가 아니다. 동일 컨테이너를 Azure Container Apps, 동일 SPA를 Azure Static Web Apps, 동일 PostgreSQL schema를 Azure Database for PostgreSQL에 배포할 수 있도록 호환성을 유지한다.
 
@@ -119,18 +119,19 @@ P0에서는 다음을 도입하지 않는다.
 
 | 항목 | 실제 상태 | 분류 |
 |---|---|---|
-| `package.json` / lockfile | Root + API/Worker/Web npm workspace manifests 및 lockfile; 오프라인 clean install 확인 | WORKSPACE IMPLEMENTED / TESTED; 앱 dependency 없음 |
-| Local infra image references | PostgreSQL `18.6-bookworm` and Orthanc Team `26.9.1`, both manifest-digest pinned in `infra/docker-compose.yml` | CONFIG-DEFINED / container startup not tested |
+| `package.json` / lockfile | Root + API/Worker/Web npm workspaces; health-only API dependencies pinned and image build/tested | WORKSPACE + OPERATIONAL API IMPLEMENTED / TESTED; no product/business API |
+| Synthetic DICOM fixture | Deterministic 3-instance CT Part 10 fixture, manifest, pydicom hash pin; Hospital A-only seed and QIDO 1/1/3; Hospital B empty | ENV-007 TESTED within fixture-provisioning scope; not product A→B |
+| Local infra image references | PostgreSQL `18.6-bookworm` and Orthanc Team `26.9.1`, both manifest-digest pinned; PostgreSQL and Orthanc A/B started | ENV-004/005/006 RUNTIME-TESTED within ticket scopes |
 | Node/TypeScript Runtime | Node.js `v24.18.0` 실행 확인; TypeScript 앱/compiler 설정 없음 | TOOL AVAILABLE; APP NOT IMPLEMENTED |
 | Backend Framework | 없음 | UNKNOWN |
 | Frontend Framework | 없음 | UNKNOWN |
 | ORM/Migration | 없음 | UNKNOWN |
-| Dockerfile/Compose | 없음 | UNKNOWN |
+| Dockerfile/Compose | Compose includes PostgreSQL, Orthanc A/B, and health-only API; no Worker/Web image | INFRA + HEALTH API IMPLEMENTED; internal/no-host-port runtime tested |
 | DICOM/DICOMweb Adapter | 없음 | UNKNOWN |
 | Viewer 구현 | 없음 | UNKNOWN |
 | Authentication 구현 | 없음 | UNKNOWN |
 | Unit/Integration/E2E Test | 없음 | UNKNOWN |
-| API/Worker/Web 디렉터리 | README placeholder만 존재 | DOCUMENTED |
+| API/Worker/Web 디렉터리 | API liveness/readiness scaffold; Worker/Web README placeholders; no business flow | API OPERATIONAL HEALTH TESTED; product API NOT IMPLEMENTED |
 | Product/Security/OpenAPI baseline | 문서 존재 | DOCUMENTED |
 
 현재 재사용할 구현 코드는 없다. 새 기술 도입은 migration이 아니라 greenfield scaffolding이다. 기존 Highpass 코드는 저장소에 없으며 Normative Source로 취급하지 않는다.
@@ -240,6 +241,7 @@ Driver: node-postgres (`pg`)
 ORM/Query Builder: Drizzle ORM 0.45 stable line
 Migration: Drizzle Kit generated SQL committed to Git
 Schema Source: reviewed migration SQL + Drizzle schema
+Execution: dedicated one-shot `mediq_migrator` runner; Drizzle Kit `migrate` is not used
 ```
 
 2026-09-20 기준 PostgreSQL 18은 Community와 Azure Flexible Server에서 지원된다. Docker와 Azure의 major version을 동일하게 유지한다.
@@ -250,10 +252,13 @@ Drizzle `1.0.0-rc`는 pre-release이므로 사용하지 않는다. 안정 버전
 
 - Production-like 환경에서 `drizzle-kit push`를 사용하지 않는다.
 - 모든 schema change는 versioned SQL migration으로 남긴다.
+- `drizzle-kit generate`로 생성한 SQL을 검토·commit하고, DB 적용은 dedicated runner에서 수행한다. Runner는 DB-level `CREATE` 권한을 요구하지 않도록 기존 `public` schema 내부에서만 ledger와 허용된 객체를 변경한다.
+- Runner는 migration journal/file/hash 일치, 현재 DB/role 경계, advisory lock, migration별 transaction을 검사하며 오류 로그에 연결 문자열이나 SQL payload를 남기지 않는다.
+- 로컬 실행은 `docker compose --profile migration run --build --rm migrator`로 명시적으로 수행한다. API/Worker는 migration credential 또는 Drizzle Kit을 받지 않는다.
 - Foreign Key, Unique, Check Constraint와 Index를 DB에 구현한다.
 - Tenant Isolation은 application check가 기본이며 RLS는 defense-in-depth 후속 Gate다.
 - RLS 도입 시 transaction-scoped tenant context와 connection pool reset을 시험한다.
-- Migration은 forward, rollback strategy 및 empty/existing DB test를 가져야 한다.
+- Migration은 forward, rollback strategy 및 empty/existing DB test를 가져야 한다. 현재 원칙은 적용 중 오류를 transaction rollback하고, 이미 commit된 migration은 자동 down-migration하지 않고 새 reviewed forward migration으로 보정하는 것이다. Fresh-volume/기존 product data 시험은 각 schema Ticket에서 시행한다.
 - Audit/Exchange 상태 전이는 하나의 transaction에서 원자적으로 처리한다.
 
 ## 7.3 Comparison
@@ -278,9 +283,9 @@ Drizzle는 PostgreSQL SQL, transaction, raw SQL 및 RLS 정책을 비교적 직�
 |---|---|---|
 | Test DICOM Server/PACS | Orthanc 1.13 + DICOMweb plugin | DOCUMENTED |
 | DICOM File/Metadata Parsing | dcmjs stable pinned version | DOCUMENTED |
-| QIDO/WADO/STOW Client | MediQ `DicomwebAdapter` + standards HTTP | DOCUMENTED |
-| DICOMweb helper | `dicomweb-client` after compatibility test | PROPOSED |
-| Large payload transport | Node Web Streams/native fetch-undici | DOCUMENTED |
+| QIDO/WADO/STOW Client | `OrthancDicomwebAdapter` + standards HTTP | IMPLEMENTED — DCM-002 scoped; live STOW intentionally not exercised |
+| Multipart parser | `@ubercode/multipart-stream@1.1.0` | IMPLEMENTED — one-part stream; source/lockfile reviewed; residual maintainer risk |
+| Large payload transport | Node Web Streams/native fetch-undici | IMPLEMENTED — A WADO instance/frame; bounded mock STOW |
 | Pixel Decode/Render | OHIF/Cornerstone3D | DOCUMENTED |
 | Transcoding | Orthanc/GDCM capability only | DOCUMENTED |
 | DIMSE Network | 미선정 | DEFERRED |
@@ -291,31 +296,33 @@ P0에서는 TypeScript DICOM Gateway를 사용한다. DICOMweb은 HTTP 표준이
 
 `dcmjs`는 metadata/UID/Part 10 validation과 테스트 도구로 제한한다. Pixel Data decode나 의료영상 렌더링은 직접 구현하지 않는다. 압축 Transfer Syntax 지원은 Orthanc/GDCM과 Viewer capability를 검증하여 결정한다.
 
-`dicomweb-client`는 QIDO와 metadata operation에 우선 검토하되, WADO/STOW가 전체 payload를 buffering하거나 cancellation/backpressure를 충분히 지원하지 못하면 large-object path에는 사용하지 않는다. 이 판단은 `MEDIQ-DICOM-001`의 streaming spike로 확정한다.
+`MEDIQ-DCM-002` spike 결과 native `fetch` + WHATWG streams와 `@ubercode/multipart-stream@1.1.0` parser를 사용한다. A의 QIDO·WADO metadata·instance streaming·rendered frame은 Test Orthanc로 확인했다. Parser는 part bytes를 전체 적재하지 않고 64 MiB cap 및 16 KiB header cap을 제공한다. 단일 maintainer/낮은 사용량에 따른 supply-chain/maintenance risk가 남으므로 lockfile을 고정하고 version update 전 재검토한다. STOW request/response는 mocked contract로만 시험했고 실제 B write는 수행하지 않았다. `dicomweb-client`는 byte streaming behavior를 채택하지 않는다. `MEDIQ-DCM-001`은 선행 typed Port다.
 
 ## 8.3 Required Adapter Contract
 
 ```text
+checkCapability()
 queryStudies()
 retrieveStudyMetadata()
-retrieveInstanceStream()
-retrieveFrameStream()
-storeInstanceStream()
-verifyDestinationStudy()
+retrieveInstanceStream()      // one DICOM Instance, WHATWG ReadableStream
+retrieveFrameStream()         // one 1-based Frame, WHATWG ReadableStream
+storeInstanceStream()         // one DICOM Instance, WHATWG ReadableStream
+verifyDestinationStudy()      // actual destination SOP Instance UID set
 ```
 
 Adapter는 다음을 강제한다.
 
 - allowlisted Hospital endpoint
-- TLS certificate validation
+- Local Test profile exact-host HTTP allowlist; production HTTPS/certificate validation is not implemented and remains a release gate
 - server-side credential injection
 - timeout/cancellation
 - content type and multipart boundary validation
-- maximum metadata/body limit
-- transfer syntax capture
-- integrity hash
+- metadata/page/body limits and transfer-syntax selection enforcement
+- no hash is computed by the adapter; fixture hash is measured by integration test, while product Integrity service remains deferred
 - correlation/session context
 - payload-free logging
+
+`DicomGateway` Port는 서버가 결정한 `hospitalId`, `correlationId`, 필수 `AbortSignal`을 받으며 caller-supplied URL 또는 PACS credential을 받지 않는다. Test resolver는 고정 A/B host와 operation role pair를 사용한다. QIDO/metadata 반환값은 allowlisted typed projection만 노출하며 PatientName·AccessionNumber·raw upstream body/header를 반환하지 않는다. DICOM instance/frame은 one-object stream이고 hard limits 및 finite deadlines를 적용한다. DCM-002는 protected operation에 연결되지 않았으며, `SEC-TLS-001`, Mandatory Preflight, integrity/provenance/audit와 complete A→B가 남는다. 상세는 DCM-002 구현 및 시험 기록을 따른다.
 
 ## 8.4 Why Python Is Deferred
 
@@ -517,12 +524,12 @@ OHIF, dcmjs, dicomweb-client, NestJS, Fastify 및 React 계열의 라이선스�
 | Package Manager | npm 11 Workspaces | DOCUMENTED | Node 동봉, 추가 도구 최소화 | pnpm |
 | Database | PostgreSQL 18 | DOCUMENTED | transaction/constraint/RLS/Azure | 없음 |
 | ORM | Drizzle ORM 0.45.x stable | DOCUMENTED | SQL 통제와 타입 안정성 | Prisma, Knex |
-| Migration | Drizzle Kit + reviewed SQL | DOCUMENTED | versioned migration과 raw SQL | Prisma Migrate, Alembic |
+| Migration | Drizzle Kit generated SQL + reviewed one-shot runner | IMPLEMENTED / TESTED (DB-001~008 scoped; DB-008 clean UP/RESET/reapply + approved policy + aggregate catalog; 17 product tables) | versioned SQL, schema-only DDL, isolated apply, repeatable history and disposable reset evidence | Prisma Migrate, Alembic |
 | PACS | Orthanc 1.13 + DICOMweb | DOCUMENTED | 재현 가능한 QIDO/WADO/STOW | dcm4chee |
 | DICOM Processing | dcmjs | DOCUMENTED | TypeScript metadata 처리 | pydicom worker |
 | DICOMweb Client | MediQ Adapter + HTTP streams | DOCUMENTED | auth/binding/streaming 통제 | Python dicomweb-client |
-| DICOMweb Helper | dicomweb-client | PROPOSED | 표준 요청 boilerplate 절감 | direct HTTP only |
-| DICOM Gateway | Nest Imaging module + Worker | DOCUMENTED | authorization 우회 방지 | 독립 Python service |
+| DICOMweb Helper | Node native fetch + `@ubercode/multipart-stream@1.1.0` | IMPLEMENTED — DCM-002 scoped; dependency risk recorded | bounded per-instance stream and cleanup | buffered client library |
+| DICOM Gateway | Internal `OrthancDicomwebAdapter` behind typed Port | IMPLEMENTED — DCM-002 scoped; not route-registered; no live STOW | preserve Authorization integration boundary | 독립 Python service |
 | Viewer | OHIF 3.11 | DOCUMENTED | 완성형 DICOMweb viewer | Cornerstone3D custom |
 | JWT Validation | jose 6.x | DOCUMENTED | JWKS/JWT 표준 검증 | passport-jwt |
 | User Authentication | OIDC Code + PKCE | DOCUMENTED | 표준·provider 분리 | custom login 금지 |
@@ -588,7 +595,7 @@ OHIF, dcmjs, dicomweb-client, NestJS, Fastify 및 React 계열의 라이선스�
 **Alternatives:** Python Worker, DIMSE.  
 **Rationale:** P0 표준은 QIDO/WADO/STOW이며 Orthanc가 decoding/transcoding 경계를 담당할 수 있다.  
 **Risks:** multipart streaming과 transfer syntax 상호운용성.  
-**Mitigation:** `MEDIQ-DICOM-001` spike와 real Orthanc contract test.  
+**Mitigation:** `MEDIQ-DCM-002` spike와 real Orthanc contract test.
 **Validation:** memory ceiling, cancel/retry, multipart, compressed DICOM.  
 **Status:** ACCEPTED WITH VALIDATION GATE
 
@@ -777,9 +784,9 @@ SBOM/license inventory
 
 ```text
 TECHNOLOGY DECISION: ACCEPTED FOR P0 SCAFFOLDING
-CURRENT IMPLEMENTATION: ENV-002 workspace; ENV-003 Compose config; ENV-004 PostgreSQL runtime only (no product service/schema)
-CURRENT TEST EVIDENCE: ENV-002/003/004 scoped; see docs/implementation/README.md
-NEXT TICKET: MEDIQ-ENV-005 Hospital A Test Orthanc
+CURRENT IMPLEMENTATION: ENV-002~010; DB-001~009 database enforcement tested; ORG-001~003 scoped seeds; PAT-001 synthetic runtime repository scope PASS without public API; DB-009 application identity context/business Authorization remains PARTIAL
+CURRENT TEST EVIDENCE: ENV-002~010, MEDIQ-DB-001~009 database scope, MEDIQ-ORG-001~003, PAT-001 runtime integration and DB-002~007 regressions; see docs/implementation/README.md
+NEXT: Define PAT-002 Acceptance/tenant authorization preconditions before Tenant-scoped persistence or routes. WADO/STOW capability, application authorization, product APIs and A→B integration remain pending
 AZURE DEPLOYMENT: POST-MVP RECOMMENDATION
 MOBILE NATIVE STACK: DEFINED FOR CAPSTONE-P1 BY ADR-0018
 MOBILE CAPSULE FORMAT: DEFINED FOR CAPSTONE-P1 BY ADR-0019; CRYPTO/DEVICE VALIDATION PENDING

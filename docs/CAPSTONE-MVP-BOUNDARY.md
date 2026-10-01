@@ -283,6 +283,10 @@ Consent Artifact
 Authorization
 ```
 
+P0 Synthetic Patient Approval은 검증된 signed test OIDC claim `mediq_patient_ref_id`를 server-owned Session/Consent의 PatientReference와 대조하는 Technical Workflow다. Claim·Session·Consent binding이 불일치하거나 assertion이 없으면 fail closed한다. 이 테스트 assertion은 실제 환자 본인확인, 설명·숙려 절차 또는 법적 동의를 의미하지 않으며 Authorization·Grant·영상 권한을 부여하지 않는다.
+
+P0 Synthetic Patient Withdrawal도 같은 검증 claim과 exact server-owned Session/Consent binding을 사용해 `ACTIVE→WITHDRAWN` 및 Audit를 원자적으로 기록한다. 이는 technical Consent 철회만 입증하며 이미 완료된 PACS 반입, 다운로드 파일 또는 오프라인 사본을 원격 회수·삭제한다고 의미하지 않는다.
+
 ---
 
 # 9. Authorization Boundary

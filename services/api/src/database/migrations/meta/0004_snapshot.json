@@ -1,0 +1,1474 @@
+{
+  "id": "7cb25637-1413-4fa8-b3b1-eb3fd2fae27d",
+  "prevId": "83dd7a44-b2f1-43ce-a188-18ed1f1b1fc1",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.actors": {
+      "name": "actors",
+      "schema": "",
+      "columns": {
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_subject": {
+          "name": "external_subject",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "actors_tenant_id_idx": {
+          "name": "actors_tenant_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actors_hospital_id_idx": {
+          "name": "actors_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actors_status_idx": {
+          "name": "actors_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "actors_tenant_id_tenants_tenant_id_fk": {
+          "name": "actors_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "actors",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "actors_hospital_id_hospitals_hospital_id_fk": {
+          "name": "actors_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "actors",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "actors_tenant_subject_unique": {
+          "name": "actors_tenant_subject_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "external_subject"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "actors_actor_type_check": {
+          "name": "actors_actor_type_check",
+          "value": "\"actors\".\"actor_type\" IN ('USER', 'SERVICE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.hospital_endpoints": {
+      "name": "hospital_endpoints",
+      "schema": "",
+      "columns": {
+        "endpoint_id": {
+          "name": "endpoint_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "endpoint_type": {
+          "name": "endpoint_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_url": {
+          "name": "base_url",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "hospital_endpoints_hospital_id_idx": {
+          "name": "hospital_endpoints_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospital_endpoints_endpoint_type_idx": {
+          "name": "hospital_endpoints_endpoint_type_idx",
+          "columns": [
+            {
+              "expression": "endpoint_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hospital_endpoints_hospital_id_hospitals_hospital_id_fk": {
+          "name": "hospital_endpoints_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "hospital_endpoints",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hospital_endpoints_hospital_type_unique": {
+          "name": "hospital_endpoints_hospital_type_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_id",
+            "endpoint_type"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hospital_endpoints_endpoint_type_check": {
+          "name": "hospital_endpoints_endpoint_type_check",
+          "value": "\"hospital_endpoints\".\"endpoint_type\" IN ('QIDO_RS', 'WADO_RS', 'STOW_RS')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.hospitals": {
+      "name": "hospitals",
+      "schema": "",
+      "columns": {
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_code": {
+          "name": "hospital_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "environment_type": {
+          "name": "environment_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "hospitals_tenant_id_idx": {
+          "name": "hospitals_tenant_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospitals_organization_id_idx": {
+          "name": "hospitals_organization_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospitals_status_idx": {
+          "name": "hospitals_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hospitals_tenant_id_tenants_tenant_id_fk": {
+          "name": "hospitals_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hospitals",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hospitals_organization_id_organizations_organization_id_fk": {
+          "name": "hospitals_organization_id_organizations_organization_id_fk",
+          "tableFrom": "hospitals",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "organization_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hospitals_hospital_code_unique": {
+          "name": "hospitals_hospital_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hospitals_environment_type_check": {
+          "name": "hospitals_environment_type_check",
+          "value": "\"hospitals\".\"environment_type\" IN ('TEST', 'DEVELOPMENT')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.organizations": {
+      "name": "organizations",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_code": {
+          "name": "organization_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_type": {
+          "name": "organization_type",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "organizations_status_idx": {
+          "name": "organizations_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "organizations_organization_code_unique": {
+          "name": "organizations_organization_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "organizations_status_check": {
+          "name": "organizations_status_check",
+          "value": "\"organizations\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.tenants": {
+      "name": "tenants",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_code": {
+          "name": "tenant_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "tenants_organization_id_idx": {
+          "name": "tenants_organization_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "tenants_status_idx": {
+          "name": "tenants_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "tenants_organization_id_organizations_organization_id_fk": {
+          "name": "tenants_organization_id_organizations_organization_id_fk",
+          "tableFrom": "tenants",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "organization_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenants_tenant_code_unique": {
+          "name": "tenants_tenant_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "tenants_status_check": {
+          "name": "tenants_status_check",
+          "value": "\"tenants\".\"status\" IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.patient_mappings": {
+      "name": "patient_mappings",
+      "schema": "",
+      "columns": {
+        "mapping_id": {
+          "name": "mapping_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_patient_id": {
+          "name": "local_patient_id",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "validated_at": {
+          "name": "validated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "patient_mappings_patient_ref_id_idx": {
+          "name": "patient_mappings_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "patient_mappings_hospital_id_idx": {
+          "name": "patient_mappings_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "patient_mappings_status_idx": {
+          "name": "patient_mappings_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "patient_mappings_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "patient_mappings_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "patient_mappings",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "patient_mappings_hospital_id_hospitals_hospital_id_fk": {
+          "name": "patient_mappings_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "patient_mappings",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "patient_mappings_hospital_local_patient_unique": {
+          "name": "patient_mappings_hospital_local_patient_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_id",
+            "local_patient_id"
+          ]
+        },
+        "patient_mappings_patient_hospital_unique": {
+          "name": "patient_mappings_patient_hospital_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "patient_ref_id",
+            "hospital_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "patient_mappings_status_check": {
+          "name": "patient_mappings_status_check",
+          "value": "\"patient_mappings\".\"status\" IN ('VALID', 'UNVERIFIED', 'AMBIGUOUS', 'REVOKED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.patient_refs": {
+      "name": "patient_refs",
+      "schema": "",
+      "columns": {
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_code": {
+          "name": "patient_ref_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "patient_refs_status_idx": {
+          "name": "patient_refs_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "patient_refs_patient_ref_code_unique": {
+          "name": "patient_refs_patient_ref_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "patient_ref_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "patient_refs_status_check": {
+          "name": "patient_refs_status_check",
+          "value": "\"patient_refs\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.exchange_sessions": {
+      "name": "exchange_sessions",
+      "schema": "",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_hospital_id": {
+          "name": "destination_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requester_actor_id": {
+          "name": "requester_actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "exchange_sessions_patient_ref_id_idx": {
+          "name": "exchange_sessions_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_source_hospital_id_idx": {
+          "name": "exchange_sessions_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_destination_hospital_id_idx": {
+          "name": "exchange_sessions_destination_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "destination_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_requester_actor_id_idx": {
+          "name": "exchange_sessions_requester_actor_id_idx",
+          "columns": [
+            {
+              "expression": "requester_actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_state_idx": {
+          "name": "exchange_sessions_state_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_created_at_idx": {
+          "name": "exchange_sessions_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_destination_state_idx": {
+          "name": "exchange_sessions_destination_state_idx",
+          "columns": [
+            {
+              "expression": "destination_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "exchange_sessions_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "exchange_sessions_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "exchange_sessions_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_destination_hospital_id_hospitals_hospital_id_fk": {
+          "name": "exchange_sessions_destination_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "destination_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_requester_actor_id_actors_actor_id_fk": {
+          "name": "exchange_sessions_requester_actor_id_actors_actor_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "actors",
+          "columnsFrom": [
+            "requester_actor_id"
+          ],
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "exchange_sessions_state_check": {
+          "name": "exchange_sessions_state_check",
+          "value": "\"exchange_sessions\".\"state\" IN ('REQUESTED', 'CONSENT_PENDING', 'CONSENTED', 'AUTHORIZED', 'READY', 'ACTIVE', 'COMPLETED', 'REJECTED', 'EXPIRED', 'REVOKED', 'FAILED', 'CANCELLED')"
+        },
+        "exchange_sessions_distinct_hospitals_check": {
+          "name": "exchange_sessions_distinct_hospitals_check",
+          "value": "\"exchange_sessions\".\"source_hospital_id\" <> \"exchange_sessions\".\"destination_hospital_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.imaging_packages": {
+      "name": "imaging_packages",
+      "schema": "",
+      "columns": {
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_ref": {
+          "name": "storage_ref",
+          "type": "varchar(1024)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "study_count": {
+          "name": "study_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "retention_expires_at": {
+          "name": "retention_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "imaging_packages_exchange_session_id_idx": {
+          "name": "imaging_packages_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_patient_ref_id_idx": {
+          "name": "imaging_packages_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_source_hospital_id_idx": {
+          "name": "imaging_packages_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_state_idx": {
+          "name": "imaging_packages_state_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_retention_expires_at_idx": {
+          "name": "imaging_packages_retention_expires_at_idx",
+          "columns": [
+            {
+              "expression": "retention_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "imaging_packages_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "imaging_packages_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "imaging_packages_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "imaging_packages_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "imaging_packages_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "imaging_packages_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "imaging_packages_state_check": {
+          "name": "imaging_packages_state_check",
+          "value": "\"imaging_packages\".\"state\" IN ('REGISTERED', 'AVAILABLE', 'IN_EXCHANGE', 'SESSION_COMPLETE', 'RETENTION_PENDING', 'DELETED', 'FAILED')"
+        },
+        "imaging_packages_study_count_check": {
+          "name": "imaging_packages_study_count_check",
+          "value": "\"imaging_packages\".\"study_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.study_references": {
+      "name": "study_references",
+      "schema": "",
+      "columns": {
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_instance_uid": {
+          "name": "study_instance_uid",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "modality": {
+          "name": "modality",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "series_count": {
+          "name": "series_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "instance_count": {
+          "name": "instance_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "study_references_package_id_idx": {
+          "name": "study_references_package_id_idx",
+          "columns": [
+            {
+              "expression": "package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_source_hospital_id_idx": {
+          "name": "study_references_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_study_instance_uid_idx": {
+          "name": "study_references_study_instance_uid_idx",
+          "columns": [
+            {
+              "expression": "study_instance_uid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "study_references_package_id_imaging_packages_package_id_fk": {
+          "name": "study_references_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "study_references",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "study_references_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "study_references_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "study_references",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "study_references_package_uid_unique": {
+          "name": "study_references_package_uid_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "package_id",
+            "study_instance_uid"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "study_references_series_count_check": {
+          "name": "study_references_series_count_check",
+          "value": "\"study_references\".\"series_count\" IS NULL OR \"study_references\".\"series_count\" >= 0"
+        },
+        "study_references_instance_count_check": {
+          "name": "study_references_instance_count_check",
+          "value": "\"study_references\".\"instance_count\" IS NULL OR \"study_references\".\"instance_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

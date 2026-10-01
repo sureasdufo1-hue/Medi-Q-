@@ -1,0 +1,403 @@
+import { describe, expect, it, vi } from "vitest";
+import { OrthancDicomwebAdapter } from "../../services/api/dist/dicom/infrastructure/orthanc-dicomweb.adapter.js";
+import {
+  TEST_HOSPITAL_A_ID,
+  TEST_HOSPITAL_B_ID,
+  TestOrthancEndpointResolver,
+} from "../../services/api/dist/dicom/infrastructure/test-orthanc-endpoint-resolver.js";
+
+const STUDY = "2.25.139413224574575433810421680499794275977";
+const SERIES = "2.25.292708517942326725925199680158042783549";
+const SOP = "2.25.58285762708309761298233122140892576399";
+const SOP_2 = "2.25.174938644979598695786464657171608142542";
+const SOP_CLASS = "1.2.840.10008.5.1.4.1.1.2";
+const TS = "1.2.840.10008.1.2.1";
+
+function context(hospitalId = TEST_HOSPITAL_A_ID, signal = new AbortController().signal) {
+  return { hospitalId, correlationId: "dcm-002-test", signal };
+}
+
+function resolver() {
+  return {
+    resolve: vi.fn((ctx, operation) => {
+      const a = ctx.hospitalId === TEST_HOSPITAL_A_ID;
+      const allowed = a
+        ? ["QIDO_STUDIES", "WADO_STUDY_METADATA", "WADO_INSTANCE", "WADO_FRAME"]
+        : ["QIDO_STUDIES", "STOW_INSTANCE", "VERIFY_STUDY"];
+      if (!allowed.includes(operation)) throw new Error("DICOM_ENDPOINT_DENIED");
+      return {
+        origin: new URL(`https://${a ? "orthanc-a" : "orthanc-b"}:8042/dicom-web/`),
+        authorization: "Basic synthetic-test-credential",
+      };
+    }),
+  };
+}
+
+function testConfig(overrides = {}) {
+  return {
+    runtimeProfile: "container",
+    environment: "test",
+    orthancAUrl: "https://orthanc-a:8042",
+    orthancAUsername: "synthetic-a-user",
+    orthancAPassword: "synthetic-a-password",
+    orthancBUrl: "https://orthanc-b:8042",
+    orthancBUsername: "synthetic-b-user",
+    orthancBPassword: "synthetic-b-password",
+    ...overrides,
+  };
+}
+
+function adapter(fetchImpl, options = {}) {
+  return new OrthancDicomwebAdapter(resolver(), {
+    fetch: fetchImpl,
+    deadlines: {
+      qidoHeadersMs: 200,
+      qidoTotalMs: 500,
+      wadoHeadersMs: 200,
+      wadoIdleMs: 200,
+      wadoTotalMs: 500,
+      stowHeadersMs: 200,
+      stowIdleMs: 200,
+      stowTotalMs: 500,
+    },
+    ...options,
+  });
+}
+
+function dicomJson(data, type = "application/dicom+json") {
+  return new Response(JSON.stringify(data), { status: 200, headers: { "content-type": type } });
+}
+
+function tag(vr, ...values) {
+  return { vr, Value: values };
+}
+
+function wadoMetadataRow(sopInstanceUid, patientId = "TEST-PATIENT-007") {
+  return {
+    "0020000D": tag("UI", STUDY),
+    "0020000E": tag("UI", SERIES),
+    "00080018": tag("UI", sopInstanceUid),
+    "00080016": tag("UI", SOP_CLASS),
+    "00080060": tag("CS", "CT"),
+    "00100020": tag("LO", patientId),
+    "00100010": tag("PN", "SYNTHETIC^DO-NOT-PROJECT"),
+  };
+}
+
+function multipart(parts, { boundary = "test-boundary", close = true, outerType = "application/dicom" } = {}) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  for (const part of parts) {
+    chunks.push(encoder.encode(`--${boundary}\r\nContent-Type: ${part.type ?? "application/dicom"}; transfer-syntax=${TS}\r\n\r\n`));
+    chunks.push(part.bytes ?? new Uint8Array([1, 2, 3, 4]));
+    chunks.push(encoder.encode("\r\n"));
+  }
+  if (close) chunks.push(encoder.encode(`--${boundary}--\r\n`));
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  }), {
+    status: 200,
+    headers: { "content-type": `multipart/related; type="${outerType}"; boundary="${boundary}"` },
+  });
+}
+
+async function streamBytes(stream) {
+  const reader = stream.getReader();
+  const chunks = [];
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+}
+
+describe("OrthancDicomwebAdapter DCM-002 synthetic transport contract", () => {
+  it("limits the endpoint resolver to exact development/test A/B authorities and roles", () => {
+    const endpointResolver = new TestOrthancEndpointResolver(testConfig());
+    expect(endpointResolver.resolve(context(TEST_HOSPITAL_A_ID), "QIDO_STUDIES").origin.href).toBe("https://orthanc-a:8042/dicom-web/");
+    expect(endpointResolver.resolve(context(TEST_HOSPITAL_B_ID), "STOW_INSTANCE").origin.href).toBe("https://orthanc-b:8042/dicom-web/");
+    expect(() => endpointResolver.resolve(context(TEST_HOSPITAL_A_ID), "STOW_INSTANCE")).toThrow("DICOM_ENDPOINT_DENIED");
+    expect(() => new TestOrthancEndpointResolver(testConfig({ environment: "production" }))).toThrow("DICOM_CONFIGURATION_DENIED");
+    const invalidResolver = new TestOrthancEndpointResolver(testConfig({ orthancAUrl: "https://127.0.0.1:8042" }));
+    expect(() => invalidResolver.resolve(context(TEST_HOSPITAL_A_ID), "QIDO_STUDIES")).toThrow("DICOM_CONFIGURATION_INVALID");
+  });
+
+  it("resolves QIDO/WADO only for A and STOW/verification only for B", async () => {
+    const fetchImpl = vi.fn();
+    const instance = adapter(fetchImpl);
+    await expect(instance.retrieveStudyMetadata({ context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, maximumItems: 1 })).rejects.toThrow("DICOM_ENDPOINT_DENIED");
+    await expect(instance.storeInstanceStream({
+      context: context(TEST_HOSPITAL_A_ID), studyInstanceUid: STUDY, seriesInstanceUid: SERIES,
+      sopInstanceUid: SOP, sopClassUid: SOP_CLASS, transferSyntaxUid: TS,
+      body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1])); controller.close(); } }),
+    })).rejects.toThrow("DICOM_STOW_DENIED");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("returns a minimal QIDO projection and refuses redirect/alternate URL behavior", async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(String(url)).toContain("https://orthanc-a:8042/dicom-web/studies?");
+      expect(new Headers(init.headers).get("authorization")).toBe("Basic synthetic-test-credential");
+      expect(new Headers(init.headers).get("accept")).toBe("application/dicom+json");
+      expect(init.redirect).toBe("error");
+      return dicomJson([{
+        "0020000D": tag("UI", STUDY),
+        "00080020": tag("DA", "20200101"),
+        "00080061": tag("CS", "CT"),
+        "00201208": tag("IS", "3"),
+        "00100010": tag("PN", "SYNTHETIC^TEST"),
+        "00080050": tag("SH", "DO-NOT-RETURN"),
+      }]);
+    });
+    const result = await adapter(fetchImpl).queryStudies({
+      context: context(), localPatientId: "TEST-PATIENT-007", limit: 10,
+    });
+    expect(result).toEqual([{
+      studyInstanceUid: STUDY,
+      studyDate: "20200101",
+      modalitiesInStudy: ["CT"],
+      numberOfStudyRelatedInstances: 3,
+    }]);
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC^TEST");
+    expect(JSON.stringify(result)).not.toContain("DO-NOT-RETURN");
+  });
+
+  it("rejects malformed QIDO JSON and results beyond the requested page", async () => {
+    const malformed = adapter(async () => new Response("{}", { headers: { "content-type": "application/dicom+json" } }));
+    await expect(malformed.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+    const excessive = adapter(async () => dicomJson([
+      { "0020000D": tag("UI", STUDY) }, { "0020000D": tag("UI", SOP_2) },
+    ]));
+    await expect(excessive.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+    const oversizedBody = adapter(async () => new Response(`[]${" ".repeat(1024 * 1024)}`, { headers: { "content-type": "application/dicom+json" } }));
+    await expect(oversizedBody.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+  });
+
+  it("rejects wrong QIDO media type and enforces a body deadline", async () => {
+    const wrongType = adapter(async () => dicomJson([], "text/plain"));
+    await expect(wrongType.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow("DICOM_UPSTREAM_MEDIA_TYPE");
+    const unauthorized = adapter(async () => new Response("synthetic denied", { status: 401, headers: { "content-type": "application/dicom+json" } }));
+    await expect(unauthorized.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow("DICOM_UPSTREAM_STATUS");
+    const neverFinishes = adapter(async () => new Response(new ReadableStream({ start() {} }), { headers: { "content-type": "application/dicom+json" } }), {
+      deadlines: { qidoIdleMs: 20, qidoTotalMs: 80 },
+    });
+    await expect(neverFinishes.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 1 })).rejects.toThrow();
+  });
+
+  it("projects one internal PatientID per Study instance and excludes unrelated patient fields", async () => {
+    const fetchImpl = vi.fn(async () => dicomJson([
+      wadoMetadataRow(SOP),
+      wadoMetadataRow(SOP_2),
+    ]));
+    const result = await adapter(fetchImpl).retrieveStudyMetadata({
+      context: context(), studyInstanceUid: STUDY, maximumItems: 2,
+    });
+    expect(result.series).toEqual([{
+      seriesInstanceUid: SERIES,
+      modality: "CT",
+      instances: [
+        { sopInstanceUid: SOP, sopClassUid: SOP_CLASS, patientId: "TEST-PATIENT-007" },
+        { sopInstanceUid: SOP_2, sopClassUid: SOP_CLASS, patientId: "TEST-PATIENT-007" },
+      ].sort((left, right) => left.sopInstanceUid.localeCompare(right.sopInstanceUid)),
+    }]);
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC^DO-NOT-PROJECT");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["multi-valued", tag("LO", "TEST-PATIENT-007", "TEST-PATIENT-008")],
+    ["wrong VR", tag("PN", "TEST-PATIENT-007")],
+  ])("rejects %s PatientID metadata with a sanitized error", async (_name, value) => {
+    const row = wadoMetadataRow(SOP);
+    if (value === undefined) delete row["00100020"];
+    else row["00100020"] = value;
+    const instance = adapter(async () => dicomJson([row]));
+    await expect(instance.retrieveStudyMetadata({
+      context: context(), studyInstanceUid: STUDY, maximumItems: 1,
+    })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+  });
+
+  it("streams one WADO instance byte-for-byte and validates the terminal multipart boundary", async () => {
+    const bytes = new Uint8Array([0, 1, 2, 3, 254, 255]);
+    const instance = adapter(async () => multipart([{ bytes }]));
+    const result = await instance.retrieveInstanceStream({
+      context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP,
+    });
+    expect(result.mediaType).toBe("application/dicom");
+    expect(result.transferSyntaxUid).toBe(TS);
+    expect(await streamBytes(result.body)).toEqual(Buffer.from(bytes));
+  });
+
+  it("fails closed on truncated, multi-part and unexpected-media WADO responses", async () => {
+    const truncated = adapter(async () => multipart([{ bytes: new Uint8Array([1, 2]) }], { close: false }));
+    const truncatedResult = await truncated.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP });
+    await expect(streamBytes(truncatedResult.body)).rejects.toThrow("DICOM_WADO_STREAM_FAILED");
+
+    const multi = adapter(async () => multipart([{ bytes: new Uint8Array([1]) }, { bytes: new Uint8Array([2]) }]));
+    const multiResult = await multi.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP });
+    await expect(streamBytes(multiResult.body)).rejects.toThrow("DICOM_WADO_STREAM_FAILED");
+
+    const wrongType = adapter(async () => multipart([{ bytes: new Uint8Array([1]) }], { outerType: "application/octet-stream" }));
+    await expect(wrongType.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+
+    const noBoundary = adapter(async () => new Response("--missing-boundary", {
+      headers: { "content-type": 'multipart/related; type="application/dicom"' },
+    }));
+    await expect(noBoundary.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP })).rejects.toThrow("DICOM_WADO_FAILED");
+
+    const boundary = "large-headers";
+    const largeHeader = new Response(new TextEncoder().encode(`--${boundary}\r\n${"X-Padding: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n".repeat(170)}Content-Type: application/dicom\r\n\r\n1\r\n--${boundary}--\r\n`), {
+      headers: { "content-type": `multipart/related; type="application/dicom"; boundary=${boundary}` },
+    });
+    const headerLimit = adapter(async () => largeHeader);
+    await expect(headerLimit.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP })).rejects.toThrow("DICOM_WADO_FAILED");
+
+    const abortingController = new AbortController();
+    const pending = adapter(async () => new Response(new ReadableStream({ start() {} }), {
+      headers: { "content-type": "multipart/related; type=\"application/dicom\"; boundary=wait" },
+    }), { deadlines: { wadoIdleMs: 200, wadoTotalMs: 300 } });
+    setTimeout(() => abortingController.abort(), 10);
+    await expect(pending.retrieveInstanceStream({ context: context(TEST_HOSPITAL_A_ID, abortingController.signal), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP })).rejects.toThrow("DICOM_WADO_FAILED");
+  });
+
+  it("enforces the 64 MiB WADO part cap while the body is streamed", async () => {
+    const boundary = "over-cap";
+    const prefix = new TextEncoder().encode(`--${boundary}\r\nContent-Type: application/dicom\r\n\r\n`);
+    const suffix = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+    let chunksLeft = 65;
+    let state = "prefix";
+    const response = new Response(new ReadableStream({
+      pull(controller) {
+        if (state === "prefix") {
+          state = "content";
+          controller.enqueue(prefix);
+          return;
+        }
+        if (chunksLeft > 0) {
+          chunksLeft -= 1;
+          controller.enqueue(new Uint8Array(1024 * 1024));
+          return;
+        }
+        state = "suffix";
+        controller.enqueue(suffix);
+        controller.close();
+      },
+    }), { headers: { "content-type": `multipart/related; type="application/dicom"; boundary=${boundary}` } });
+    const instance = adapter(async () => response);
+    const result = await instance.retrieveInstanceStream({ context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP });
+    await expect(streamBytes(result.body)).rejects.toThrow("DICOM_WADO_STREAM_FAILED");
+  }, 20_000);
+
+  it("retrieves only a bounded rendered JPEG frame", async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(String(url)).toContain(`/frames/1/rendered`);
+      expect(new Headers(init.headers).get("accept")).toBe("image/jpeg");
+      return new Response(new Uint8Array([255, 216, 255, 217]), { headers: { "content-type": "image/jpeg" } });
+    });
+    const result = await adapter(fetchImpl).retrieveFrameStream({
+      context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP, frameNumber: 1,
+    });
+    expect(result.mediaType).toBe("image/jpeg");
+    expect(await streamBytes(result.body)).toEqual(Buffer.from([255, 216, 255, 217]));
+  });
+
+  it("sends one byte-preserving multipart STOW stream to B and parses the per-instance result", async () => {
+    const payload = new Uint8Array([0, 17, 34, 51, 255]);
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(String(url)).toBe(`https://orthanc-b:8042/dicom-web/studies/${STUDY}`);
+      expect(init.method).toBe("POST");
+      expect(init.duplex).toBe("half");
+      expect(new Headers(init.headers).get("authorization")).toBe("Basic synthetic-test-credential");
+      const body = Buffer.from(await streamBytes(init.body));
+      expect(body.includes(Buffer.from(payload))).toBe(true);
+      expect(body.toString("latin1")).toMatch(/Content-Type: application\/dicom; transfer-syntax=1\.2\.840\.10008\.1\.2\.1/);
+      return dicomJson({ "00081199": { vr: "SQ", Value: [{ "00081155": tag("UI", SOP) }] } });
+    });
+    const result = await adapter(fetchImpl).storeInstanceStream({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, seriesInstanceUid: SERIES,
+      sopInstanceUid: SOP, sopClassUid: SOP_CLASS, transferSyntaxUid: TS,
+      body: new ReadableStream({ start(controller) { controller.enqueue(payload); controller.close(); } }),
+      contentLength: payload.byteLength,
+    });
+    expect(result).toEqual({ httpStatus: 200, storedSopInstanceUids: [SOP], warningSopInstanceUids: [], failedInstances: [] });
+  });
+
+  it("reports outcome UNKNOWN after a started STOW loses its response and never retries", async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      await streamBytes(init.body);
+      throw new TypeError("synthetic connection reset");
+    });
+    await expect(adapter(fetchImpl).storeInstanceStream({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, seriesInstanceUid: SERIES,
+      sopInstanceUid: SOP, sopClassUid: SOP_CLASS, transferSyntaxUid: TS,
+      body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.close(); } }),
+      contentLength: 2,
+    })).rejects.toThrow("DICOM_STOW_OUTCOME_UNKNOWN");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("retains a partial STOW result without treating 202 as complete", async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      await streamBytes(init.body);
+      return new Response(JSON.stringify({
+        "00081198": { vr: "SQ", Value: [{
+          "00081155": tag("UI", SOP),
+          "00081197": tag("US", 0x0110),
+        }] },
+      }), { status: 202, headers: { "content-type": "application/dicom+json" } });
+    });
+    const result = await adapter(fetchImpl).storeInstanceStream({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, seriesInstanceUid: SERIES,
+      sopInstanceUid: SOP, sopClassUid: SOP_CLASS, transferSyntaxUid: TS,
+      body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.close(); } }),
+      contentLength: 2,
+    });
+    expect(result).toEqual({
+      httpStatus: 202,
+      storedSopInstanceUids: [],
+      warningSopInstanceUids: [],
+      failedInstances: [{ sopInstanceUid: SOP, code: "PROCESSING_FAILURE" }],
+    });
+  });
+
+  it("requires the B verification operation and projects only destination UIDs", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      const value = String(url).includes("/series/")
+        ? [{ "00080018": tag("UI", SOP) }, { "00080018": tag("UI", SOP_2) }]
+        : [{ "0020000E": tag("UI", SERIES) }];
+      return dicomJson(value);
+    });
+    const result = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedSopInstanceUids: [SOP, SOP_2], maximumItems: 10,
+    });
+    expect(result).toEqual({ studyInstanceUid: STUDY, actualSopInstanceUids: [SOP, SOP_2].sort() });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await expect(adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_A_ID), studyInstanceUid: STUDY,
+      expectedSopInstanceUids: [], maximumItems: 10,
+    })).rejects.toThrow("DICOM_ENDPOINT_DENIED");
+  });
+
+  it("rejects oversized instance declarations and invalid query bounds before network I/O", async () => {
+    const fetchImpl = vi.fn();
+    const instance = adapter(fetchImpl);
+    await expect(instance.queryStudies({ context: context(), localPatientId: "TEST-PATIENT-007", limit: 101 })).rejects.toThrow("DICOM_REQUEST_INVALID");
+    await expect(instance.storeInstanceStream({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, seriesInstanceUid: SERIES,
+      sopInstanceUid: SOP, sopClassUid: SOP_CLASS, transferSyntaxUid: TS,
+      body: new ReadableStream(), contentLength: 64 * 1024 * 1024 + 1,
+    })).rejects.toThrow("DICOM_STOW_DENIED");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(() => adapter(fetchImpl, { concurrency: 3 })).toThrow("DICOM_CONFIGURATION_INVALID");
+  });
+});

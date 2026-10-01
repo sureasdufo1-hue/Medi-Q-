@@ -3,35 +3,41 @@
 **Project:** MediQ  
 **Initial Audit Date:** 2026-09-12
 
-**Latest Repository Check:** 2026-09-28 — 현재 판정은 §0 참조
+**Latest Repository Check:** 2026-10-01 — 현재 판정은 §0 참조
 **Repository:** `C:\Users\user\Documents\ChatGPT\메디큐 프로젝트`  
 **Branch:** `main`  
 **Audit Status:** COMPLETE  
 **Capstone Technical Readiness:** BLOCKED  
 **Production Readiness:** NOT READY / NOT ASSESSED
 
-## 0. 현재 상태 재점검 — 2026-09-28
+## 0. 현재 상태 재점검 — 2026-10-01
+
+**이전 EXC-003 직전 checkpoint (2026-09-30):** 당시 local ledger=12/runtime grants=70. 위 최신 실행 보충과 §0 표가 권위 있는 상태다.
 
 **현재 상태는 이 절을 우선한다.** 아래 §1~34는 2026-09-12 감사와 9월 15일 보충의 이력이다. 그 안의 `commit 없음`, `untracked`, 도구 버전과 다음 Ticket 명칭을 현재 사실로 재사용하지 않는다.
 
-사용자가 지정한 제출 마감은 **2026-10-05**다. 상세 점검·작업별 의존성·일별 일정은 [P0-EXECUTION-SCHEDULE.md](P0-EXECUTION-SCHEDULE.md)에 등록했다.
+**이전 실행 보충 (2026-09-30, EXC-003):** `MEDIQ-EXC-003`은 `EXC-003-DEC-001`에 따른 limited POST/API 및 synthetic DB/RLS/Audit-rollback acceptance를 통과했다. 당시 API 19 files / 345 tests, typecheck, migration checks, full DB-008 reset/reapply와 DB-002~007 regressions가 PASS였다. 당시 local dev DB migration ledger=13, runtime column grants=100, catalog=17/44/15/29였다. EXC-003은 live OIDC + HTTP→DB E2E와 concurrent same-key HTTP 시험이 없어 PARTIAL이었다. 이 문단은 현재 상태가 아닌 당시 checkpoint다.
+
+**최신 실행 보충 (2026-10-01):** `MEDIQ-CON-006`은 권고안·scope/security·Acceptance 선기록 후 pure P0 policy 범위에서 scoped PASS다. API 20 files/373 tests, typecheck 및 diff whitespace check가 통과했다. `MOBILE_EXPORT` mixed Consent evidence 및 invalid action/scope가 deny된다; 이 Ticket은 DB/API/runtime privilege를 변경하지 않았다. CON-005의 DB/API historical evidence는 아래 CON-005 checkpoint 및 Ticket record가 계속 권위 자료다: local ledger=16, runtime grants=126, aggregate catalog=17/44/15/29와 signed synthetic OIDC/JWKS HTTP→PostgreSQL/RLS withdrawal. 이 두 scoped Consent Ticket은 실제 identity/legal consent, Grant issue/concurrency/enforcement, remote recall, Viewer/PACS 또는 full P0 A→MediQ→B를 입증하지 않는다. `CAPSTONE TECHNICAL READINESS`는 BLOCKED 유지한다; 아래 이전 checkpoint는 역사다.
+
+사용자가 지정한 제출 마감은 **2026-10-05**다. ENV-002~010은 각 범위에서 통과했고, `MEDIQ-DB-001` migration framework도 empty product schema에서 검증했다. 상세 점검·작업별 의존성·일별 일정은 [P0-EXECUTION-SCHEDULE.md](P0-EXECUTION-SCHEDULE.md)에 등록했다.
 
 | 재점검 대상 | 현재 관찰 | 현재 판정 |
 |---|---|---|
-| Git 기준점 | HEAD·origin/main·원격 main이 `4308003d19d929df1828dd162a9c886045d605a3`; 점검 시작 시 clean | 기준 커밋·동기화 확인. Branch protection은 미확인 |
+| Git 기준점 | ENV-005 시작 시 HEAD·origin/main·원격 main이 `e954033254596489fda0435551ad263cb7f81782`; ENV-005~010 구현 및 관련 문서 변경이 작업트리에 있으며 아직 커밋되지 않음 | 시작 기준 일치 확인. 현재 구현 결과는 미커밋 |
 | 도구 | Docker Client/Server 29.8.0, Compose v5.5.1, Node v24.18.0, npm 11.16.0 | 실행 확인 |
 | 필수 문서 | 현재 AGENTS.md가 열거한 29/29 존재 | 등록 확인. 일부 Ticket/API/Acceptance 연결은 정리 필요 |
-| 제품 구조 | API/Worker/Web은 README와 private ESM npm workspace manifest, root lockfile 존재; Postgres/Orthanc Compose 선언 추가; Infra/Tests는 README 단계 | `ENV-002` workspace·`ENV-003` config·`ENV-004` PostgreSQL runtime은 scoped PASS. Orthanc 실행·제품 코드·Migration·제품 테스트 미검증/미구현 |
+| 제품 구조 | Source에는 operational health와 제한된 Session/Consent request API가 있음; Worker/Web은 workspace placeholder. Local running API container는 이 Ticket에서 재배포하지 않음. Postgres/Orthanc Compose, synthetic CT fixture/A-only seed, DB-001~009 enforcement, ORG-001~003 fixtures, PAT-001/002 내부 경로 존재 | `ENV-002~010`, DB-001~009 DB scope/GATE-IMP-02, ORG-001~003, PAT-001, PAT-002 scoped PASS; EXC-003 limited Session API와 CON-003 Consent request API는 각각 해당 slice에서 검증됨. DB-009 overall PARTIAL. PatientMapping workflow/API, Consent approval/Grant, GET/BOLA, WADO/STOW 및 A→B 제품 교환 미완료 |
 | 그 외 실행 산출물 | 문서화 스크립트·정적 HTML 목업과 그 기록 존재 | 제품 E2E와 별도 |
-| Runtime 조회 | Compose project label `mediq` 조회 결과 0건 | 해당 label만 확인. 별도 이름의 외부 실행 환경은 미평가 |
-| Acceptance | P0 제품 시험 실행 증거 없음 | 제품 PASS 없음. 과거 0/10은 감사 요약 역량 집계 |
+| Runtime 조회 | Compose project `mediq`: PostgreSQL 및 Orthanc A/B running/healthy | 다른 Docker project 상태는 이 Ticket에서 변경하지 않음 |
+| Acceptance | Scoped API/controller/unit and synthetic DB/RLS tests exist; no full product exchange E2E | EXC-003 and CON-003 scoped evidence only; full P0 A→MediQ→B acceptance remains open |
 | 기술 준비 | 핵심 경로 실행에 필요한 제품 환경·코드 부재 | BLOCKED |
 
 Git 기준점 부재를 뜻하던 과거 BLK-001은 해소되었다. 환경·제품 코드·제품 시험·DICOM 전송 증거 부재는 계속 남아 있다. 새로운 계획 차단점으로 Ticket 의미 충돌과 P0 API/상태·Acceptance 참조 공백을 기록했다. §24의 과거 “충돌 1건”을 현재 문서 전체 충돌 수로 사용하지 않는다.
 
-`MEDIQ-ENV-002` workspace, `MEDIQ-ENV-003` Compose config, `MEDIQ-ENV-004` PostgreSQL runtime은 구현 기록에 범위 한정 PASS로 남겼다. PostgreSQL은 internal-only network에서 healthy이며, 별도 Compose peer의 인증 연결과 restart를 검증했다. internal network와 호스트 publish를 함께 선언해도 실제 호스트 포트가 열리지 않는 불일치를 발견해 DB publish를 제거했다. 다음 실행 작업은 `IMPLEMENTATION-PLAN.md` §9의 **ENV-005 Hospital A Test Orthanc**이며, ENV-006~010에서 B·seed·config·health·smoke를 순차 검증한다. Host에서 실행하는 앱 연결 프로파일은 ENV-008에서 결정한다. Compose/DB runtime PASS는 Migration·제품/Phase 0 완료를 뜻하지 않는다. DB schema는 상세 계획 DB-001~008, 보안은 IAM/AUT/GRT 및 관련 기능 Ticket으로 구분한다. 과거 §29의 묶음 ID는 최신 실행 식별자로 사용하기 전에 매핑한다.
+이전 baseline audit paragraph는 당시의 역사적 snapshot이다. 이 재점검 직전 CON-004 checkpoint의 ledger=15/runtime grants=125는 이력이며, 현재 ledger=16/runtime grants=126 및 `17/44/15/29` aggregate catalog와 CON-005 scope evidence는 상단의 최신 실행 보충 및 Ticket evidence를 따른다. Cross-row 업무 불변조건, 실제 환자 identity/legal consent, future Grant enforcement/concurrency, integrity/provenance enforcement, Viewer/WADO/STOW 및 제품 A→B 교환은 여전히 미완료 또는 미검증이다. Docker network 격리 관찰은 해당 ENV Ticket evidence의 범위를 넘는 보장으로 일반화하지 않는다.
 
-재점검 명령과 실제 결과는 실행 계획표 §9를 따른다. 재점검 당시 제품 Unit/Contract/Integration/Security/E2E와 GitHub 보호 규칙, Secret 전수 검사는 실행하지 않았다. 이후 `MEDIQ-ENV-002`에서 workspace 구조와 오프라인 설치만 검증했다. 기술 준비상태는 여전히 BLOCKED이며, 독립 환경 Ticket을 순차 수행 중이다.
+재점검 명령과 실제 결과는 실행 계획표 §9 및 Ticket evidence를 따른다. baseline 재점검 당시 제품 Unit/Contract/Integration/Security/E2E와 GitHub 보호 규칙, Secret 전수 검사는 실행하지 않았다. 이후 ENV-002 workspace, ENV-004 PostgreSQL, ENV-005/006 Orthanc A/B, ENV-007 synthetic fixture/A seed, ENV-008 config/role, ENV-009 operational API+DB/A/B health, ENV-010 reproducible smoke를 각 Ticket 범위로 검증했다. 기술 준비상태는 여전히 BLOCKED이며, 제품 API/Worker health beyond operational checks, WADO, 제품 전송과 업무 보안 흐름을 진행해야 한다.
 
 ## 1. Purpose
 

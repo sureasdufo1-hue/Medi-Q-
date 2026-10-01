@@ -8,6 +8,31 @@
     "node": ">=24 <25",
     "npm": ">=11 <12"
   },
+  "scripts": {
+    "build:api": "npm run build --workspace=@mediq/api",
+    "typecheck:api": "tsc --project services/api/tsconfig.json --noEmit",
+    "test:api": "npm run build:api && vitest run tests/api",
+    "test:dicom-port-contract": "tsc --project tests/types/tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:migrate": "node scripts/run-database-migrations.mjs",
+    "db:migrations:check": "drizzle-kit check --config=drizzle.config.ts",
+    "test:db-migrations": "node --test tests/database/migration-runner.test.mjs",
+    "build:app-config": "tsc --project services/api/tsconfig.app-config.json",
+    "typecheck:app-config": "tsc --project services/api/tsconfig.app-config.json --noEmit",
+    "test:app-config": "npm run build:app-config && node --test tests/config/app-config.test.mjs"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "12.1.1",
+    "@types/node": "24.19.0",
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.11",
+    "typescript": "6.0.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  },
+  "overrides": {
+    "esbuild": "0.28.2"
+  },
   "workspaces": [
     "services/api",
     "services/worker",

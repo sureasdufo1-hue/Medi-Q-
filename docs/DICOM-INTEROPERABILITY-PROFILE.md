@@ -3,10 +3,10 @@
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** DICOM Interoperability Profile / Implementation Contract  
-**Version:** v1.1  
-**Baseline Date:** 2026-09-26  
+**Version:** v1.6 Local Test Orthanc HTTPS and Patient Identity Gate
+**Baseline Date:** 2026-10-01
 **Scope:** CAPSTONE-P0 / Synthetic·Test DICOM  
-**Status:** APPROVED PROFILE — DOCUMENTED, NOT IMPLEMENTED / NOT TESTED  
+**Status:** APPROVED PROFILE — typed Port/internal Orthanc adapter and local API↔Test Orthanc HTTPS implemented; A QIDO/WADO/frame + read-only B baseline and TLS validation pass with synthetic data; live STOW, product Authorization/Preflight, global Client↔MediQ TLS and full workflow NOT RUN
 **Standards Baseline:** DICOM PS3.4, PS3.5, PS3.6, PS3.18 current online edition reviewed 2026-09-20
 
 ---
@@ -30,7 +30,11 @@ P0 최소 검증 조합은 Classic single-frame CT 또는 MR Image Storage와 Ex
 
 MediQ Gateway는 P0에서 Pixel Data decoder, encoder 또는 transcoder가 아니다. DICOM Part 10 객체를 byte-preserving 방식으로 전달하고 Metadata/UID·크기·무결성만 필요한 범위에서 처리한다. Pixel decode/render는 OHIF/Cornerstone3D 또는 검증된 Source PACS rendered response가 담당한다.
 
-현재 Repository에는 Orthanc container, DICOMweb plugin configuration, Gateway code, Viewer code 및 실행 테스트가 없다. 따라서 본 문서의 모든 P0 기능 상태는 `DOCUMENTED`, 검증 상태는 `NOT RUN`이다.
+2026-09-29 상태: ENV-005/006에서 digest-pinned Orthanc A/B readiness·인증·plugin·격리 subset을 확인했다. ENV-007에서는 결정론적 합성 CT fixture와 manifest를 생성·검증하고, DICOMweb STOW-RS로 A에만 seed했다. A QIDO는 1 Study/1 Series/3 Instance를 반환했고 재실행은 추가 STOW 없이 동일 set을 확인했으며 B는 seed 전후 비어 있었다. 이는 source fixture provisioning smoke이며 WADO payload, STOW to B, MediQ Adapter, Viewer, product authorization 또는 A→B transfer를 검증한 것이 아니다. 전체 Profile과 P0 Acceptance는 여전히 통과되지 않았다.
+
+2026-10-01 amendment: `MEDIQ-DCM-001` defines the internal typed port and its synthetic compile-time conformance test. This does not implement a PACS client, make network calls, prove Orthanc behavior, or satisfy `AT-DICOM-001~004`. The older `MEDIQ-DICOM-001` streaming-spike reference is crosswalked to `MEDIQ-DCM-002`, the current plan's Orthanc adapter/compatibility ticket.
+
+2026-10-01 DCM-002/PACS-001 amendment: `OrthancDicomwebAdapter` implements the internal QIDO/WADO/frame/STOW/destination-query Port with server-owned A/B endpoint resolution, streaming `multipart/related` parsing and bounded streams. Under `PACS-001-DEC-002`, WADO Study metadata also projects exactly one PatientID per instance into an internal-only typed result for the byte-preserving synthetic identity gate; it excludes unrelated patient fields and is not a public response or log value. Synthetic Orthanc A read-only integration confirms every instance PatientID matches the synthetic fixture mapping; no STOW was sent. Authorization/revocation fencing, full Mandatory Preflight, positive TLS, integrity/provenance/audit transaction, coordinator no-STOW proof and end-to-end acceptance remain open. DICOM PS3.18 specifies Explicit VR Little Endian as the default transfer syntax for `application/dicom` when none is specified; this adapter explicitly requests that syntax and rejects a conflicting response parameter. [PS3.18 §8.7.3.4](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.7.3.4.html), [§8.7.9](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.7.9.html).
 
 ---
 
@@ -87,19 +91,20 @@ Library capability                        ≠ MediQ support
 
 | 항목 | Repository Evidence | 상태 | 결론 |
 |---|---|---|---|
-| Docker Compose | 없음 | UNKNOWN | Orthanc A/B 기동 불가 |
-| Orthanc image/version | 문서에서 `1.13` 계열 선택만 존재 | DOCUMENTED | exact tag/digest 미확정 |
-| DICOMweb plugin | 선정 문서만 존재 | DOCUMENTED | plugin version/config 미확정 |
-| Orthanc A/B config | `infra/README.md` 예정 목록만 존재 | DOCUMENTED | 실제 파일 없음 |
-| DICOMweb Adapter | interface 계획만 존재 | DOCUMENTED | 구현 없음 |
-| QIDO/WADO/STOW | 요구사항/OpenAPI만 존재 | DOCUMENTED | 실행 증거 없음 |
-| Multipart parser/proxy | 없음 | UNKNOWN | Spike 필요 |
+| Docker Compose | `infra/docker-compose.yml`; PostgreSQL and Orthanc A/B running | ENV-004/005/006 runtime tested within ticket scopes | Fixture-backed A/B exchange not run |
+| Orthanc image/version | Orthanc Team `26.9.1` digest pin; A/B `/system` report core `1.13.0` | A/B runtime tested | DICOM payload interoperability pending |
+| DICOMweb plugin | A/B `/plugins` report `dicom-web`; authenticated QIDO/WADO responses observed | ENV-007 fixture provisioning and DCM-002 synthetic adapter integration | No destination-B STOW |
+| Orthanc A/B config | Separate internal networks and volumes; healthchecks; no host-published ports | A/B readiness and boundary tested | Application integration pending |
+| DICOM Gateway Port/adapter | Typed Port + `OrthancDicomwebAdapter`; server-owned A/B resolver; not registered as application route | `MEDIQ-DCM-001/002` scoped evidence | No Authorization wiring, Preflight or external product caller |
+| QIDO/WADO/frame | A fixture QIDO, minimal metadata, per-instance WADO hash/size, rendered JPEG | `MEDIQ-DCM-002` read-only Orthanc integration PASS | Synthetic fixture only; not a Viewer or Authorization claim |
+| STOW/destination | STOW mock contract; B read-only baseline has 0 matching fixture instances | `MEDIQ-DCM-002` mocked STOW + B QIDO baseline | No live STOW or A→B transfer; Preflight remains mandatory |
+| Multipart parser/proxy | `@ubercode/multipart-stream@1.1.0`, one-part streaming parser with byte/header/time caps | `MEDIQ-DCM-002` malformed/limit/Orthanc Acceptance | Single-maintainer dependency; source/lockfile reviewed, residual risk recorded |
 | Viewer | OHIF 3.11 선택만 존재 | DOCUMENTED | 설치·연동 없음 |
-| Synthetic DICOM fixture | 없음 | UNKNOWN | SOP/Transfer Syntax 검증 불가 |
-| TLS/mTLS | `.env.example`의 HTTP placeholder만 존재 | DOCUMENTED | TLS runtime control 없음 |
-| Integration test | `tests/README.md`만 존재 | DOCUMENTED | 모든 Test `NOT RUN` |
+| Synthetic DICOM fixture | Ignored `data/synthetic-ct-env007/`; 3 Classic CT instances, Explicit VR LE; A WADO stream matches manifest | ENV-007 + DCM-002 scoped PASS | No B transfer or Viewer integration |
+| TLS/mTLS | `TLS-001-DEC-001`: Orthanc built-in HTTPS for local isolated Synthetic Test; CA/SAN validated, production topology separate | Scoped PASS — `MEDIQ-TLS-001` | Client↔MediQ ingress TLS, production PKI/proxy/cert lifecycle and mTLS remain NOT RUN |
+| Integration test | Dedicated read-only container on internal A/B networks; A QIDO/WADO/frame and B baseline; no STOW | DCM-002 scoped PASS | No product Authorization or destination transfer |
 
-`.env.example`의 `http://localhost:8042`, `http://localhost:8043` 및 `orthanc/orthanc`는 local placeholder다. 이것은 TLS, 인증 또는 운영 보안 구현 증거가 아니며 P0 Acceptance 환경의 최종값으로 사용하지 않는다.
+`TLS-001-DEC-001` selects local Test CA certificates and `https://orthanc-a:8042`, `https://orthanc-b:8042`. Current source Compose/runtime is HTTPS-only, A/B remain on isolated internal networks without host-published ports, and the Test CA is mounted read-only into API/test clients for strict chain and hostname validation. Historical HTTP/basic-auth probes remain historical evidence only and do not count as TLS Acceptance.
 
 ---
 
@@ -237,7 +242,7 @@ P0 응답은 `Accept: application/dicom+json`을 우선한다. XML Multipart는 
 | Key | P0 사용 | 제한 |
 |---|---|---|
 | `StudyInstanceUID` | Required | Exchange에 결합된 UID만 |
-| `PatientID` | Internal only | Hospital-local mapping 후 server-side 주입 |
+| `PatientID` | Internal only | QIDO filter uses server-resolved Hospital mapping; WADO metadata supplies the per-instance identity for exact destination comparison; never projected publicly or rewritten |
 | `StudyDate` | Optional | Exchange 범위 내 보조 필터 |
 | `Modality` / `ModalitiesInStudy` | Optional | allowlisted 값 |
 | `AccessionNumber` | Not exposed | P1 결정 전 UI/API 금지 |
@@ -249,7 +254,7 @@ PatientName, 주민번호 또는 전체 병원 PatientID로 Tenant 간 검색하
 
 ## 8.3 Query Behavior
 
-- `limit`과 `offset`은 Adapter가 상한을 강제한다. 정확한 상한은 `OPEN DECISION`이다.
+- `limit`은 Study page당 최대 100, `offset`은 non-negative safe integer로 adapter 제한한다. Metadata 최대 2,000 instance, Study 최대 64 Series다 (`DCM-002-DEC-001`).
 - Fuzzy Matching은 P0에서 `UNSUPPORTED`다.
 - `includefield`는 Gateway allowlist로 제한한다.
 - Empty Result는 정상 `200` 빈 목록으로 처리하고 PACS 장애와 구분한다.
@@ -328,6 +333,10 @@ Integrity/provenance context created
 ```
 
 하나라도 실패하면 STOW-RS를 호출하지 않는다.
+
+`PACS-001-DEC-001`의 P0 identity binding은 추가 필수 조건이다. 모든 source instance의 PatientID가 하나의 유효한 값으로 확인되고, server-resolved destination mapping의 `localPatientId`와 정확히 일치해야 한다. 값이 없거나, malformed/inconsistent/mismatched이면 STOW 전에 거부한다. P0 payload는 byte-preserving이며 PatientID 또는 다른 DICOM attribute를 수정하지 않는다. 이 합성 exact-match 규칙은 실제 환자 신원 증명을 의미하지 않는다.
+
+STOW 실행 전에는 durable per-study transfer operation/idempotency claim도 저장되어야 한다. POST가 시작된 뒤 결과가 불명확하면 `RESULT_UNKNOWN`으로 보존하고 read-only destination reconciliation 전에는 blind retry하지 않는다.
 
 ## 10.3 Response and Completion
 
@@ -470,21 +479,21 @@ STOW request sent
 
 # 15. Maximum Object & Transfer Size
 
-현재 구현 한도는 `UNKNOWN`이다. 다음은 학생 P0의 메모리·디스크 고갈을 방지하기 위한 초기 Guardrail이다.
+DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정했다. `MEDIQ-INT-001`은 해시 입력의 안전한 경계를 위해 2 GiB manifest-builder cap만 추가로 채택한다. 이 값은 Study 전체의 PACS retrieval/transfer/temporary-storage 한도를 확정하지 않으며, 해당 동작은 별도 transfer-orchestration ticket 전까지 구현 범위가 아니다.
 
 | 항목 | Proposed P0 Limit | 상태 | 초과 시 |
 |---|---:|---|---|
-| Maximum DICOM Instance Size | 64 MiB | OPEN DECISION | retrieval/store 거부 + Audit |
-| Maximum Study Size | 2 GiB | OPEN DECISION | 전송 전 거부 |
-| Maximum Series Count | 64 | OPEN DECISION | bounded error |
-| Maximum Instance Count | 2,000 | OPEN DECISION | bounded error |
+| Maximum DICOM Instance Size | 64 MiB | DCM-002 INITIAL GUARDRAIL | retrieval/store fail closed |
+| Maximum Study Size | 2 GiB | INT-001 manifest builder only; end-to-end transfer DEFERRED | builder는 fail closed; 전체 transfer 제한은 미확정 |
+| Maximum Series Count | 64 | DCM-002 INITIAL GUARDRAIL | bounded error |
+| Maximum Instance Count | 2,000 | DCM-002 INITIAL GUARDRAIL | bounded error |
 | Maximum STOW Multipart Batch | 100 instances 또는 256 MiB 중 먼저 도달 | OPEN DECISION | 다음 batch 분할 |
-| Maximum Concurrent Transfer | 2 | OPEN DECISION | queue/backpressure |
+| Maximum Concurrent DICOM Operations | 2 | DCM-002 INITIAL GUARDRAIL | bounded queue/backpressure |
 | Temporary Storage per Exchange | 2 GiB | OPEN DECISION | fail closed/purge |
 | Temporary Storage per Environment | 10 GiB | OPEN DECISION | admission control |
 | Maximum Transfer Duration | 15 min | OPEN DECISION | cancel/verify/purge |
 
-이 값은 DICOM 표준의 제한이 아니라 MediQ P0 운영 정책 후보다. `MEDIQ-DICOM-001` spike에서 실제 CT fixture, 메모리 high-water mark, throughput, disk spill과 Orthanc response를 측정하여 낮추거나 높인다.
+이 값은 DICOM 표준 제한이 아니라 MediQ P0의 단계별 guardrail이다. DCM-002 tests verified page/metadata, multipart-header and per-instance stream caps. INT-001 tests the 2 GiB aggregate ceiling through a narrowed test cap; it does not process a 2 GiB fixture. Production memory high-water, throughput, study-wide retrieval and disk-spill benchmarks remain NOT RUN; those require a later workload-specific recommendation and test.
 
 ## 15.1 Memory/Storage Rules
 
@@ -502,13 +511,13 @@ STOW request sent
 
 | 항목 | Current | P0 Target |
 |---|---|---|
-| Orthanc Version | 설치 증거 없음 | 1.13 계열 exact patch pin |
-| Docker Image | 없음 | official image exact tag + digest |
-| DICOMweb Plugin | 없음 | image-compatible exact version |
-| DICOMweb Root | 없음 | `/dicom-web/` |
-| Hospital A | 없음 | QIDO/WADO source role |
-| Hospital B | 없음 | STOW destination + QIDO verify role |
-| HTTP Auth | placeholder credential만 존재 | server-side test secret, no browser exposure |
+| Orthanc Version | A/B `/system`: core `1.13.0` | Orthanc Team `26.9.1` image digest pin; fixture compatibility remains |
+| Docker Image | A/B image started and digest inspected | Same pin for both; separate runtime evidence |
+| DICOMweb Plugin | A/B `/plugins`: `dicom-web`; authenticated QIDO returns DICOM JSON | Empty-store capability only; fixture-backed compatibility required |
+| DICOMweb Root | A/B QIDO uses `/dicom-web/studies` | `/dicom-web/` |
+| Hospital A | AET `MEDIQA`; authenticated fixture-backed QIDO returns 1 Study; 1 Series; 3 Instances; no host port | QIDO/WADO source role, app access over `hospital-a` network |
+| Hospital B | AET `MEDIQB`; authenticated empty-store QIDO returns 200; no host port | STOW destination + QIDO verify role |
+| HTTP Auth | A/B valid credentials accepted; missing/invalid rejected (401) | Server-side test secrets, no browser exposure |
 | TLS | 없음 | reverse proxy 또는 Orthanc-supported TLS boundary |
 | mTLS | 없음 | P0 SHOULD / Production recommended |
 | Storage | 없음 | disposable test volume + quota |
@@ -541,13 +550,13 @@ STOW request sent
 
 # 17. Orthanc Capability Matrix
 
-현재 실행 인스턴스가 없으므로 실제 capability는 모두 `UNKNOWN`이다. 괄호는 목표 역할이며 지원 판정이 아니다.
+ENV-005~007에서 확인한 것은 Test Orthanc의 readiness·인증·QIDO와 A fixture provisioning 범위다. 이는 MediQ Adapter capability 또는 제품 지원 판정이 아니다. 괄호는 목표 역할이며 지원 판정이 아니다.
 
 | Capability | Hospital A | Hospital B | MediQ Gateway | Viewer |
 |---|---|---|---|---|
-| QIDO-RS | UNKNOWN (target source) | UNKNOWN (target verify) | UNKNOWN (target proxy/project) | UNKNOWN |
-| WADO-RS | UNKNOWN (target source) | UNKNOWN (not required) | UNKNOWN (target stream) | UNKNOWN |
-| STOW-RS | UNKNOWN (seed optional) | UNKNOWN (target destination) | UNKNOWN (target client) | UNSUPPORTED |
+| QIDO-RS | TESTED: fixture inventory (1/1/3) | TESTED: empty-store QIDO (0 Study) | UNKNOWN (target proxy/project) | UNKNOWN |
+| WADO-RS | NOT TESTED (target source) | UNKNOWN (not required) | UNKNOWN (target stream) | UNKNOWN |
+| STOW-RS | TESTED: local fixture seed only | NOT TESTED (target destination) | UNKNOWN (target client) | UNSUPPORTED |
 | Retrieve Metadata | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
 | Retrieve Frames | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
 | Rendered Frame | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
@@ -623,14 +632,13 @@ Authentication
 - DICOM metadata는 Synthetic이라도 최소 수집·표시하며 production PHI와 같은 경로 보호를 적용한다.
 - 임시 객체와 response는 `Cache-Control: private, no-store` 정책을 적용한다.
 
-## 19.3 Local TLS Gap
+## 19.3 Local TLS Decision and Gap
 
-현재 `.env.example`은 HTTP localhost를 사용하므로 `SEC-TLS-001` Acceptance를 만족하지 않는다. 초기 개발 bootstrap에는 사용할 수 있지만 P0 Security PASS 전에 다음 중 하나를 구현하고 인증서 검증 시험을 통과해야 한다.
+`TLS-001-DEC-001` selects Orthanc built-in HTTPS for the isolated local Synthetic Test profile only. A local Test CA issues distinct leaf certificates for A and B with exact service DNS SANs; API and integration clients trust that CA and still perform normal chain and hostname validation. Test private keys and CA material are generated outside Git under ignored local runtime data. The local configuration must reject HTTP origins and contain no `verify=false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`, or permissive healthcheck.
 
-1. Compose 내부 Reverse Proxy가 MediQ↔Orthanc TLS를 종료하는 Profile
-2. 검증된 Orthanc HTTPS configuration
+**Implementation status (2026-10-01): PASS — local API↔Test Orthanc only.** Eight Ticket Acceptance cases pass, including exact HTTPS origin validation, trusted HTTPS, no HTTP fallback, untrusted/malformed trust rejection, DNS SAN mismatch, validated healthchecks and read-only DICOM hash/size compatibility. Named A/B Orthanc data volumes remained attached during service recreation; no STOW was executed. This does not complete Client↔MediQ ingress TLS or global `SEC-TLS-001/002`.
 
-`verify=false` 또는 신뢰범위를 알 수 없는 CA 설치는 통과 근거가 아니다.
+Production deployment architecture remains separate. Orthanc documentation generally recommends a production-grade reverse proxy and permits its built-in HTTPS for simple/intranet setups; therefore this local choice is not a production architecture decision. Production must separately determine TLS termination, upstream protection, certificate issuance/rotation, secret custody, and mTLS policy. A trusted CA installation with unknown scope or any verification bypass is never acceptance evidence.
 
 ---
 
@@ -658,7 +666,7 @@ Client에는 safe error code와 Correlation ID만 제공한다. Orthanc URL, cre
 
 # 21. Interoperability Test Matrix
 
-모든 테스트는 Synthetic DICOM만 사용하며 현재 상태는 `NOT RUN`이다.
+아래는 DICOM 상호운용성/제품 Acceptance 행렬이다. ENV-007의 A-only fixture provisioning STOW와 QIDO smoke는 이 행렬의 승인된 MediQ authorization·WADO·B destination·Viewer 조건을 대체하지 않으므로 관련 product tests는 `NOT RUN`으로 유지한다. 모든 테스트는 Synthetic DICOM만 사용한다.
 
 | Test ID | SOP Class | Transfer Syntax | Operation | Expected Result | Status |
 |---|---|---|---|---|---|
@@ -747,7 +755,7 @@ Client에는 safe error code와 Correlation ID만 제공한다. Orthanc URL, cre
 | DICOM-DEC-004 | OHIF metadata facade | MediQ-controlled DICOMweb projection 추가 | Viewer |
 | DICOM-DEC-005 | Path A/B Viewer | Path B primary, rendered Path A fallback | Viewer |
 | DICOM-DEC-006 | Timeout values | 제안값으로 fault injection 후 확정 | Reliability |
-| DICOM-DEC-007 | Size/concurrency limits | 제안값으로 memory/disk benchmark 후 확정 | Performance |
+| DICOM-DEC-007 | Size/concurrency limits | 64 MiB/instance, 2,000 instances adapter guardrails; 2 GiB applies to INT manifest builder only; end-to-end transfer/storage limits require workload benchmark | Transfer/Performance |
 | DICOM-DEC-008 | STOW batch/idempotency contract | operation ID + expected Instance manifest | Transfer retry |
 | DICOM-DEC-009 | Local TLS termination | reverse proxy profile 우선 검토 | Security PASS |
 | DICOM-DEC-010 | Compressed Syntax | P1 조합별 decoder/pass-through 시험 | Expanded support |
