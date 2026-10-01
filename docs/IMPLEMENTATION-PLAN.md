@@ -3,13 +3,15 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `IMPLEMENTATION-PLAN.md`
-**Version:** v3.26 MEDIQ-INT-001 Pending Source Evidence Persistence
+**Version:** v3.27 MEDIQ-INT-001 Authorized Source Capture Recommendation
 **Current Target:** Capstone P0 End-to-End MVP
 **Architecture:** Modular Monolith
 **Deployment:** Docker Compose
 **Primary Integration:** DICOMweb — QIDO-RS / WADO-RS / STOW-RS
 **Status:** Approved Baseline
-**Execution revision:** v3.26 — MEDIQ-INT-001 hash + pending evidence persistence sub-gates
+**Execution revision:** v3.27 — MEDIQ-INT-001 authorized source-capture scope/Acceptance gate
+
+**Current next implementation gate — MEDIQ-INT-001 — 2026-10-02:** `INT-001-DEC-003` recommendation and 14 source-capture Acceptance cases are recorded and accepted under `PDEC-001`. The next planned implementation is the internal synthetic-only source-capture service: exact operation/Session/Study/Package resolution, initial and post-WADO fenced `PACS_IMPORT` reauthorization, server-side destination mapping + source PatientID match, bounded A-only WADO hashing, and atomic pending evidence/success Audit with fixed denial/failure Audit. Acceptance includes exact runtime privileges, RLS, no open transaction during WADO and zero STOW/B mutation. **Implementation has not started for this gate.** It does not authorize a route, `STOW_STARTED`, STOW, destination verification or full P0 completion. See [decision](POLICY-DECISION-LOG.md#int-001-dec-003--authorized-synthetic-source-capture-and-atomic-evidence) and [Acceptance](ACCEPTANCE-TESTS.md#tc-int-001-cap-001014--authorized-synthetic-source-capture-sub-gate).
 
 **Current execution checkpoint — MEDIQ-INT-001 — 2026-10-02:** `INT-001-DEC-002` and ten persistence Acceptance cases were recorded before implementation under `PDEC-001`. The operation-bound `SOURCE_CAPTURE/PENDING` persistence foundation now derives Session/Package/Study from the visible `CREATED` operation, supports exact replay and rejects changed evidence without update. The hash suite passed 12/12; repository suite 6/6; full API regression 33 files/571 tests; API typecheck, Drizzle migration check, six migration-runner tests and DICOM Port contract passed. DB-008 clean/reset/reapply passed with 18 product tables, 22 migration rows and catalog `18|50|17|40`; DB-002~007 regressions passed. The test-only 12-column SELECT/INSERT grants were revoked and persistent runtime privileges restored to 209. `MEDIQ-INT-001` remains **PARTIAL**: no authorized PACS source retrieval, product caller, permanent runtime grant, atomic Audit, destination comparison, route, STOW or full A→B E2E. See [INT-001 report](implementation/MEDIQ-INT-001/IMPLEMENTATION-REPORT.md) and [test evidence](implementation/MEDIQ-INT-001/TEST-EVIDENCE.md).
 
