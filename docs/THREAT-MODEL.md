@@ -1639,21 +1639,26 @@ Exchange 완료 후 Temporary Copy가 무기한 남는다.
 Payload Lifecycle
 RETENTION_PENDING
 DELETED state
+PACS-001-DEC-007: AES-256-GCM per-instance staging recommendation
+30-minute P0 TTL / immediate expiry denial / Tenant-RLS purge Audit
+STAGE-001~012 are NOT RUN; no persistent staging path may be enabled
 ```
 
 ### Requirements
 
 ```text
 SEC-DATA-002
+SEC-DATA-003
+SEC-CACHE-001
 ```
 
 ### Residual Risk
 
-MEDIUM
+MEDIUM — P0 design recorded; implementation and lifecycle Acceptance remain NOT RUN.
 
 이유:
 
-P0에서는 구체적인 Production Retention 기간을 고정하지 않기 때문이다.
+The 30-minute retention rule applies only to the synthetic P0 proposal; the production retention period remains unset. No storage adapter, Tenant cleanup worker, durable purge Audit, restart recovery or filesystem/DB failure saga is implemented. A non-empty spool directory after process restart fails closed, but cleanup recovery is a remaining gate. Do not activate persistent imaging storage before `STAGE-001~012` passes.
 
 ---
 

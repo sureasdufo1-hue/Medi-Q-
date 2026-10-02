@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity binding and operation-time authorization fence sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 결과 | `PARTIAL` — identity and internal no-side-effect authorization-fence sub-gates PASS; full coordinator absent |
+| 결과 | `PARTIAL` — identity/fence, source handoffs and six crypto-spool primitive unit cases PASS only in their scoped boundaries; source-storage lifecycle and full coordinator absent |
 
 ## 1. 검증 환경
 
@@ -212,3 +212,31 @@ git diff --check
 **Judgment:** `TC-PACS-001-DIGEST-001~006` PASS only for the internal ephemeral per-instance source-digest handoff. Together with `HANDOFF-001~007`, this does not prove complete Mandatory Preflight, operation dispatch, destination-byte verification, product-level no-STOW/security gates, STOW, the full PACS coordinator, or A→B transfer. No live STOW is authorized.
 
 **Previous judgment — PACS-001-DEC-005:** `TC-PACS-001-HANDOFF-001~007` PASS only for the internal ephemeral source-identity handoff. This does not prove full Mandatory Preflight, operation dispatch, destination verification invocation, product-level no-STOW/security gates, STOW, full PACS coordinator or A→B transfer.
+
+## 10. PACS-001-DEC-007 — Encrypted temporary spool primitive
+
+| Acceptance | Actual evidence and boundary |
+|---|---|
+| `TC-PACS-001-STORE-CORE-001` | One synthetic `AsyncIterable<Uint8Array>` was encrypted to a private temporary test directory. File bytes did not equal/include the known plaintext marker. After package seal, the primitive returned exact bytes, length and SHA-256 only after AES-256-GCM completion. PASS — local primitive unit only. |
+| `TC-PACS-001-STORE-CORE-002` | Cross-Tenant package and wrong StudyReference binding both failed with sanitized `BINDING_MISMATCH`; no Buffer result escaped. PASS — no DB/RLS claim. |
+| `TC-PACS-001-STORE-CORE-003` | A ciphertext bit flip produced `INTEGRITY_FAILED`; the method returned no plaintext. PASS — no downstream port exists. |
+| `TC-PACS-001-STORE-CORE-004` | TTL equality denied read; repeated in-process purge returned the same receipt and removed the test package directory. PASS — no durable metadata or Audit claim. |
+| `TC-PACS-001-STORE-CORE-005` | A narrowed 4-byte unit cap rejected 5 bytes and removed the partial object. Constructor rejects injected ceilings above policy maxima. PASS — no concurrent/global quota claim. |
+| `TC-PACS-001-STORE-CORE-006` | A new store instance over a non-empty prior package directory returned `RECOVERY_REQUIRED` before creating or reading objects. PASS — fail-closed initialization only; cleanup/Audit recovery absent. |
+
+### Commands and results
+
+```powershell
+npm run build:api
+npm run typecheck:api
+npm run test:api -- --reporter=dot
+npm run test:dicom-port-contract
+git diff --check
+```
+
+- API build and strict API typecheck exited `0`.
+- Full API suite: 36 files / 674 tests passed, including the six new store-primitive tests.
+- DICOM Port contract TypeScript check exited `0`; `git diff --check` exited `0` (Git emitted only the configured LF→CRLF working-copy warnings).
+- Test inputs were synthetic byte markers only; tests used isolated OS temporary directories. No Orthanc, PostgreSQL, runtime `.env`, configured API container, mounted imaging volume, real PHI, DICOM payload or PACS endpoint was used by these six tests.
+
+**Scope judgment:** `STORE-CORE-001~006` PASS only for the unregistered local cryptographic primitive. They do not PASS `STAGE-001~012`: the store is not wired into the same WADO stream that produced `DIGEST` evidence; package metadata persistence, tenant-safe global quota, per-Tenant SERVICE cleanup, restart orphan recovery, purge Audit, runtime volume/secret setup and end-to-end cleanup are absent. No DICOM bytes were captured or sent to Hospital B by this new primitive, and no route, worker, `PREFLIGHT_PASSED`, `STOW_STARTED` or STOW path was added. `MEDIQ-PACS-001` remains PARTIAL.

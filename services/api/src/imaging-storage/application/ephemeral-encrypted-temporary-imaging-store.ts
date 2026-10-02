@@ -1,0 +1,633 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  rm,
+} from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { Readable, Transform, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+export const TEMPORARY_IMAGING_LIMITS = Object.freeze({
+  maximumInstanceBytes: 64 * 1024 * 1024,
+  maximumPackageBytes: 2 * 1024 * 1024 * 1024,
+  maximumEnvironmentBytes: 10 * 1024 * 1024 * 1024,
+  maximumInstancesPerPackage: 2_000,
+  packageTtlMilliseconds: 30 * 60 * 1000,
+});
+
+export interface TemporaryImagingPackageBinding {
+  readonly tenantId: string;
+  readonly exchangeSessionId: string;
+  readonly packageId: string;
+  readonly purpose: "PACS_IMPORT";
+}
+
+export interface TemporaryImagingInstanceBinding {
+  readonly studyRefId: string;
+  readonly seriesInstanceUid: string;
+  readonly sopInstanceUid: string;
+}
+
+export interface TemporaryImagingStorageOptions {
+  readonly rootDirectory: string;
+  readonly now?: () => number;
+  /** Test-only narrowing is allowed; production ceilings cannot be raised. */
+  readonly limits?: Partial<typeof TEMPORARY_IMAGING_LIMITS>;
+}
+
+export interface TemporaryImagingPackageHandle {
+  readonly storageRef: string;
+  readonly packageId: string;
+}
+
+export interface TemporaryImagingInstanceReceipt {
+  readonly objectRef: string;
+  readonly studyRefId: string;
+  readonly seriesInstanceUid: string;
+  readonly sopInstanceUid: string;
+  readonly byteLength: number;
+  readonly sha256: `sha256:${string}`;
+}
+
+export interface TemporaryImagingPackageReceipt {
+  readonly storageRef: string;
+  readonly packageId: string;
+  readonly objectCount: number;
+  readonly totalBytes: number;
+  readonly expiresAt: Date;
+}
+
+export interface TemporaryImagingPurgeReceipt {
+  readonly storageRef: string;
+  readonly packageId: string;
+  readonly objectCount: number;
+  readonly byteLength: number;
+  readonly deletedAt: Date;
+}
+
+export type TemporaryImagingStorageErrorCode =
+  | "INVALID_INPUT"
+  | "BINDING_MISMATCH"
+  | "PACKAGE_NOT_FOUND"
+  | "PACKAGE_NOT_SEALED"
+  | "OBJECT_NOT_FOUND"
+  | "EXPIRED"
+  | "LIMIT_EXCEEDED"
+  | "INTEGRITY_FAILED"
+  | "RECOVERY_REQUIRED"
+  | "STORAGE_UNAVAILABLE";
+
+/** Deliberately contains no path, UID, payload, Tenant ID, or crypto detail. */
+export class TemporaryImagingStorageError extends Error {
+  constructor(readonly code: TemporaryImagingStorageErrorCode) {
+    super("TEMPORARY_IMAGING_STORAGE_UNAVAILABLE");
+    this.name = "TemporaryImagingStorageError";
+  }
+}
+
+interface StoredObject {
+  readonly receipt: TemporaryImagingInstanceReceipt;
+  readonly binding: TemporaryImagingInstanceBinding;
+  readonly filePath: string;
+  readonly nonce: Buffer;
+  readonly key: Buffer;
+  authTag: Buffer | null;
+}
+
+interface StoredPackage {
+  readonly handle: TemporaryImagingPackageHandle;
+  readonly binding: TemporaryImagingPackageBinding;
+  readonly directory: string;
+  readonly objects: Map<string, StoredObject>;
+  readonly abortController: AbortController;
+  readonly idleWaiters: Array<() => void>;
+  byteLength: number;
+  activeStages: number;
+  sealed: boolean;
+  purgePending: boolean;
+  expiresAt: number | null;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DICOM_UID_PATTERN = /^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$/;
+const KEY_BYTES = 32;
+const NONCE_BYTES = 12;
+const TAG_BYTES = 16;
+const AAD_VERSION = "MEDIQ-TEMP-IMAGING-V1";
+const MAX_PURGE_TOMBSTONES = 1_024;
+
+function storageError(code: TemporaryImagingStorageErrorCode): never {
+  throw new TemporaryImagingStorageError(code);
+}
+
+function validateUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function validateUid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 64 &&
+    DICOM_UID_PATTERN.test(value)
+  );
+}
+
+function packageBindingEqual(
+  left: TemporaryImagingPackageBinding,
+  right: TemporaryImagingPackageBinding,
+): boolean {
+  return (
+    left.tenantId === right.tenantId &&
+    left.exchangeSessionId === right.exchangeSessionId &&
+    left.packageId === right.packageId &&
+    left.purpose === right.purpose
+  );
+}
+
+function packageBindingFingerprint(binding: TemporaryImagingPackageBinding): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        binding.tenantId,
+        binding.exchangeSessionId,
+        binding.packageId,
+        binding.purpose,
+      ]),
+    )
+    .digest("hex");
+}
+
+function instanceBindingEqual(
+  left: TemporaryImagingInstanceBinding,
+  right: TemporaryImagingInstanceBinding,
+): boolean {
+  return (
+    left.studyRefId === right.studyRefId &&
+    left.seriesInstanceUid === right.seriesInstanceUid &&
+    left.sopInstanceUid === right.sopInstanceUid
+  );
+}
+
+function aadFor(
+  packageBinding: TemporaryImagingPackageBinding,
+  instanceBinding: TemporaryImagingInstanceBinding,
+  storageRef: string,
+  objectRef: string,
+): Buffer {
+  return Buffer.from(
+    JSON.stringify([
+      AAD_VERSION,
+      packageBinding.tenantId,
+      packageBinding.exchangeSessionId,
+      packageBinding.packageId,
+      packageBinding.purpose,
+      instanceBinding.studyRefId,
+      instanceBinding.seriesInstanceUid,
+      instanceBinding.sopInstanceUid,
+      storageRef,
+      objectRef,
+    ]),
+    "utf8",
+  );
+}
+
+function resolveLimits(
+  supplied: TemporaryImagingStorageOptions["limits"],
+): typeof TEMPORARY_IMAGING_LIMITS {
+  const limits = { ...TEMPORARY_IMAGING_LIMITS, ...supplied };
+  if (
+    !Number.isSafeInteger(limits.maximumInstanceBytes) ||
+    limits.maximumInstanceBytes < 1 ||
+    limits.maximumInstanceBytes > TEMPORARY_IMAGING_LIMITS.maximumInstanceBytes ||
+    !Number.isSafeInteger(limits.maximumPackageBytes) ||
+    limits.maximumPackageBytes < limits.maximumInstanceBytes ||
+    limits.maximumPackageBytes > TEMPORARY_IMAGING_LIMITS.maximumPackageBytes ||
+    !Number.isSafeInteger(limits.maximumEnvironmentBytes) ||
+    limits.maximumEnvironmentBytes < limits.maximumPackageBytes ||
+    limits.maximumEnvironmentBytes > TEMPORARY_IMAGING_LIMITS.maximumEnvironmentBytes ||
+    !Number.isSafeInteger(limits.maximumInstancesPerPackage) ||
+    limits.maximumInstancesPerPackage < 1 ||
+    limits.maximumInstancesPerPackage > TEMPORARY_IMAGING_LIMITS.maximumInstancesPerPackage ||
+    !Number.isSafeInteger(limits.packageTtlMilliseconds) ||
+    limits.packageTtlMilliseconds < 1 ||
+    limits.packageTtlMilliseconds > TEMPORARY_IMAGING_LIMITS.packageTtlMilliseconds
+  ) {
+    return storageError("INVALID_INPUT");
+  }
+  return Object.freeze(limits);
+}
+
+/**
+ * Internal single-process P0 encrypted spool primitive. It has no authority:
+ * callers must complete Consent/Authorization/Grant/RLS checks before reads.
+ * DEKs exist only in this process. A restart cannot decrypt existing files.
+ * DB metadata, Tenant-scoped cleanup and purge Audit are deliberately not part
+ * of this primitive and must be integrated before a product path is enabled.
+ */
+export class EphemeralEncryptedTemporaryImagingStore {
+  private readonly rootDirectory: string;
+  private readonly now: () => number;
+  private readonly limits: typeof TEMPORARY_IMAGING_LIMITS;
+  private readonly packages = new Map<string, StoredPackage>();
+  private readonly ready: Promise<void>;
+  private environmentBytes = 0;
+  private readonly purgedPackages = new Map<
+    string,
+    { readonly bindingFingerprint: string; readonly receipt: TemporaryImagingPurgeReceipt }
+  >();
+
+  constructor(options: TemporaryImagingStorageOptions) {
+    if (!options || typeof options.rootDirectory !== "string" || !isAbsolute(options.rootDirectory)) {
+      storageError("INVALID_INPUT");
+    }
+    this.rootDirectory = resolve(options.rootDirectory);
+    this.now = options.now ?? Date.now;
+    this.limits = resolveLimits(options.limits);
+    this.ready = this.initialize();
+  }
+
+  async beginPackage(
+    binding: TemporaryImagingPackageBinding,
+  ): Promise<TemporaryImagingPackageHandle> {
+    await this.ready;
+    this.prunePurgedPackages();
+    if (
+      !binding ||
+      !validateUuid(binding.tenantId) ||
+      !validateUuid(binding.exchangeSessionId) ||
+      !validateUuid(binding.packageId) ||
+      binding.purpose !== "PACS_IMPORT"
+    ) {
+      storageError("INVALID_INPUT");
+    }
+    const storageRef = randomUUID();
+    const handle = Object.freeze({ storageRef, packageId: binding.packageId });
+    const directory = this.packageDirectory(storageRef);
+    try {
+      await mkdir(directory, { mode: 0o700 });
+      const directoryInfo = await lstat(directory);
+      if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory()) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+      await chmod(directory, 0o700);
+    } catch (error) {
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      storageError("STORAGE_UNAVAILABLE");
+    }
+    this.packages.set(storageRef, {
+      handle,
+      binding: Object.freeze({ ...binding }),
+      directory,
+      objects: new Map(),
+      abortController: new AbortController(),
+      idleWaiters: [],
+      byteLength: 0,
+      activeStages: 0,
+      sealed: false,
+      purgePending: false,
+      expiresAt: null,
+    });
+    return handle;
+  }
+
+  async stageInstance(input: {
+    readonly storageRef: string;
+    readonly packageBinding: TemporaryImagingPackageBinding;
+    readonly instanceBinding: TemporaryImagingInstanceBinding;
+    readonly source: AsyncIterable<Uint8Array>;
+  }): Promise<TemporaryImagingInstanceReceipt> {
+    await this.ready;
+    const storedPackage = this.getPackage(input.storageRef);
+    this.assertPackageBinding(storedPackage, input.packageBinding);
+    if (storedPackage.sealed || storedPackage.purgePending) storageError("BINDING_MISMATCH");
+    if (
+      !input.instanceBinding ||
+      !validateUuid(input.instanceBinding.studyRefId) ||
+      !validateUid(input.instanceBinding.seriesInstanceUid) ||
+      !validateUid(input.instanceBinding.sopInstanceUid) ||
+      !input.source || typeof input.source[Symbol.asyncIterator] !== "function"
+    ) {
+      storageError("INVALID_INPUT");
+    }
+    if (storedPackage.objects.size + storedPackage.activeStages >= this.limits.maximumInstancesPerPackage) {
+      storageError("LIMIT_EXCEEDED");
+    }
+    if (
+      [...storedPackage.objects.values()].some(
+        (object) => object.binding.sopInstanceUid === input.instanceBinding.sopInstanceUid,
+      )
+    ) {
+      storageError("BINDING_MISMATCH");
+    }
+
+    const objectRef = randomUUID();
+    const filePath = join(storedPackage.directory, `${objectRef}.enc`);
+    const key = randomBytes(KEY_BYTES);
+    const nonce = randomBytes(NONCE_BYTES);
+    const cipher = createCipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
+    cipher.setAAD(aadFor(input.packageBinding, input.instanceBinding, input.storageRef, objectRef));
+    const digest = createHash("sha256");
+    let byteLength = 0;
+    storedPackage.activeStages += 1;
+    const limiter = new Transform({
+      transform: (chunk: Buffer | Uint8Array, _encoding, callback) => {
+        const bytes = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        const nextLength = byteLength + bytes.byteLength;
+        const nextPackageBytes = storedPackage.byteLength + bytes.byteLength;
+        const nextEnvironmentBytes = this.environmentBytes + bytes.byteLength;
+        if (
+          nextLength > this.limits.maximumInstanceBytes ||
+          nextPackageBytes > this.limits.maximumPackageBytes ||
+          nextEnvironmentBytes > this.limits.maximumEnvironmentBytes
+        ) {
+          callback(new TemporaryImagingStorageError("LIMIT_EXCEEDED"));
+          return;
+        }
+        byteLength = nextLength;
+        storedPackage.byteLength = nextPackageBytes;
+        this.environmentBytes = nextEnvironmentBytes;
+        digest.update(bytes);
+        callback(null, bytes);
+      },
+    });
+
+    try {
+      await pipeline(
+        Readable.from(input.source, { objectMode: false }),
+        limiter,
+        cipher,
+        createWriteStream(filePath, { flags: "wx", mode: 0o600 }),
+        { signal: storedPackage.abortController.signal },
+      );
+      if (byteLength < 1) storageError("INTEGRITY_FAILED");
+      const sha256 = `sha256:${digest.digest("hex")}` as const;
+      const authTag = cipher.getAuthTag();
+      const receipt = Object.freeze({
+        objectRef,
+        studyRefId: input.instanceBinding.studyRefId,
+        seriesInstanceUid: input.instanceBinding.seriesInstanceUid,
+        sopInstanceUid: input.instanceBinding.sopInstanceUid,
+        byteLength,
+        sha256,
+      });
+      storedPackage.objects.set(objectRef, {
+        receipt,
+        binding: Object.freeze({ ...input.instanceBinding }),
+        filePath,
+        nonce,
+        key,
+        authTag,
+      });
+      return receipt;
+    } catch (error) {
+      key.fill(0);
+      nonce.fill(0);
+      try {
+        await rm(filePath, { force: true });
+      } catch {
+        storedPackage.purgePending = true;
+      }
+      storedPackage.byteLength -= byteLength;
+      this.environmentBytes -= byteLength;
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      throw new TemporaryImagingStorageError("STORAGE_UNAVAILABLE");
+    } finally {
+      storedPackage.activeStages -= 1;
+      if (storedPackage.activeStages === 0) {
+        for (const resolveIdle of storedPackage.idleWaiters.splice(0)) resolveIdle();
+      }
+    }
+  }
+
+  async sealPackage(input: {
+    readonly storageRef: string;
+    readonly binding: TemporaryImagingPackageBinding;
+  }): Promise<TemporaryImagingPackageReceipt> {
+    await this.ready;
+    const storedPackage = this.getPackage(input.storageRef);
+    this.assertPackageBinding(storedPackage, input.binding);
+    if (storedPackage.sealed || storedPackage.purgePending || storedPackage.activeStages > 0 || storedPackage.objects.size < 1) {
+      storageError("BINDING_MISMATCH");
+    }
+    const expiresAt = this.now() + this.limits.packageTtlMilliseconds;
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()) storageError("INVALID_INPUT");
+    storedPackage.sealed = true;
+    storedPackage.expiresAt = expiresAt;
+    return Object.freeze({
+      storageRef: input.storageRef,
+      packageId: storedPackage.handle.packageId,
+      objectCount: storedPackage.objects.size,
+      totalBytes: storedPackage.byteLength,
+      expiresAt: new Date(expiresAt),
+    });
+  }
+
+  async readInstance(input: {
+    readonly storageRef: string;
+    readonly objectRef: string;
+    readonly packageBinding: TemporaryImagingPackageBinding;
+    readonly instanceBinding: TemporaryImagingInstanceBinding;
+    readonly expectedByteLength: number;
+    readonly expectedSha256: `sha256:${string}`;
+  }): Promise<Buffer> {
+    await this.ready;
+    const storedPackage = this.getPackage(input.storageRef);
+    this.assertPackageBinding(storedPackage, input.packageBinding);
+    if (!storedPackage.sealed || storedPackage.expiresAt === null) storageError("PACKAGE_NOT_SEALED");
+    if (storedPackage.purgePending) storageError("STORAGE_UNAVAILABLE");
+    if (this.now() >= storedPackage.expiresAt) storageError("EXPIRED");
+    if (!validateUuid(input.objectRef) || !validateUuid(input.instanceBinding.studyRefId)) {
+      storageError("INVALID_INPUT");
+    }
+    const storedObject = storedPackage.objects.get(input.objectRef);
+    if (!storedObject) storageError("OBJECT_NOT_FOUND");
+    if (!instanceBindingEqual(storedObject.binding, input.instanceBinding)) {
+      storageError("BINDING_MISMATCH");
+    }
+    if (
+      !Number.isSafeInteger(input.expectedByteLength) ||
+      input.expectedByteLength !== storedObject.receipt.byteLength ||
+      input.expectedSha256 !== storedObject.receipt.sha256
+    ) {
+      storageError("INTEGRITY_FAILED");
+    }
+    const fileInfo = await lstat(storedObject.filePath).catch(() => null);
+    if (!fileInfo || fileInfo.isSymbolicLink() || !fileInfo.isFile() || fileInfo.size !== storedObject.receipt.byteLength) {
+      storageError("INTEGRITY_FAILED");
+    }
+
+    const key = Buffer.from(storedObject.key);
+    const nonce = Buffer.from(storedObject.nonce);
+    const authTag = storedObject.authTag && Buffer.from(storedObject.authTag);
+    let plaintext: Buffer | null = null;
+    try {
+      if (!authTag) storageError("INTEGRITY_FAILED");
+      const decipher = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
+      decipher.setAAD(aadFor(input.packageBinding, input.instanceBinding, input.storageRef, input.objectRef));
+      decipher.setAuthTag(authTag);
+      plaintext = Buffer.allocUnsafe(storedObject.receipt.byteLength);
+      const plaintextBuffer = plaintext;
+      let decryptedBytes = 0;
+      const collector = new Writable({
+        write: (chunk: Buffer | Uint8Array, _encoding, callback) => {
+          const bytes = Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          const nextBytes = decryptedBytes + bytes.byteLength;
+          if (nextBytes > plaintextBuffer.byteLength) {
+            callback(new TemporaryImagingStorageError("LIMIT_EXCEEDED"));
+            return;
+          }
+          bytes.copy(plaintextBuffer, decryptedBytes);
+          decryptedBytes = nextBytes;
+          callback();
+        },
+      });
+      await pipeline(createReadStream(storedObject.filePath), decipher, collector);
+      if (decryptedBytes !== storedObject.receipt.byteLength) {
+        storageError("INTEGRITY_FAILED");
+      }
+      const digest = createHash("sha256").update(plaintextBuffer).digest("hex");
+      if (
+        plaintextBuffer.byteLength !== storedObject.receipt.byteLength ||
+        `sha256:${digest}` !== storedObject.receipt.sha256
+      ) {
+        storageError("INTEGRITY_FAILED");
+      }
+      if (this.now() >= storedPackage.expiresAt || storedPackage.purgePending) {
+        storageError(storedPackage.purgePending ? "STORAGE_UNAVAILABLE" : "EXPIRED");
+      }
+      return plaintextBuffer;
+    } catch (error) {
+      plaintext?.fill(0);
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      throw new TemporaryImagingStorageError("INTEGRITY_FAILED");
+    } finally {
+      key.fill(0);
+      nonce.fill(0);
+      authTag?.fill(0);
+    }
+  }
+
+  async purgePackage(input: {
+    readonly storageRef: string;
+    readonly binding: TemporaryImagingPackageBinding;
+  }): Promise<TemporaryImagingPurgeReceipt> {
+    await this.ready;
+    this.prunePurgedPackages();
+    if (
+      !input.binding ||
+      !validateUuid(input.binding.tenantId) ||
+      !validateUuid(input.binding.exchangeSessionId) ||
+      !validateUuid(input.binding.packageId) ||
+      input.binding.purpose !== "PACS_IMPORT"
+    ) {
+      storageError("BINDING_MISMATCH");
+    }
+    const storedPackage = this.packages.get(input.storageRef);
+    if (!storedPackage) {
+      const priorPurge = this.purgedPackages.get(input.storageRef);
+      if (!priorPurge) storageError("PACKAGE_NOT_FOUND");
+      if (priorPurge.bindingFingerprint !== packageBindingFingerprint(input.binding)) {
+        storageError("BINDING_MISMATCH");
+      }
+      return priorPurge.receipt;
+    }
+    this.assertPackageBinding(storedPackage, input.binding);
+    storedPackage.purgePending = true;
+    storedPackage.abortController.abort();
+    if (storedPackage.activeStages > 0) {
+      await new Promise<void>((resolveIdle) => storedPackage.idleWaiters.push(resolveIdle));
+    }
+    const deletedAt = new Date(this.now());
+    const receipt = Object.freeze({
+      storageRef: input.storageRef,
+      packageId: storedPackage.handle.packageId,
+      objectCount: storedPackage.objects.size,
+      byteLength: storedPackage.byteLength,
+      deletedAt,
+    });
+    for (const object of storedPackage.objects.values()) {
+      object.key.fill(0);
+      object.nonce.fill(0);
+      object.authTag?.fill(0);
+      object.authTag = null;
+    }
+    try {
+      await rm(storedPackage.directory, { recursive: true, force: true });
+    } catch {
+      storageError("STORAGE_UNAVAILABLE");
+    }
+    this.environmentBytes -= storedPackage.byteLength;
+    this.packages.delete(input.storageRef);
+    this.purgedPackages.set(input.storageRef, {
+      bindingFingerprint: packageBindingFingerprint(storedPackage.binding),
+      receipt,
+    });
+    this.prunePurgedPackages();
+    return receipt;
+  }
+
+  private async initialize(): Promise<void> {
+    try {
+      await mkdir(this.rootDirectory, { recursive: true, mode: 0o700 });
+      const rootInfo = await lstat(this.rootDirectory);
+      if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) storageError("STORAGE_UNAVAILABLE");
+      await chmod(this.rootDirectory, 0o700);
+      const entries = await readdir(this.rootDirectory);
+      if (entries.length > 0) storageError("RECOVERY_REQUIRED");
+    } catch (error) {
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      storageError("STORAGE_UNAVAILABLE");
+    }
+  }
+
+  private packageDirectory(storageRef: string): string {
+    if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
+    return join(this.rootDirectory, storageRef);
+  }
+
+  private prunePurgedPackages(): void {
+    const expiredBefore = this.now() - this.limits.packageTtlMilliseconds;
+    for (const [storageRef, entry] of this.purgedPackages) {
+      if (entry.receipt.deletedAt.getTime() < expiredBefore) {
+        this.purgedPackages.delete(storageRef);
+      }
+    }
+    while (this.purgedPackages.size > MAX_PURGE_TOMBSTONES) {
+      const oldest = this.purgedPackages.keys().next().value;
+      if (!oldest) break;
+      this.purgedPackages.delete(oldest);
+    }
+  }
+
+  private getPackage(storageRef: string): StoredPackage {
+    if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
+    const storedPackage = this.packages.get(storageRef);
+    if (!storedPackage) storageError("PACKAGE_NOT_FOUND");
+    return storedPackage;
+  }
+
+  private assertPackageBinding(
+    storedPackage: StoredPackage,
+    binding: TemporaryImagingPackageBinding,
+  ): void {
+    if (
+      !binding ||
+      !validateUuid(binding.tenantId) ||
+      !validateUuid(binding.exchangeSessionId) ||
+      !validateUuid(binding.packageId) ||
+      binding.purpose !== "PACS_IMPORT" ||
+      !packageBindingEqual(storedPackage.binding, binding)
+    ) {
+      storageError("BINDING_MISMATCH");
+    }
+  }
+}

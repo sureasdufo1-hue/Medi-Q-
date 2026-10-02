@@ -499,9 +499,9 @@ DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정�
 | Maximum STOW Multipart Batch | 100 instances 또는 256 MiB 중 먼저 도달 | OPEN DECISION | 다음 batch 분할 |
 | Maximum Concurrent DICOM Operations | 2 | DCM-002 INITIAL GUARDRAIL | bounded queue/backpressure |
 | Destination Verification Total Time | 5 min | PACS-006 INITIAL GUARDRAIL | abort and remain non-complete |
-| Temporary Storage per Exchange | 2 GiB | OPEN DECISION | fail closed/purge |
-| Temporary Storage per Environment | 10 GiB | OPEN DECISION | admission control |
-| Maximum Transfer Duration | 15 min | OPEN DECISION | cancel/verify/purge |
+| Temporary Storage per Package/Exchange | 2 GiB | PACS-001-DEC-007 P0 recommendation; Acceptance NOT RUN | fail closed/purge |
+| Temporary Storage per Environment | 10 GiB | PACS-001-DEC-007 P0 recommendation; Acceptance NOT RUN | atomic admission control |
+| Maximum Transfer Phase after successful source capture | 15 min | PACS-001-DEC-007 P0 recommendation; Acceptance NOT RUN (separate from existing 30-minute source-capture deadline) | cancel/verify/purge |
 
 이 값은 DICOM 표준 제한이 아니라 MediQ P0의 단계별 guardrail이다. DCM-002 tests verified page/metadata, multipart-header and per-instance stream caps. INT-001 tests the 2 GiB aggregate ceiling through a narrowed test cap; it does not process a 2 GiB fixture. Production memory high-water, throughput, study-wide retrieval and disk-spill benchmarks remain NOT RUN; those require a later workload-specific recommendation and test.
 
@@ -509,7 +509,11 @@ DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정�
 
 - Study 전체를 Buffer/Blob 한 개로 메모리에 적재하지 않는다.
 - Node Web Streams와 backpressure를 사용한다.
-- 임시 파일이 필요하면 Tenant/Session/Study binding, encryption at rest, size quota, TTL과 purge evidence를 적용한다.
+- 임시 저장은 구현 전 `PACS-001-DEC-007`과 `TC-PACS-001-STAGE-001~012`를 따른다. 이 결정은 설계 권고안이며 현재 구현 또는 Acceptance PASS를 뜻하지 않는다.
+- Study/Package 전체를 memory에 적재하지 않는다. 객체마다 새 DEK의 AES-256-GCM으로 암호화하고, synthetic 단일 프로세스 P0에서는 DEK를 process memory에만 둔다. Restart 또는 다른 replica에서는 복호화하지 않고 fail closed/purge 처리한다. Tenant/Session/Package/StudyReference/고정 purpose/object reference/예상 길이·digest에 결속한다.
+- 구현 시 가드레일은 객체 64 MiB, Package/Exchange 2 GiB·2,000 객체, Environment 10 GiB, 전송 최대 15분, 성공한 source capture 후 TTL 30분이다. 어느 한도든 넘으면 fail closed하고 부분 staging을 폐기한다.
+- 완전한 GCM tag 및 예상 SHA-256/길이 검증 전에는 평문을 downstream에 한 byte도 제공하지 않는다. 일시 평문 메모리는 단일 객체(최대 64 MiB)로 제한하고 DICOM 동시 작업은 최대 2개다.
+- 만료 시점부터 읽기를 즉시 거부한다. Terminal transfer 결과·취소·명시적 종료·TTL 만료 시 ciphertext와 unwrap capability를 삭제하며 Tenant별 `SERVICE` Actor/RLS 경계에서 purge Audit 증거를 기록한다. 파일시스템과 DB 사이의 실패는 idempotent retry로 수렴시킨다.
 - PostgreSQL에 DICOM binary를 저장하지 않는다.
 - Transfer 완료·실패·취소·TTL 만료 시 임시 객체를 제거한다.
 

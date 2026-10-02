@@ -1487,10 +1487,14 @@ Temporary Imaging Payload
 Protection:
 
 ```text
-Application-controlled access
-At-rest protection where implemented
-Lifecycle control
+Application-controlled access; no direct client/PACS access
+Per-instance AES-256-GCM; random DEK exists in process memory only
+Tenant/Session/Package/StudyReference/PACS_IMPORT binding
+64 MiB/object; 2 GiB/package; 10 GiB/environment; 30-minute post-capture TTL
+Immediate expiry denial; Tenant-RLS purge Audit and idempotent cleanup
 ```
+
+Normative recommendation: `PACS-001-DEC-007`. The storage adapter, key protection, quota, metadata persistence and purge lifecycle are NOT IMPLEMENTED / NOT RUN. Do not activate a persistent DICOM staging path before `TC-PACS-001-STAGE-001~012` passes. PostgreSQL stores metadata references only, never DICOM payload or raw key material.
 
 ---
 

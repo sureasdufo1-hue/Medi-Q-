@@ -3,10 +3,10 @@
 | 항목 | 값 |
 |---|---|
 | Ticket | `MEDIQ-PACS-001` |
-| 제목 | PACS Import coordinator prerequisites — identity, operation-time authorization fence and ephemeral source-integrity handoff sub-gates |
+| 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool primitive sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 상태 | `PARTIAL` — identity/fence sub-gates and `PACS-001-DEC-005/006` handoffs PASS only within recorded internal scope; full coordinator not implemented |
+| 상태 | `PARTIAL` — identity/fence, `DEC-005/006` handoffs and `DEC-007` crypto-spool unit primitive PASS only within recorded internal scope; source-stream/DB/RLS/Audit integration and full coordinator not implemented |
 
 ## 1. 목표 및 판정 범위
 
@@ -49,6 +49,7 @@
 | DICOM | `DICOM-INTEROPERABILITY-PROFILE.md` §§8.2, 10.2 | internal WADO metadata의 최소 per-instance PatientID 투영 및 검증 | Adapter tests + read-only Orthanc |
 | Acceptance | `TC-PACS-001-PID-001/002`, `FENCE-001~005` | pure exact-match gate, metadata extraction and session-fenced fresh Authorization/denial/no-side-effect boundary | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) |
 | 정책 및 Acceptance | `PACS-001-DEC-005/006`, `TC-PACS-001-HANDOFF-001~007`, `TC-PACS-001-DIGEST-001~006` | ordinary capture allowlist 유지; hash에 사용한 exact inventory와 per-instance byte digest/length만 evidence/Audit commit 이후 in-memory coordinator result로 전달; denial/transaction failure 시 반환 없음; no route/state/STOW | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §§8–9 |
+| 정책 및 Acceptance | `PACS-001-DEC-007`, `TC-PACS-001-STORE-CORE-001~006`, `TC-PACS-001-STAGE-001~012` | per-instance AES-256-GCM ciphertext spool primitive; process-memory-only DEKs, binding/tag/digest/TTL/quota/restart fail-closed unit boundary; source connection, Tenant-RLS metadata, service cleanup and purge Audit remain NOT RUN | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §10 |
 
 ## 4. 구현 결과
 
@@ -66,6 +67,8 @@
 - 최종 fenced Authorization, stable operation scope와 PatientMapping 확인, pending evidence 기록 및 success Audit 기록 뒤 `executeWithResolvedSessionFence`의 Tenant transaction이 정상 반환해야만 handoff가 호출자에게 반환된다. persistence/Audit failure에서는 handoff가 반환되지 않고 evidence/Audit writes가 rollback된다.
 - 실제 격리 HTTPS Orthanc A/DB integration에서 descriptor identity와 관찰된 exact synthetic byte streams를 source manifest와 대조했다. B는 시작·종료 모두 EMPTY, STOW와 destination verification 호출은 0, operation은 `CREATED`, Audit/evidence independent observer 및 scratch cleanup/기존 스택 보존은 PASS.
 - 이는 service 내부 handoff 경계다. public route/controller/worker, Mandatory Preflight, durable dispatch/`STOW_STARTED`, `RESULT_UNKNOWN` handling 또는 STOW를 추가하지 않았다.
+- `PACS-001-DEC-007` adds an unregistered internal encrypted spool primitive: per-instance AES-256-GCM, volatile process-only DEKs, opaque random refs, binding AAD, post-authentication length/digest check, bounded per-instance memory, immediate TTL denial, in-process purge and fail-closed restart detection. It is not wired to WADO/source-capture, database metadata, Tenant RLS, a SERVICE cleanup worker or purge Audit; no operational storage volume/secret or route was enabled.
+- `STORE-CORE-001~006` pass only as local API unit tests. They do not pass any of `STAGE-001~012`, prove a shared 10 GiB quota across processes, or authorize a downstream byte consumer.
 - No DICOM payload was changed; no STOW request was sent.
 
 ## 5. 변경 파일
@@ -95,6 +98,8 @@
 | `docs/IMPLEMENTATION-PLAN.md`, `docs/P0-EXECUTION-SCHEDULE.md`, `docs/implementation/README.md` | Current progress/status synchronization |
 | `docs/implementation/MEDIQ-PACS-001/*` | Ticket report and test evidence |
 
+추가 변경: `services/api/src/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.ts` (미등록 단일 프로세스 암호화 spool primitive), `tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs` (6개 격리 unit case).
+
 ## 6. 영향 분석
 
 ### Architecture
@@ -111,17 +116,19 @@
 
 - The validator’s caller must supply a destination ID already resolved from the persisted, authorized mapping; this pure function cannot prove caller provenance. No coordinator currently invokes it, so no product transfer path is claimed.
 - Only synthetic `TEST-*` IDs were used. Test output, denial result and documentation contain no ID values or DICOM payload.
+- The new storage primitive creates ciphertext files only in its explicitly supplied private test root; it is not registered in Nest/Compose or used for source capture. Its in-process maps are not durable metadata and cannot support multi-process or restart recovery.
 - Byte-preserving transfer policy is retained. The product-level zero-STOW and unchanged-B guarantee is still unproven because no transfer coordinator exists.
 
 ## 7. 실행 및 검증 요약
 
 - 상세 명령·결과: [TEST-EVIDENCE.md](TEST-EVIDENCE.md)
-- Current `npm run test:api -- --reporter=dot`: 35 files / 668 tests PASS; focused `npx vitest run tests/api/source-integrity-manifest.test.mjs tests/api/authorized-source-capture.test.mjs --reporter=dot`: 2 files / 68 tests PASS.
+- Current `npm run test:api -- --reporter=dot`: 36 files / 674 tests PASS, including six new crypto-spool unit tests; prior focused integrity/source-capture suite: 2 files / 68 tests PASS.
 - `npm run typecheck:api` and `npm run test:dicom-port-contract`: PASS.
 - `./scripts/test-int001-source-capture.ps1 -EnvFile .env`: 35/35 isolated synthetic integration tests PASS; independent Audit/evidence observer PASS; exact per-instance digest/length matched the synthetic source fixture; B EMPTY before/after; scratch cleanup and existing `mediq` stack preservation PASS.
 - PACS-001 fence integration: PASS in the isolated PostgreSQL scratch DB, including revoke/fence concurrency and operation-row non-change.
 - The first aggregate run failed at the local migration smoke because four trailing spaces in already-applied migration `0018` had been stripped from the source file. A retained migrator image confirmed the exact historical bytes; those bytes were restored without editing the DB ledger or changing SQL semantics. The direct migration smoke and subsequent complete `scripts/test-db-008-full-schema.ps1 -EnvFile .env` rerun both exited `0`. DB-008 clean/reset/reapply, 18-table/20-migration catalog, DB-002~007 regressions, PACS-007, PACS-001 fence, exact RLS/privilege probes and scratch cleanup passed. See [TEST-EVIDENCE.md](TEST-EVIDENCE.md).
 - Isolated Test Orthanc read-only integration: 5/5 PASS; no STOW or PACS mutation.
+- The new adapter tests do not use Orthanc, PostgreSQL, actual configured service volumes or a downstream PACS port. `STAGE-001~012` remain NOT RUN.
 - Ticket result: **PARTIAL**.
 
 ## 8. 미구현 사항 및 잔여 위험
@@ -129,6 +136,7 @@
 - The full coordinator must prove it gets the mapping from trusted persisted state and calls this validator for every exact source instance before dispatch.
 - `PACS-001-DEC-005` ephemeral handoff is PASS only for its internal scope; no persistent UID inventory is stored, and the ordinary source-capture result remains minimized. The exact inventory is transient application memory and cannot survive a process crash; no JavaScript zeroization guarantee is claimed. This is not the PACS coordinator or a dispatch capability.
 - `PACS-001-DEC-006` per-instance digests are also transient and non-authorizing. Source package bytes are still discarded after hashing; authenticated bounded temporary staging with TTL/purge evidence is required before the exact checked bytes can be forwarded.
+- `PACS-001-DEC-007` crypto-spool primitive is not wired into `AuthorizedSourceCaptureService`. Runtime data is limited to one process; a non-empty directory after restart intentionally fails with `RECOVERY_REQUIRED`, but a Tenant-scoped SERVICE cleanup/recovery path and corresponding Audit transaction are not implemented. The primitive must not be activated until metadata persistence, atomic environment quota, expiry worker, purge saga and Audit pass `STAGE-001~012`.
 - The fence has only been proven for internal paths using the shared helper and same database; full coordinator's atomic authorization + durable `STOW_STARTED` dispatch boundary remains open.
 - Endpoint/TLS preflight integration, Integrity/Provenance/Audit gates, STOW result parsing, destination verification/reconciliation, and product-level zero-STOW/B-unchanged negative tests remain open.
 - Exact equality of synthetic PatientID strings is not real-patient identity proof or cross-hospital identity matching.
@@ -138,15 +146,15 @@
 
 ```text
 Ticket: MEDIQ-PACS-001
-Scope: Internal identity/fence sub-gates plus `PACS-001-DEC-005/006` ephemeral source identity and per-instance integrity handoffs only
-Changed: Added `captureForCoordinator()` with immutable operation/evidence binding, exact hashed server-derived Series/SOP inventory, and same-stream per-instance byte digests/lengths; ordinary `capture()` four-field result and aggregate persisted evidence unchanged; expanded unit and isolated live Test Orthanc/PostgreSQL Acceptance evidence and synchronized documents
+Scope: Internal identity/fence sub-gates, `DEC-005/006` source handoffs, and `DEC-007` unregistered crypto-spool primitive only
+Changed: Added immutable `captureForCoordinator()` identity/digest handoffs plus a separately tested AES-256-GCM encrypted per-instance spool primitive; ordinary `capture()` four-field result and aggregate persisted evidence unchanged; recorded recommendation, Acceptance, tests and lifecycle limitations
 Not changed: Full coordinator, HTTP route/controller/worker, new DB grants/schema/migration, operation transition/`STOW_STARTED`, destination verifier invocation, STOW, PACS write or reconciliation; existing `0018` SQL bytes remain restored to their applied checksum only
 Security impact: UID/hash/length handoff is transient internal sensitive integrity metadata, not authorization; no PatientID/Local Patient ID/payload/credentials, persistent per-instance inventory, route or DICOM write capability; ordinary result and aggregate-only DB evidence remain unchanged; handoff follows final fenced reauthorization and evidence+success-Audit transaction; no zeroization claim
-Tests executed: Focused integrity/source-capture 68/68; API 35 files/668 tests; API typecheck; DICOM Port contract; isolated source-capture/Test Orthanc/PostgreSQL 35/35; independent Audit/evidence observer; exact per-instance source digest/length; B EMPTY before/after, zero STOW/destination calls, operation `CREATED`, scratch cleanup/existing stack unchanged; prior fence/DB-008 evidence remains recorded
-Tests not executed: Full coordinator-level product no-STOW/B-unchanged gate, Mandatory Preflight/dispatch/`STOW_STARTED`, live STOW, unknown-outcome reconciliation, terminal Integrity/Provenance/Audit, production TLS/PKI and P0 E2E
+Tests executed: Focused integrity/source-capture 68/68; current API 36 files/674 tests; API typecheck; DICOM Port contract; isolated source-capture/Test Orthanc/PostgreSQL 35/35 (prior DEC-006 evidence); six local spool primitive unit cases; prior independent Audit/evidence observer and B EMPTY/zero STOW evidence; prior fence/DB-008 evidence remains recorded
+Tests not executed: Any end-to-end `STAGE-001~012` lifecycle case; WADO-to-spool same-stream integration; database metadata/RLS grants; SERVICE cleanup worker/purge Audit; shared-volume quota/race; full coordinator-level product no-STOW/B-unchanged; Mandatory Preflight/dispatch/`STOW_STARTED`; live STOW; unknown-outcome reconciliation; terminal Integrity/Provenance/Audit; production TLS/PKI and P0 E2E
 Evidence: TEST-EVIDENCE.md
 Implementation record: docs/implementation/MEDIQ-PACS-001/
-Remaining risks: Handoff is lost on process failure and cannot resume a transfer; source payload is discarded after hashing, so authenticated bounded temporary staging/purge evidence remains required; no effect-capable coordinator consumes the handoff; full Mandatory Preflight, endpoint/TLS, destination-byte verification and terminal Integrity/Provenance/Audit remain open
+Remaining risks: The primitive is not integrated and existing source payload is still discarded after hashing; persistent ciphertext lifecycle, quota enforcement across restarts/processes, Tenant-RLS purge discovery, SERVICE identity, durable purge Audit and recovery remain open; no effect-capable coordinator consumes the handoff; full Mandatory Preflight, endpoint/TLS, destination-byte verification and terminal Integrity/Provenance/Audit remain open
 Status: PARTIAL
 ```
 
@@ -158,3 +166,4 @@ Status: PARTIAL
 | 2026-10-01 | `PARTIAL` | `PACS-001-DEC-003` 권고안/5개 Fence Acceptance 후 shared Session fence와 operation-time internal Authorization 재검증 구현; PostgreSQL revoke serialization/denial/no-operation-state PASS. 후속으로 migration `0018` 원본 체크섬 drift를 exact byte 복원으로 해결하고 DB-008 aggregate/local migration smoke 전부 PASS; full coordinator는 미완 |
 | 2026-10-02 | `PARTIAL` | `PACS-001-DEC-005`의 ephemeral source identity handoff 권고안과 `HANDOFF-001~007` Acceptance 기록; 코드/시험은 아직 미실행 |
 | 2026-10-02 | `PARTIAL` | `PACS-001-DEC-005` handoff internal sub-gate PASS; `HANDOFF-001~007` scoped Acceptance, API and isolated Test Orthanc/PostgreSQL evidence recorded. Full coordinator remains unimplemented |
+| 2026-10-02 | `PARTIAL` | `PACS-001-DEC-007` recommendation and 12 lifecycle Acceptance cases recorded; six unregistered encrypted-spool primitive unit cases pass; source integration, DB/RLS, shared quota, cleanup worker and purge Audit remain NOT RUN |
