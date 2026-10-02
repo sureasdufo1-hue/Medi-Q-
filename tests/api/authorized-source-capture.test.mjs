@@ -65,23 +65,24 @@ function operationScope(overrides = {}) {
 }
 
 function authorizationRow(options = {}) {
+  const value = (key, fallback) => Object.hasOwn(options, key) ? options[key] : fallback;
   return {
     session_id: ids.session,
     patient_ref_id: ids.patient,
     source_hospital_id: TEST_HOSPITAL_A_ID,
     destination_hospital_id: TEST_HOSPITAL_B_ID,
-    session_state: "ACTIVE",
-    session_expires_at: null,
+    session_state: value("sessionState", "ACTIVE"),
+    session_expires_at: value("sessionExpiresAt", null),
     consent_id: ids.consent,
     consent_session_id: ids.session,
     consent_patient_ref_id: ids.patient,
     consent_source_hospital_id: TEST_HOSPITAL_A_ID,
     consent_destination_hospital_id: TEST_HOSPITAL_B_ID,
     consent_package_id: null,
-    consent_status: options.consentStatus ?? "ACTIVE",
+    consent_status: value("consentStatus", "ACTIVE"),
     consent_issued_at: new Date("2026-10-01T00:00:00.000Z"),
-    consent_expires_at: null,
-    consent_withdrawn_at: null,
+    consent_expires_at: value("consentExpiresAt", null),
+    consent_withdrawn_at: value("consentWithdrawnAt", null),
     allowed_actions: ["PACS_IMPORT"],
     grant_id: ids.grant,
     grant_session_id: ids.session,
@@ -90,10 +91,10 @@ function authorizationRow(options = {}) {
     recipient_hospital_id: TEST_HOSPITAL_B_ID,
     recipient_actor_id: ids.actor,
     grant_package_id: ids.package,
-    grant_status: "ACTIVE",
+    grant_status: value("grantStatus", "ACTIVE"),
     grant_issued_at: new Date("2026-10-01T00:00:00.000Z"),
-    grant_expires_at: new Date("2099-01-01T00:00:00.000Z"),
-    grant_revoked_at: null,
+    grant_expires_at: value("grantExpiresAt", new Date("2099-01-01T00:00:00.000Z")),
+    grant_revoked_at: value("grantRevokedAt", null),
     grant_scopes: ["study:pacs-transfer"],
     study_ref_id: ids.studyRef,
     package_id: ids.package,
@@ -155,7 +156,28 @@ function makeHarness(options = {}) {
         : new Date("2026-10-01T00:00:00.000Z"),
       ...(options.mappingOverrides ?? {}),
     });
-  let currentConsentStatus = options.consentStatus ?? "ACTIVE";
+  let authorizationNow = new Date(now);
+  let currentAuthorization = {
+    consentStatus: options.consentStatus ?? "ACTIVE",
+    ...(options.authorizationInitial ?? {}),
+  };
+  const applyAfterWadoMutation = () => {
+    if (options.revokeAfterStreams) {
+      currentAuthorization = { ...currentAuthorization, consentStatus: "WITHDRAWN" };
+    }
+    if (options.authorizationAfterStreams) {
+      currentAuthorization = { ...currentAuthorization, ...options.authorizationAfterStreams };
+    }
+    if (options.authorizationNowAfterStreams) {
+      authorizationNow = new Date(options.authorizationNowAfterStreams);
+    }
+    if (options.changeMappingAfterStreams) {
+      currentMapping = mappingRow({ local_patient_id: "TEST-PATIENT-CHANGED" });
+    }
+    if (options.changeOperationAfterStreams) {
+      currentScope = operationScope({ operation_state: "FAILED" });
+    }
+  };
   const committedAudits = [];
   const committedEvidence = [];
   const rollbackReasons = [];
@@ -178,7 +200,7 @@ function makeHarness(options = {}) {
             authorizationCalls += 1;
             return {
               rowCount: 1,
-              rows: [authorizationRow({ consentStatus: currentConsentStatus })],
+              rows: [authorizationRow(currentAuthorization)],
             };
           }
           if (sql.includes("FROM patient_mappings")) {
@@ -236,7 +258,7 @@ function makeHarness(options = {}) {
   const engine = new AuthorizationEngine(
     new ResolvedObjectAuthorizationPolicy(
       new PostgresAuthorizationEvidenceReader(),
-      () => now,
+      () => authorizationNow,
     ),
   );
   const executor = new AuthorizationGatedOperationExecutor(actorTenantContext, engine);
@@ -247,7 +269,9 @@ function makeHarness(options = {}) {
       dicomCalls.hospitalIds.push(request.context.hospitalId);
       expect(request.studyInstanceUid).toBe("2.25.100");
       expect(request.context.signal).toBeInstanceOf(AbortSignal);
-      if (options.revokeAfterMetadata) currentConsentStatus = "WITHDRAWN";
+      if (options.revokeAfterMetadata) {
+        currentAuthorization = { ...currentAuthorization, consentStatus: "WITHDRAWN" };
+      }
       if (options.metadataFailure) throw new Error("private upstream response");
       const metadata = studyMetadata({ patientId: options.metadataPatientId });
       switch (options.metadataShape) {
@@ -288,24 +312,16 @@ function makeHarness(options = {}) {
       const item = instanceFixture.find((entry) => entry.sopInstanceUid === request.sopInstanceUid);
       if (!item) throw new Error("SYNTHETIC_INSTANCE_NOT_FOUND");
       options.onInstanceStreamOpen?.(item, request);
-      if (options.revokeAfterStreams && dicomCalls.instances === instanceFixture.length) {
-        currentConsentStatus = "WITHDRAWN";
-      }
-      if (options.changeMappingAfterStreams && dicomCalls.instances === instanceFixture.length) {
-        currentMapping = mappingRow({ local_patient_id: "TEST-PATIENT-CHANGED" });
-      }
-      if (options.changeOperationAfterStreams && dicomCalls.instances === instanceFixture.length) {
-        currentScope = operationScope({ operation_state: "FAILED" });
-      }
       if (options.instanceStreamFactory) {
         return options.instanceStreamFactory(item, request);
       }
       const body = new ReadableStream({
-        start(controller) {
+        pull(controller) {
           controller.enqueue(item.bytes);
           controller.close();
+          if (dicomCalls.instances === instanceFixture.length) applyAfterWadoMutation();
         },
-      });
+      }, { highWaterMark: 0 });
       return {
         body,
         mediaType: "application/dicom",
@@ -336,7 +352,7 @@ function makeHarness(options = {}) {
     get activeTransactions() { return activeTransactions; },
     get authorizationCalls() { return authorizationCalls; },
     get operationState() { return currentScope.operation_state; },
-    set consentStatus(value) { currentConsentStatus = value; },
+    set consentStatus(value) { currentAuthorization = { ...currentAuthorization, consentStatus: value }; },
   };
 }
 
@@ -677,28 +693,96 @@ describe("AuthorizedSourceCaptureService", () => {
     ]);
   });
 
-  it("TC-INT-001-CAP-009 reauthorizes after WADO and does not persist evidence after Consent withdrawal", async () => {
-    const harness = makeHarness({ revokeAfterStreams: true });
+  it.each([
+    {
+      name: "Consent withdrawal",
+      harnessOptions: { revokeAfterStreams: true },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "Consent expiry",
+      harnessOptions: {
+        authorizationInitial: { consentExpiresAt: new Date(now.getTime() + 30_000) },
+        authorizationNowAfterStreams: new Date(now.getTime() + 60_000),
+      },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "Grant revocation",
+      harnessOptions: {
+        authorizationAfterStreams: {
+          grantStatus: "REVOKED",
+          grantRevokedAt: new Date(now.getTime() + 10_000),
+        },
+      },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "Grant expiry",
+      harnessOptions: {
+        authorizationInitial: { grantExpiresAt: new Date(now.getTime() + 30_000) },
+        authorizationNowAfterStreams: new Date(now.getTime() + 60_000),
+      },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "Session expiry",
+      harnessOptions: {
+        authorizationInitial: { sessionExpiresAt: new Date(now.getTime() + 30_000) },
+        authorizationNowAfterStreams: new Date(now.getTime() + 60_000),
+      },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "Session state change",
+      harnessOptions: { authorizationAfterStreams: { sessionState: "CANCELLED" } },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "CREATED",
+    },
+    {
+      name: "operation state change",
+      harnessOptions: { changeOperationAfterStreams: true },
+      expectedReason: "AUTHORIZATION_DENIED",
+      expectedOperationState: "FAILED",
+      expectedAuthorizationCalls: 1,
+    },
+    {
+      name: "destination mapping change",
+      harnessOptions: { changeMappingAfterStreams: true },
+      expectedReason: "PATIENT_MAPPING_INVALID",
+      expectedOperationState: "CREATED",
+    },
+  ])("TC-INT-001-CAP-009 denies after WADO when $name changes", async ({
+    harnessOptions,
+    expectedReason,
+    expectedOperationState,
+    expectedAuthorizationCalls = 2,
+  }) => {
+    const harness = makeHarness(harnessOptions);
     const result = await harness.service.capture(command());
 
-    expect(result).toEqual({ kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
-    expect(harness.authorizationCalls).toBe(2);
+    expect(result).toEqual({ kind: "DENIED", reason: expectedReason });
+    expect(harness.authorizationCalls).toBe(expectedAuthorizationCalls);
     expect(harness.dicomCalls.instances).toBe(3);
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
     expect(harness.committedEvidence).toHaveLength(0);
-    expect(auditActions(harness)).toContainEqual({
+    expect(harness.operationState).toBe(expectedOperationState);
+    const actions = auditActions(harness);
+    expect(actions).toContainEqual({
       action: "PACS_SOURCE_CAPTURE_DENIED",
       result: "DENY",
-      reason: "AUTHORIZATION_DENIED",
+      reason: expectedReason,
     });
-  });
-
-  it("TC-INT-001-CAP-009 rejects destination mapping change after WADO", async () => {
-    const harness = makeHarness({ changeMappingAfterStreams: true });
-    const result = await harness.service.capture(command());
-
-    expect(result).toEqual({ kind: "DENIED", reason: "PATIENT_MAPPING_INVALID" });
-    expect(harness.committedEvidence).toHaveLength(0);
-    expect(harness.dicomCalls.instances).toBe(3);
+    expect(actions).not.toContainEqual({
+      action: "PACS_SOURCE_CAPTURED",
+      result: "SUCCESS",
+      reason: null,
+    });
   });
 
   it("TC-INT-001-CAP-012 rolls back evidence if the final success Audit fails", async () => {

@@ -22,6 +22,7 @@ import {
 import { RuntimeDatabaseService } from "../../services/api/dist/database/runtime-database.service.js";
 import { ActorRegistryRepository } from "../../services/api/dist/identity/persistence/actor-registry.repository.js";
 import { ActorTenantContextService } from "../../services/api/dist/identity/application/actor-tenant-context.service.js";
+import { GrantRevocationService } from "../../services/api/dist/grant/application/grant-revocation.service.js";
 import { PacsTransferOperation } from "../../services/api/dist/pacs/domain/pacs-transfer-operation.js";
 import { PostgresPacsTransferOperationRepository } from "../../services/api/dist/pacs/persistence/postgres-pacs-transfer-operation.repository.js";
 import {
@@ -73,16 +74,20 @@ const fixture = Object.freeze({
   patientRefId: "15000000-0000-4000-8000-000000000001",
   mappingId: "15000000-0000-4000-8000-000000000002",
   sessionId: "16000000-0000-4000-8000-000000000001",
+  sessionInFlightRevocationId: "16000000-0000-4000-8000-000000000021",
   packageId: "17000000-0000-4000-8000-000000000001",
   studyRefId: "18000000-0000-4000-8000-000000000001",
   studyMissingCountId: "18000000-0000-4000-8000-000000000013",
   consentId: "19000000-0000-4000-8000-000000000001",
+  consentInFlightRevocationId: "19000000-0000-4000-8000-000000000031",
   grantId: "1a000000-0000-4000-8000-000000000001",
+  grantInFlightRevocationId: "1a000000-0000-4000-8000-000000000031",
   operationId: "1b000000-0000-4000-8000-000000000001",
   operationBindingMismatchId: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatchId: "1b000000-0000-4000-8000-000000000012",
   operationNotCreatedId: "1b000000-0000-4000-8000-000000000013",
   operationMissingCountId: "1b000000-0000-4000-8000-000000000014",
+  operationInFlightRevocationId: "1b000000-0000-4000-8000-000000000015",
   correlationDenied: "1d000000-0000-4000-8000-000000000001",
   correlationFailure: "1d000000-0000-4000-8000-000000000002",
   correlationSuccess: "1d000000-0000-4000-8000-000000000003",
@@ -109,6 +114,8 @@ const fixture = Object.freeze({
   correlationMetadataOverLimit: "1d000000-0000-4000-8000-000000000024",
   correlationMetadataUnavailable: "1d000000-0000-4000-8000-000000000025",
   correlationPatientIdMismatch: "1d000000-0000-4000-8000-000000000026",
+  correlationInFlightRevocation: "1d000000-0000-4000-8000-000000000027",
+  correlationGrantRevocation: "1d000000-0000-4000-8000-000000000028",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -210,6 +217,7 @@ function createHarness({
   databaseUrl,
   metadataFault,
   observeInstanceStreams = false,
+  revokeGrantAfterInstanceBytes = false,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = databaseUrl
@@ -325,6 +333,9 @@ function createHarness({
       }
     },
   });
+  const grantRevocationService = new GrantRevocationService(actorContext);
+  let grantRevocationCompleted = false;
+  let grantRevocationStatus = null;
 
   const adapter = new OrthancDicomwebAdapter(
     new TestOrthancEndpointResolver(config),
@@ -450,6 +461,21 @@ function createHarness({
               }));
               instanceStreamCompletionOrder.push(request.sopInstanceUid);
               settle();
+              if (
+                revokeGrantAfterInstanceBytes &&
+                instanceStreamCompletionOrder.length === manifest.instanceCount
+              ) {
+                const revocation = await grantRevocationService.revoke({
+                  principal,
+                  tenantCandidate: fixture.tenantId,
+                  sessionId: fixture.sessionInFlightRevocationId,
+                  grantId: fixture.grantInFlightRevocationId,
+                  correlationId: fixture.correlationGrantRevocation,
+                  hasUnexpectedInput: false,
+                });
+                grantRevocationCompleted = true;
+                grantRevocationStatus = revocation.grant.status;
+              }
               controller.close();
               return;
             }
@@ -511,6 +537,8 @@ function createHarness({
       forbiddenEndpointAttempts,
       stowCalls,
       destinationVerificationCalls,
+      grantRevocationCompleted,
+      grantRevocationStatus,
       metadataCalls,
       instanceCalls,
       tenantContextFailures: [...tenantContextFailures],
@@ -544,14 +572,18 @@ async function readOperationState(harness, operationId = fixture.operationId) {
   });
 }
 
-function captureCommand(correlationId, operationId = fixture.operationId) {
+function captureCommand(
+  correlationId,
+  operationId = fixture.operationId,
+  authorization = {},
+) {
   return Object.freeze({
     principal,
     tenantCandidate: fixture.tenantId,
     correlationId,
     operationId,
-    consentId: fixture.consentId,
-    grantId: fixture.grantId,
+    consentId: authorization.consentId ?? fixture.consentId,
+    grantId: authorization.grantId ?? fixture.grantId,
   });
 }
 
@@ -1042,7 +1074,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
     }
   });
 
-  await t.test("valid source capture records one pending baseline while operation remains CREATED", async () => {
+  await t.test("TC-INT-001-CAP-010/014 commits one operation-bound pending baseline and success Audit", async () => {
     const harness = createHarness({ observeInstanceStreams: true });
     try {
       const result = await harness.service.capture({
@@ -1058,6 +1090,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(result.status, "PENDING");
       assert.equal(result.objectCount, manifest.instanceCount);
       assert.deepEqual(Object.keys(result).sort(), ["evidenceId", "kind", "objectCount", "status"]);
+      assert.match(result.evidenceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
       assert.equal(JSON.stringify(result).includes(manifest.studyInstanceUID), false);
       assert.equal(JSON.stringify(result).includes(manifest.patient.patientId), false);
       const expectedInstances = [...manifest.instances].sort((left, right) =>
@@ -1070,6 +1103,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       const expectedUids = expectedInstances.map((instance) => instance.sopInstanceUID);
       const expectedDigest = expectedSourceManifestDigest(manifest);
       const captureCounters = harness.counters();
+      assert.equal(captureCounters.tenantContextRuns, 2, "CAP010_INITIAL_AND_FINAL_FENCED_TRANSACTIONS");
       assert.equal(harness.counters().initialAuthorizationCommitted, true);
       assert.equal(harness.counters().activeTenantTransactions, 0);
       assert.deepEqual(harness.counters().sourceRequests, [
@@ -1135,6 +1169,42 @@ test("authorized source capture uses only A WADO after database-backed authoriza
         sourceDigest: expectedDigest,
         objectCount: manifest.instanceCount,
       }]);
+    } finally {
+      await harness.database.onModuleDestroy();
+    }
+  });
+
+  await t.test("TC-INT-001-CAP-009 final fenced reauthorization denies after live Grant revocation during WADO", async () => {
+    const harness = createHarness({
+      observeInstanceStreams: true,
+      revokeGrantAfterInstanceBytes: true,
+    });
+    try {
+      const result = await harness.service.capture(captureCommand(
+        fixture.correlationInFlightRevocation,
+        fixture.operationInFlightRevocationId,
+        {
+          consentId: fixture.consentInFlightRevocationId,
+          grantId: fixture.grantInFlightRevocationId,
+        },
+      ));
+      assert.deepEqual(result, { kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+
+      const counters = harness.counters();
+      assert.equal(counters.grantRevocationCompleted, true, "CAP009_REAL_GRANT_REVOCATION_COMMITTED");
+      assert.equal(counters.grantRevocationStatus, "REVOKED", "CAP009_GRANT_STATUS_REVOKED");
+      assert.equal(counters.initialAuthorizationCommitted, true);
+      assert.equal(counters.activeTenantTransactions, 0);
+      assert.equal(counters.activeInstanceStreams, 0, "CAP009_ALL_RECEIVED_STREAMS_CLOSED");
+      assert.equal(counters.instanceCalls, manifest.instanceCount);
+      assert.equal(counters.instanceStreamCompletionOrder.length, manifest.instanceCount);
+      assert.equal(counters.maximumActiveInstanceStreams, 1);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
+      assert.equal(counters.stowCalls, 0);
+      assert.equal(counters.destinationVerificationCalls, 0);
+      const state = await readOperationState(harness, fixture.operationInFlightRevocationId);
+      assert.equal(state.operationState, "CREATED");
+      assert.deepEqual(state.evidence, []);
     } finally {
       await harness.database.onModuleDestroy();
     }

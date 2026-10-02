@@ -32,10 +32,13 @@ const ids = Object.freeze({
   metadataOverLimit: "1d000000-0000-4000-8000-000000000024",
   metadataUnavailable: "1d000000-0000-4000-8000-000000000025",
   patientIdMismatch: "1d000000-0000-4000-8000-000000000026",
+  inFlightRevocation: "1d000000-0000-4000-8000-000000000027",
+  grantRevocation: "1d000000-0000-4000-8000-000000000028",
   operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
   operationMissingCount: "1b000000-0000-4000-8000-000000000014",
+  operationInFlightRevocation: "1b000000-0000-4000-8000-000000000015",
 });
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 try {
@@ -71,6 +74,8 @@ try {
       ids.metadataOverLimit,
       ids.metadataUnavailable,
       ids.patientIdMismatch,
+      ids.inFlightRevocation,
+      ids.grantRevocation,
     ]],
   );
   const actualAudit = new Map(
@@ -116,6 +121,9 @@ try {
     [`${ids.metadataUnavailable}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
     [`${ids.patientIdMismatch}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.patientIdMismatch}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_PATIENT_ID_MISMATCH`, 1],
+    [`${ids.inFlightRevocation}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.inFlightRevocation}|PACS_SOURCE_CAPTURE_DENIED|DENY|AUTHORIZATION_DENIED`, 1],
+    [`${ids.grantRevocation}|GRANT_REVOKED|SUCCESS|<NULL>`, 1],
   ]);
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 
@@ -149,17 +157,18 @@ try {
       WHERE op.operation_id = ANY($1::uuid[])
       GROUP BY op.operation_id, op.state
       ORDER BY op.operation_id`,
-    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated, ids.operationMissingCount]],
+    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated, ids.operationMissingCount, ids.operationInFlightRevocation]],
   );
   assert.deepEqual(operationMatrix.rows, [
     { operation_id: ids.operationBindingMismatch, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationSourceMismatch, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationNotCreated, operation_state: "FAILED", evidence_count: 0 },
     { operation_id: ids.operationMissingCount, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.operationInFlightRevocation, operation_state: "CREATED", evidence_count: 0 },
   ]);
-  console.log("int001_capture_audit=PASS denied=12 unresolved=4 failed=7 started=11 success=1");
+  console.log("int001_capture_audit=PASS denied=13 unresolved=4 failed=7 started=12 capture_success=1 grant_revoked=1");
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
-  console.log("int001_capture_persistence=PASS pending=1 operation_state=CREATED");
+  console.log("int001_cap010_success_capture=PASS evidence=pending_one success_audit=one operation_state=CREATED response_allowlist=true");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code

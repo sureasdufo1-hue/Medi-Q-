@@ -17,6 +17,7 @@ const ids = Object.freeze({
   session: "16000000-0000-4000-8000-000000000001",
   sessionOther: "16000000-0000-4000-8000-000000000011",
   sessionSourceMismatch: "16000000-0000-4000-8000-000000000012",
+  sessionInFlightRevocation: "16000000-0000-4000-8000-000000000021",
   imagingPackage: "17000000-0000-4000-8000-000000000001",
   imagingPackageOther: "17000000-0000-4000-8000-000000000011",
   imagingPackageSourceMismatch: "17000000-0000-4000-8000-000000000012",
@@ -24,13 +25,19 @@ const ids = Object.freeze({
   studyOther: "18000000-0000-4000-8000-000000000011",
   studySourceMismatch: "18000000-0000-4000-8000-000000000012",
   studyMissingCount: "18000000-0000-4000-8000-000000000013",
+  studyInFlightRevocation: "18000000-0000-4000-8000-000000000021",
   consent: "19000000-0000-4000-8000-000000000001",
+  consentInFlightRevocation: "19000000-0000-4000-8000-000000000031",
   grant: "1a000000-0000-4000-8000-000000000001",
+  grantInFlightRevocation: "1a000000-0000-4000-8000-000000000031",
+  grantInFlightRevocationScope: "1a000000-0000-4000-8000-000000000032",
+  packageInFlightRevocation: "17000000-0000-4000-8000-000000000021",
   operation: "1b000000-0000-4000-8000-000000000001",
   operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
   operationMissingCount: "1b000000-0000-4000-8000-000000000014",
+  operationInFlightRevocation: "1b000000-0000-4000-8000-000000000015",
 });
 
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
@@ -108,6 +115,15 @@ try {
       "16000000-0000-4000-8000-000000000014"],
   );
   await client.query(
+    `INSERT INTO exchange_sessions
+      (session_id, patient_ref_id, source_hospital_id, destination_hospital_id,
+       requester_actor_id, purpose, state, created_at, updated_at, expires_at, completed_at, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, 'Synthetic CAP-009 in-flight Grant revocation', 'ACTIVE',
+             now(), now(), now() + interval '1 hour', NULL, $6)`,
+    [ids.sessionInFlightRevocation, ids.patient, ids.hospitalA, ids.hospitalB, ids.actorB,
+      "16000000-0000-4000-8000-000000000022"],
+  );
+  await client.query(
     `INSERT INTO imaging_packages
       (package_id, exchange_session_id, patient_ref_id, source_hospital_id,
        state, storage_ref, study_count, created_at, updated_at, retention_expires_at, deleted_at)
@@ -125,6 +141,13 @@ try {
       ids.imagingPackageSourceMismatch, ids.sessionSourceMismatch, ids.hospitalB],
   );
   await client.query(
+    `INSERT INTO imaging_packages
+      (package_id, exchange_session_id, patient_ref_id, source_hospital_id,
+       state, storage_ref, study_count, created_at, updated_at, retention_expires_at, deleted_at)
+     VALUES ($1, $2, $3, $4, 'AVAILABLE', NULL, 1, now(), now(), NULL, NULL)`,
+    [ids.packageInFlightRevocation, ids.sessionInFlightRevocation, ids.patient, ids.hospitalA],
+  );
+  await client.query(
     `INSERT INTO study_references
       (study_ref_id, package_id, source_hospital_id, study_instance_uid, modality, series_count, instance_count, created_at)
      VALUES ($1, $2, $3, $4, 'CT', 1, 3, now())`,
@@ -138,6 +161,12 @@ try {
        ($4, $5, $6, '2.25.139413224574575433810421680499794275979', 'CT', 1, 3, now())`,
     [ids.studyOther, ids.imagingPackageOther, ids.hospitalA,
       ids.studySourceMismatch, ids.imagingPackageSourceMismatch, ids.hospitalB],
+  );
+  await client.query(
+    `INSERT INTO study_references
+      (study_ref_id, package_id, source_hospital_id, study_instance_uid, modality, series_count, instance_count, created_at)
+     VALUES ($1, $2, $3, '2.25.139413224574575433810421680499794275977', 'CT', 1, 3, now())`,
+    [ids.studyInFlightRevocation, ids.packageInFlightRevocation, ids.hospitalA],
   );
   await client.query(
     `INSERT INTO study_references
@@ -174,6 +203,20 @@ try {
     `INSERT INTO consent_actions (consent_action_id, consent_id, action)
      VALUES ('19000000-0000-4000-8000-000000000021', '19000000-0000-4000-8000-000000000011', 'PACS_IMPORT'),
             ('19000000-0000-4000-8000-000000000022', '19000000-0000-4000-8000-000000000012', 'PACS_IMPORT')`,
+  );
+  await client.query(
+    `INSERT INTO consents
+      (consent_id, exchange_session_id, patient_ref_id, source_hospital_id,
+       destination_hospital_id, imaging_package_id, status, consent_version,
+       issued_at, expires_at, withdrawn_at, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', 1, now(), now() + interval '1 hour', NULL, now(), now())`,
+    [ids.consentInFlightRevocation, ids.sessionInFlightRevocation, ids.patient,
+      ids.hospitalA, ids.hospitalB, ids.packageInFlightRevocation],
+  );
+  await client.query(
+    `INSERT INTO consent_actions (consent_action_id, consent_id, action)
+     VALUES ('19000000-0000-4000-8000-000000000032', $1, 'PACS_IMPORT')`,
+    [ids.consentInFlightRevocation],
   );
   await client.query(
     `INSERT INTO transfer_grants
@@ -267,6 +310,22 @@ try {
     );
   }
   await client.query(
+    `INSERT INTO transfer_grants
+      (grant_id, exchange_session_id, consent_id, recipient_tenant_id,
+       recipient_hospital_id, recipient_actor_id, imaging_package_id, idempotency_key,
+       status, issued_at, expires_at, revoked_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE',
+             now() - interval '1 minute', now() + interval '1 hour', NULL, now())`,
+    [ids.grantInFlightRevocation, ids.sessionInFlightRevocation, ids.consentInFlightRevocation,
+      ids.tenantB, ids.hospitalB, ids.actorB, ids.packageInFlightRevocation,
+      "1a000000-0000-4000-8000-000000000033"],
+  );
+  await client.query(
+    `INSERT INTO transfer_grant_scopes (grant_scope_id, grant_id, scope)
+     VALUES ($1, $2, 'study:pacs-transfer')`,
+    [ids.grantInFlightRevocationScope, ids.grantInFlightRevocation],
+  );
+  await client.query(
     `INSERT INTO pacs_transfer_operations
       (operation_id, tenant_id, exchange_session_id, study_ref_id, actor_id,
        idempotency_key, request_digest, state, version, reason_code,
@@ -298,6 +357,17 @@ try {
     [ids.operationBindingMismatch, ids.tenantB, ids.session, ids.studyOther, ids.actorB,
       ids.operationSourceMismatch, ids.studySourceMismatch, ids.operationNotCreated,
       ids.sessionOther, ids.studyOther],
+  );
+  await client.query(
+    `INSERT INTO pacs_transfer_operations
+      (operation_id, tenant_id, exchange_session_id, study_ref_id, actor_id,
+       idempotency_key, request_digest, state, version, reason_code,
+       source_object_count, destination_object_count, created_at, updated_at, stow_started_at)
+     VALUES ($1, $2, $3, $4, $5, $6, repeat('f', 64), 'CREATED', 0, NULL,
+             NULL, NULL, now(), now(), NULL)`,
+    [ids.operationInFlightRevocation, ids.tenantB, ids.sessionInFlightRevocation,
+      ids.studyInFlightRevocation, ids.actorB,
+      "1b000000-0000-4000-8000-000000000016"],
   );
   await client.query("COMMIT");
   console.log("int001_database_fixture=PASS synthetic_only=true");
