@@ -101,6 +101,167 @@ services:
       - hospital-a
       - hospital-b
 
+  source-capture-fixture-seed:
+    profiles:
+      - source-capture-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      MEDIQ_TEST_FIXTURE_DATABASE_URL: ${MEDIQ_MIGRATION_DATABASE_URL:?Temporary database migration URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    user: node
+    networks:
+      - database
+    command: ["node", "scripts/seed-int001-source-capture-fixture.mjs"]
+
+  source-capture-orthanc-a-seed:
+    profiles:
+      - source-capture-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      ORTHANC_A_URL: ${ORTHANC_A_URL:?Set ORTHANC_A_URL in the ignored root .env}
+      ORTHANC_A_USERNAME: ${ORTHANC_A_USERNAME:?Set ORTHANC_A_USERNAME in the ignored root .env}
+      ORTHANC_A_PASSWORD: ${ORTHANC_A_PASSWORD:?Set ORTHANC_A_PASSWORD in the ignored root .env}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+      MEDIQ_DICOM_TEST_MANIFEST: /run/fixtures/manifest.json
+    depends_on:
+      orthanc-a:
+        condition: service_healthy
+    volumes:
+      - ../data/synthetic-ct-env007:/run/fixtures:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    user: node
+    networks:
+      - hospital-a
+    command: ["node", "scripts/seed-int001-temporary-orthanc-a.mjs"]
+
+  source-capture-b-empty-probe:
+    profiles:
+      - source-capture-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      ORTHANC_B_URL: ${ORTHANC_B_URL:?Set ORTHANC_B_URL in the ignored root .env}
+      ORTHANC_B_USERNAME: ${ORTHANC_B_USERNAME:?Set ORTHANC_B_USERNAME in the ignored root .env}
+      ORTHANC_B_PASSWORD: ${ORTHANC_B_PASSWORD:?Set ORTHANC_B_PASSWORD in the ignored root .env}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+    volumes:
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    user: node
+    networks:
+      - hospital-b
+    command: ["node", "scripts/probe-int001-temporary-orthanc-b-empty.mjs"]
+
+  api-source-capture-test:
+    profiles:
+      - source-capture-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      MEDIQ_RUNTIME_PROFILE: ${MEDIQ_RUNTIME_PROFILE:?Set MEDIQ_RUNTIME_PROFILE in the ignored root .env}
+      MEDIQ_ENV: ${MEDIQ_ENV:?Set MEDIQ_ENV in the ignored root .env}
+      MEDIQ_LOG_LEVEL: ${MEDIQ_LOG_LEVEL:?Set MEDIQ_LOG_LEVEL in the ignored root .env}
+      MEDIQ_API_PORT: ${MEDIQ_API_PORT:?Set MEDIQ_API_PORT in the ignored root .env}
+      MEDIQ_POSTGRES_DB: ${MEDIQ_POSTGRES_DB:?Set MEDIQ_POSTGRES_DB in the ignored root .env}
+      MEDIQ_DATABASE_URL: ${MEDIQ_DATABASE_URL:?Temporary runtime database URL is required}
+      MEDIQ_OIDC_ISSUER: https://synthetic-issuer.test
+      MEDIQ_OIDC_AUDIENCE: mediq-int001-source-capture
+      MEDIQ_OIDC_JWKS_URI: https://synthetic-issuer.test/jwks
+      ORTHANC_A_URL: ${ORTHANC_A_URL:?Set ORTHANC_A_URL in the ignored root .env}
+      ORTHANC_A_USERNAME: ${ORTHANC_A_USERNAME:?Set ORTHANC_A_USERNAME in the ignored root .env}
+      ORTHANC_A_PASSWORD: ${ORTHANC_A_PASSWORD:?Set ORTHANC_A_PASSWORD in the ignored root .env}
+      ORTHANC_B_URL: https://orthanc-b:8042
+      ORTHANC_B_USERNAME: source-capture-b-not-configured
+      ORTHANC_B_PASSWORD: source-capture-b-disabled
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+      MEDIQ_DICOM_TEST_MANIFEST: /run/fixtures/manifest.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orthanc-a:
+        condition: service_healthy
+    volumes:
+      - ../data/synthetic-ct-env007:/run/fixtures:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    user: node
+    networks:
+      - database
+      - hospital-a
+    command: ["node", "--test", "--test-reporter=tap", "tests/integration/authorized-source-capture.orthanc.integration.test.mjs"]
+
+  source-capture-db-observer:
+    profiles:
+      - source-capture-test
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      MEDIQ_TEST_FIXTURE_DATABASE_URL: ${MEDIQ_MIGRATION_DATABASE_URL:?Temporary database migration URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    user: node
+    networks:
+      - database
+    command: ["node", "scripts/verify-int001-source-capture.mjs"]
+
   api:
     build:
       context: ..

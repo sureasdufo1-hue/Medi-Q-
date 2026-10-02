@@ -54,3 +54,12 @@ FROM build AS dicom-adapter-test
 
 COPY tests/integration/orthanc-dicomweb.orthanc.integration.test.mjs tests/integration/orthanc-dicomweb.orthanc.integration.test.mjs
 CMD ["node", "--test", "tests/integration/orthanc-dicomweb.orthanc.integration.test.mjs"]
+
+FROM build AS authorized-source-capture-test
+
+COPY tests/integration/authorized-source-capture.orthanc.integration.test.mjs tests/integration/authorized-source-capture.orthanc.integration.test.mjs
+COPY scripts/seed-int001-source-capture-fixture.mjs scripts/seed-int001-source-capture-fixture.mjs
+COPY scripts/seed-int001-temporary-orthanc-a.mjs scripts/seed-int001-temporary-orthanc-a.mjs
+COPY scripts/probe-int001-temporary-orthanc-b-empty.mjs scripts/probe-int001-temporary-orthanc-b-empty.mjs
+COPY scripts/verify-int001-source-capture.mjs scripts/verify-int001-source-capture.mjs
+CMD ["node", "--test", "tests/integration/authorized-source-capture.orthanc.integration.test.mjs"]
