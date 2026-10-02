@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
@@ -28,6 +29,35 @@ import {
 const manifestPath = process.env.MEDIQ_DICOM_TEST_MANIFEST;
 assert.ok(manifestPath, "Synthetic Test Orthanc manifest is required");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+
+function expectedSourceManifestDigest(sourceManifest) {
+  const instances = [...sourceManifest.instances].sort((left, right) =>
+    left.sopInstanceUID < right.sopInstanceUID
+      ? -1
+      : left.sopInstanceUID > right.sopInstanceUID
+        ? 1
+        : 0,
+  );
+  const hash = createHash("sha256");
+  hash.update(Buffer.from("MEDIQ-DICOM-MANIFEST\0V1\0", "ascii"));
+  const count = Buffer.alloc(4);
+  count.writeUInt32BE(instances.length);
+  hash.update(count);
+  for (const instance of instances) {
+    const uid = Buffer.from(instance.sopInstanceUID, "ascii");
+    const uidLength = Buffer.alloc(4);
+    uidLength.writeUInt32BE(uid.byteLength);
+    hash.update(uidLength);
+    hash.update(uid);
+    const byteLength = Buffer.alloc(8);
+    byteLength.writeBigUInt64BE(BigInt(instance.sizeBytes));
+    hash.update(byteLength);
+    const digest = Buffer.from(instance.sha256, "hex");
+    assert.equal(digest.byteLength, 32, "CAP007_FIXTURE_INSTANCE_DIGEST_LENGTH");
+    hash.update(digest);
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
 
 const fixture = Object.freeze({
   otherTenantId: "02000000-0000-4000-8000-000000000001",
@@ -143,7 +173,12 @@ async function applyMetadataFault(response, fault) {
   return new Response(JSON.stringify(rows), { status: response.status, headers });
 }
 
-function createHarness({ failFirstInstance = false, databaseUrl, metadataFault } = {}) {
+function createHarness({
+  failFirstInstance = false,
+  databaseUrl,
+  metadataFault,
+  observeInstanceStreams = false,
+} = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = databaseUrl
     ? Object.freeze({ ...parsedConfig, databaseUrl })
@@ -219,10 +254,15 @@ function createHarness({ failFirstInstance = false, databaseUrl, metadataFault }
   let destinationVerificationCalls = 0;
   let metadataCalls = 0;
   let instanceCalls = 0;
+  let activeInstanceStreams = 0;
+  let maximumActiveInstanceStreams = 0;
   const tenantContextFailures = [];
   const sourceRequests = [];
   const sourcePaths = [];
   const sourceRequestObservations = [];
+  const instanceStreamOpenOrder = [];
+  const instanceStreamCompletionOrder = [];
+  const observedInstanceStreams = [];
   const configuredAAuthorization = `Basic ${Buffer.from(
     `${config.orthancAUsername}:${config.orthancAPassword}`,
     "utf8",
@@ -351,9 +391,65 @@ function createHarness({ failFirstInstance = false, databaseUrl, metadataFault }
       metadataCalls += 1;
       return adapter.retrieveStudyMetadata(request);
     },
-    retrieveInstanceStream: (request) => {
+    retrieveInstanceStream: async (request) => {
       instanceCalls += 1;
-      return adapter.retrieveInstanceStream(request);
+      if (!observeInstanceStreams) return adapter.retrieveInstanceStream(request);
+
+      instanceStreamOpenOrder.push(request.sopInstanceUid);
+      activeInstanceStreams += 1;
+      maximumActiveInstanceStreams = Math.max(
+        maximumActiveInstanceStreams,
+        activeInstanceStreams,
+      );
+      let source;
+      try {
+        source = await adapter.retrieveInstanceStream(request);
+      } catch (error) {
+        activeInstanceStreams -= 1;
+        throw error;
+      }
+
+      const reader = source.body.getReader();
+      const digest = createHash("sha256");
+      let byteLength = 0;
+      let chunkCount = 0;
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        activeInstanceStreams -= 1;
+      };
+      const body = new ReadableStream({
+        async pull(controller) {
+          try {
+            const next = await reader.read();
+            if (next.done) {
+              observedInstanceStreams.push(Object.freeze({
+                sopInstanceUid: request.sopInstanceUid,
+                byteLength,
+                chunkCount,
+                sha256: digest.digest("hex"),
+              }));
+              instanceStreamCompletionOrder.push(request.sopInstanceUid);
+              settle();
+              controller.close();
+              return;
+            }
+            byteLength += next.value.byteLength;
+            chunkCount += 1;
+            digest.update(next.value);
+            controller.enqueue(next.value);
+          } catch (error) {
+            settle();
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          await reader.cancel(reason).catch(() => undefined);
+          settle();
+        },
+      }, { highWaterMark: 0 });
+      return Object.freeze({ ...source, body });
     },
     storeInstanceStream: async () => {
       stowCalls += 1;
@@ -389,6 +485,11 @@ function createHarness({ failFirstInstance = false, databaseUrl, metadataFault }
       sourceRequests: [...sourceRequests],
       sourcePaths: [...sourcePaths],
       sourceRequestObservations: [...sourceRequestObservations],
+      instanceStreamOpenOrder: [...instanceStreamOpenOrder],
+      instanceStreamCompletionOrder: [...instanceStreamCompletionOrder],
+      observedInstanceStreams: [...observedInstanceStreams],
+      activeInstanceStreams,
+      maximumActiveInstanceStreams,
       forbiddenEndpointAttempts,
       stowCalls,
       destinationVerificationCalls,
@@ -407,7 +508,7 @@ async function readOperationState(harness, operationId = fixture.operationId) {
       [operationId],
     );
     const evidence = await client.query(
-      `SELECT verification_stage, status, source_object_count
+      `SELECT verification_stage, status, algorithm, source_digest, source_object_count
          FROM integrity_evidence
         WHERE operation_id = $1::uuid`,
       [operationId],
@@ -417,6 +518,8 @@ async function readOperationState(harness, operationId = fixture.operationId) {
       evidence: evidence.rows.map((row) => ({
         stage: row.verification_stage,
         status: row.status,
+        algorithm: row.algorithm,
+        sourceDigest: row.source_digest,
         objectCount: row.source_object_count,
       })),
     });
@@ -917,7 +1020,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
   });
 
   await t.test("valid source capture records one pending baseline while operation remains CREATED", async () => {
-    const harness = createHarness();
+    const harness = createHarness({ observeInstanceStreams: true });
     try {
       const result = await harness.service.capture({
         principal,
@@ -934,6 +1037,16 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.deepEqual(Object.keys(result).sort(), ["evidenceId", "kind", "objectCount", "status"]);
       assert.equal(JSON.stringify(result).includes(manifest.studyInstanceUID), false);
       assert.equal(JSON.stringify(result).includes(manifest.patient.patientId), false);
+      const expectedInstances = [...manifest.instances].sort((left, right) =>
+        left.sopInstanceUID < right.sopInstanceUID
+          ? -1
+          : left.sopInstanceUID > right.sopInstanceUID
+            ? 1
+            : 0,
+      );
+      const expectedUids = expectedInstances.map((instance) => instance.sopInstanceUID);
+      const expectedDigest = expectedSourceManifestDigest(manifest);
+      const captureCounters = harness.counters();
       assert.equal(harness.counters().initialAuthorizationCommitted, true);
       assert.equal(harness.counters().activeTenantTransactions, 0);
       assert.deepEqual(harness.counters().sourceRequests, [
@@ -946,6 +1059,36 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.ok(harness.counters().sourcePaths.every((path) =>
         path.startsWith(`/dicom-web/studies/${manifest.studyInstanceUID}/`),
       ));
+      const instancePaths = captureCounters.sourcePaths.filter((path) => path.includes("/instances/"));
+      assert.deepEqual(
+        instancePaths.map((path) => decodeURIComponent(path.slice(path.lastIndexOf("/") + 1))),
+        expectedUids,
+        "CAP007_OPERATION_BOUND_CANONICAL_INSTANCE_REQUESTS",
+      );
+      assert.deepEqual(captureCounters.instanceStreamOpenOrder, expectedUids, "CAP007_STREAM_OPEN_ORDER");
+      assert.deepEqual(captureCounters.instanceStreamCompletionOrder, expectedUids, "CAP007_STREAM_COMPLETION_ORDER");
+      assert.equal(captureCounters.maximumActiveInstanceStreams, 1, "CAP007_ONE_ACTIVE_STREAM");
+      assert.equal(captureCounters.activeInstanceStreams, 0, "CAP007_ALL_STREAMS_CLOSED");
+      assert.deepEqual(
+        captureCounters.observedInstanceStreams.map(({ sopInstanceUid, byteLength, sha256 }) => ({
+          sopInstanceUid,
+          byteLength,
+          sha256,
+        })),
+        expectedInstances.map((instance) => ({
+          sopInstanceUid: instance.sopInstanceUID,
+          byteLength: instance.sizeBytes,
+          sha256: instance.sha256,
+        })),
+        "CAP007_EXACT_FIXTURE_BYTES",
+      );
+      assert.ok(captureCounters.observedInstanceStreams.every((stream) => stream.chunkCount > 0));
+      assert.equal(
+        captureCounters.observedInstanceStreams.reduce((total, stream) => total + stream.byteLength, 0),
+        manifest.totalBytes,
+        "CAP007_TOTAL_FIXTURE_BYTES",
+      );
+      assert.equal(JSON.stringify(result).includes(expectedDigest), false, "CAP007_NO_DIGEST_IN_RESPONSE");
       assert.equal(harness.counters().forbiddenEndpointAttempts, 0);
       const observations = harness.counters().sourceRequestObservations;
       assert.equal(observations.length, manifest.instanceCount + 1);
@@ -965,6 +1108,8 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.deepEqual(state.evidence, [{
         stage: "SOURCE_CAPTURE",
         status: "PENDING",
+        algorithm: "SHA256-MANIFEST-V1",
+        sourceDigest: expectedDigest,
         objectCount: manifest.instanceCount,
       }]);
     } finally {

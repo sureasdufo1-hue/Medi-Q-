@@ -6,7 +6,7 @@
 | 제목 | Bounded source integrity and authorized synthetic source-capture sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — CAP-001~006 and CAP-013~014 pass only within recorded scopes; CAP-005 historical pre-metadata DB-context errors remain unexplained but were not reproduced in three fresh runs; CAP-007~012 and full destination/transfer workflow remain open |
+| 결과 | `PARTIAL` — CAP-001~006 and CAP-013~014 pass only within earlier recorded scopes; latest CAP-007 integration attempt failed in CAP-005 with recurring Tenant-context DB COMMIT error; CAP-007~012 and full destination/transfer workflow remain open |
 
 ## 1. 검증 환경
 
@@ -268,3 +268,13 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 - API regression: `npm run test:api -- --reporter=dot` exit 0; API TypeScript build passed; 34 test files / 585 tests passed.
 - 판정: `PASS` — `TC-INT-001-CAP-001~004` and CAP-014 scoped boundaries only. This does not prove CAP-005~012, production/client-ingress TLS, destination verification, STOW, `AT-SEC-012`, `AT-E2E-003`, or full P0 transfer.
 - 이전 시도 참고: CAP-002 fixture seeding first rejected a malformed synthetic idempotency UUID (`22P02`), and one earlier integration invocation exited 1 without a safely attributable root cause; that unresolved CAP-002 harness-risk record remains. The first CAP-003 fixture attempt was rejected by `PACS_TRANSFER_OPERATION_INITIAL_STATE_INVALID` (`23514`) because it tried to insert a non-`CREATED` state; this confirms the DB guard and was corrected by using the approved transition repository, not by bypassing it. Three later CAP-003-inclusive runs passed 18/18; the final CAP-004-inclusive runner passed 19/19 on three consecutive runs.
+
+## 11. CAP-007 — Authorized stream and exact-manifest evidence (PARTIAL)
+
+- Decision/Acceptance: `INT-001-CAP-007-REC-001` was recorded before implementation/test changes. Scope is test-only incremental observation of existing internal synthetic source capture; no route, schema/grant, production PACS, STOW, or destination behavior.
+- API regression: `npm run test:api -- --reporter=dot` exited 0; API build passed; 34 test files / 601 tests passed. This validates the strengthened stream lifecycle unit test and does not substitute for live integration Acceptance.
+- Live command: `./scripts/test-int001-source-capture.ps1`; exited 1. The isolated runner reached CAP-005's empty-metadata subtest and observed safe fixed marker `CAP005_EMPTY_UNEXPECTED_UNAVAILABLE_M0_I0_RNONE_CACTOR_TENANT_CONTEXT_UNAVAILABLE_DBCOMMIT_ERROR`. The outer test failure was reported at `authorized-source-capture.orthanc.integration.test.mjs:540`, nested CAP-005 test at `:649`, and its matrix subtest at `:663`. The test script suppresses raw output; no database message/credential was persisted here.
+- The runner had confirmed the temporary Test Orthanc B fixture was empty before the test. Because the isolated source-capture Acceptance command failed, the script did not proceed to its post-test B probe or the independent DB observer. Do not claim post-run B verification, Audit/evidence observer PASS, or the full 31/31 integration result for this attempt. The runner's `finally` cleanup passed and confirmed the pre-existing `mediq` containers/volumes/networks were unchanged.
+- CAP-007 test code adds a test-only incremental byte/hash observer and assertions for canonical operation-bound instance order, full stream close before next open, max one active stream, synthetic fixture per-instance byte/hash equality, independently computed aggregate digest vs internal pending evidence, allowlisted response, and zero forbidden destination/STOW calls. The full runner's failure prevents this attempt from establishing CAP-007 PASS; no standalone CAP-007 integration result is claimed.
+- Required next action: diagnose the recurring CAP-005 verified-Tenant context / DB COMMIT failure under its recorded no-retry stability rule. Preserve current security boundaries; if a code/harness change is warranted, document recommendation/Acceptance first and record a fresh isolated test result without masking retries.
+- Overall judgment: CAP-007 `PARTIAL`; CAP-005 remains previously scoped PASS only for the prior three-run sequence, with the historical unresolved DB-context risk now recurring and requiring diagnosis. No CAP-007 completion claim.

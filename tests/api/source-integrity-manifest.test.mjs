@@ -57,25 +57,44 @@ describe("P0 bounded source integrity manifest", () => {
 
   it("canonicalizes enumeration order and opens one object stream at a time", async () => {
     const opened = [];
+    const completed = [];
+    const lifecycle = [];
     let active = 0;
     let maximumActive = 0;
     const make = (uid, byte) => ({
       sopInstanceUid: uid,
       openStream: async () => {
+        expect(active).toBe(0);
         opened.push(uid);
+        lifecycle.push(`OPEN:${uid}`);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        let emitted = 0;
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          active -= 1;
+          completed.push(uid);
+          lifecycle.push(`CLOSE:${uid}`);
+        };
         return {
           sopInstanceUid: uid,
           mediaType: "application/dicom",
-          contentLength: 1,
+          contentLength: 4,
           body: new ReadableStream({
             pull(controller) {
-              active += 1;
-              maximumActive = Math.max(maximumActive, active);
-              controller.enqueue(Uint8Array.of(byte));
-              controller.close();
-              active -= 1;
+              if (emitted === 2) {
+                controller.close();
+                release();
+                return;
+              }
+              lifecycle.push(`CHUNK:${uid}:${emitted}`);
+              controller.enqueue(Uint8Array.of(byte, emitted));
+              emitted += 1;
             },
-          }),
+            cancel: release,
+          }, { highWaterMark: 0 }),
         };
       },
     });
@@ -94,6 +113,17 @@ describe("P0 bounded source integrity manifest", () => {
     expect(left.aggregateDigest).toBe(right.aggregateDigest);
     expect(opened).toEqual(["1.2.3", "1.2.4", "1.2.3", "1.2.4"]);
     expect(maximumActive).toBe(1);
+    expect(completed).toEqual(opened);
+    expect(active).toBe(0);
+    expect(lifecycle.slice(0, 4)).toEqual([
+      "OPEN:1.2.3",
+      "CHUNK:1.2.3:0",
+      "CHUNK:1.2.3:1",
+      "CLOSE:1.2.3",
+    ]);
+    expect(lifecycle.indexOf("OPEN:1.2.4")).toBeGreaterThan(
+      lifecycle.indexOf("CLOSE:1.2.3"),
+    );
     expect(first.map(({ sopInstanceUid }) => sopInstanceUid)).toEqual([
       "1.2.4",
       "1.2.3",
