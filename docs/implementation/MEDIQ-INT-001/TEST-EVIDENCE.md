@@ -172,7 +172,7 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 | 시험 | 미실행 이유 | 잔여 위험 | 후속 조치 |
 |---|---|---|---|
 | Authorized Hospital A QIDO/WADO source retrieval and source PatientMapping/Consent/Grant/Authorization binding | This sub-gate deliberately stops at an internal hash primitive and a pending persistence foundation; there is no authorized product retrieval caller | A persisted pending baseline alone is not proof that bytes came from the authorized source | Separate recommendation/Acceptance before authorized source-capture integration |
-| Reauthorization and atomic Audit for source retrieval/persistence; permanent runtime grant | No product caller, complete authorization fence or atomic producer exists; temporary test grants were revoked | No durable product-level source capture/failure Audit claim; no transfer-completion enforcement | Define separate recommendation/Acceptance and security review before wiring |
+| Full-service reauthorization and atomic Audit/evidence for source retrieval/persistence | PostgreSQL test exercises the evidence repository and fixed grants; mocked service tests do not prove the complete live database + authorization + Audit transaction | No live product-level source capture/failure Audit claim; no transfer-completion enforcement | Add Test Orthanc A/B integration and full-service DB atomicity coverage |
 | Orthanc A/B product integration, destination hash, no-STOW/B-unchanged coordinator tests, production-like performance benchmark | Primitive is tested with small synthetic streams only; this task did not invoke Test Orthanc or STOW | No interoperability, 2 GiB throughput, destination or end-to-end claim | Later Test Orthanc integration after complete Mandatory Preflight |
 
 ## 6. 증거 산출물
@@ -186,7 +186,7 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 
 - 결과: `PARTIAL`
 - PASS를 주장할 수 있는 범위: canonical streaming hash primitive and operation-bound `SOURCE_CAPTURE/PENDING` persistence/schema/RLS/exact scratch-grant regression only
-- No PASS claim for source authenticity, PACS retrieval, business Authorization/PatientMapping/Consent/Grant, permanent runtime grant, Audit/Provenance atomicity, destination comparison, transfer completion, or A→B E2E.
+- No PASS claim for source authenticity, live PACS retrieval, complete business Authorization/PatientMapping/Consent/Grant integration, full-service Audit/Provenance atomicity, destination comparison, transfer completion, or A→B E2E. Exact database privilege/RLS scope is separately PASS under `TC-INT-001-CAP-013`.
 - 실제 환자정보, 운영 Credential, Secret 및 운영 DICOM을 증거에 포함하지 않는다.
 
 ## 8. Authorized Source-Capture Sub-gate — Current Checkpoint
@@ -197,12 +197,13 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 |---|---|---|---|
 | API build + complete API regression, including new source-capture/executor/Audit unit tests | `npm run test:api -- --reporter=dot` | Exit 0; TypeScript API build passed; 34 test files / 584 tests passed | `PASS` — API/unit scope only |
 | Focused authorization, Audit, source-capture test invocation via direct `npx vitest` | `npx vitest run tests/api/authorized-source-capture.test.mjs tests/api/authorization-gated-operation.test.mjs tests/api/audit-event-writer.test.mjs --reporter=dot --maxWorkers=1` | Did not start: external npx cache failed to resolve `@jridgewell/sourcemap-codec`; repository-owned `npm run test:api` subsequently ran the full suite successfully | `TOOLING ERROR` — no test result |
-| Exact permanent runtime privilege migration/catalog inventory, RLS and atomicity | Planned: `./scripts/test-db-008-full-schema.ps1` after adding the migration | Not run; required migration is not yet present | `NOT RUN` |
+| Exact permanent runtime privilege migration/catalog inventory and source-evidence PostgreSQL/RLS sub-gate | `./scripts/test-db-008-full-schema.ps1` | Exit 0; exact 236 total column privileges; `integrity_evidence` 12 SELECT + 12 INSERT; `study_references` 6 SELECT; no UPDATE/DELETE; source-evidence replay/conflict/rollback/no-context/cross-Tenant/late-write cases PASS | `PASS` — database sub-gate only; no full service/PACS claim |
+| Clean/reset/reapply and DB-002~007 regression | `./scripts/test-db-008-full-schema.ps1` | Exit 0; 18 product tables; migration ledger 23; catalog `18|50|17|40`; DB-002~007 PASS; owned ephemeral resources cleaned | `PASS` — schema/regression scope |
 | Real Test Orthanc A WADO retrieval, B zero-write and no open DB transaction during WADO | Planned test-only integration using synthetic A/B and disposable PostgreSQL | Not run; current service tests use a mocked DICOM gateway | `NOT RUN` |
 
 ### Current boundary
 
 - New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
-- `TC-INT-001-CAP-001~014` remain `PLANNED`; no source-capture Acceptance case is marked PASS.
-- The permanent runtime grant migration is outstanding. The new service is internal-only and not reachable through HTTP, but it is not ready for least-privilege runtime execution until the exact grants are added and validated.
+- `TC-INT-001-CAP-013` is `PASS` for exact runtime privileges, Tenant RLS and migration reset/reapply; `CAP-001~012` and `CAP-014` remain `PLANNED`.
+- The exact permanent runtime grant migration is present and validated. The service remains internal-only and is not reachable through HTTP; live PACS retrieval and B-zero-write behavior are still unverified.
 - No STOW, B write, destination verification or full A→B E2E was run or claimed.

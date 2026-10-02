@@ -130,12 +130,13 @@ Status: PARTIAL
 | 2026-10-01 | `PARTIAL` | Recommendation/Acceptance first; bounded canonical stream-hash sub-gate implemented and tested; integration prerequisites remain open |
 | 2026-10-02 | `PARTIAL` | `INT-001-DEC-002` and DB Acceptance recorded first; operation-bound PENDING persistence sub-gate passed DB-008 scratch; authorized retrieval and full integrity remain open |
 | 2026-10-02 | `PARTIAL` | `INT-001-DEC-003` and 14 Acceptance cases accepted before implementation. Authorized synthetic source-capture service work started; no implementation result claimed yet |
+| 2026-10-02 | `PARTIAL` | Added exact permanent source-capture runtime column grants; DB-008 full clean/reset/reapply, 236-column privilege/RLS, INT-001 persistence and DB-002~007 regression all PASS. Live Test Orthanc A/B capture remains open |
 
 ## 13. Authorized Source-Capture Sub-gate — In Progress
 
 Decision and Acceptance were recorded first in `INT-001-DEC-003` and `TC-INT-001-CAP-001~014`. The implementation scope for this continuation is internal-only and synthetic/Test-only: operation-derived scope, exact fenced `PACS_IMPORT` authorization, destination PatientMapping / per-instance PatientID equality, configured A-only HTTPS WADO, bounded sequential hash with the 30-minute total deadline, fixed minimized Audit events, atomic pending evidence + success Audit, and exact permanent runtime column grants. There will be no HTTP/OpenAPI route, B call/STOW, operation state transition, destination verification, or full-P0 claim.
 
-Before code changes, this record was opened against the approved recommendation. The implementation has started and its mocked API-level tests pass; all database privilege, RLS, and live Orthanc Acceptance cases remain unverified. No CAP case is marked PASS yet.
+Before code changes, this record was opened against the approved recommendation. The mocked API-level tests and the exact permanent privilege/RLS database sub-gate now pass. The live Test Orthanc A/B source-capture cases remain unverified. Only `TC-INT-001-CAP-013` is marked PASS; no source-capture or PACS behavior is claimed by that database-only result.
 
 ### 13.1 Implemented in this checkpoint
 
@@ -145,25 +146,26 @@ Before code changes, this record was opened against the approved recommendation.
 - Source-capture Audit event/result/reason combinations are allowlisted. No HTTP route, OpenAPI change, STOW call, B-side write, operation state transition or destination verification was added.
 - New unit tests cover the executor transaction/fence sequence, mocked source-capture allow/deny/failure/concurrency and audit allowlist. API build and the 34-file/584-test API suite pass.
 
-### 13.2 Not yet verified / remaining
+### 13.2 Database sub-gate verified; PACS integration remaining
 
-- The exact permanent runtime column-grant migration for `integrity_evidence` and `study_references` has not been created. Until it is applied, the least-privilege runtime role may reject the service's required reads/writes; the new path is not DB-ready.
-- No disposable PostgreSQL/RLS integration has exercised the full source-capture service, authorization re-evaluation, Audit/evidence transaction atomicity, or final runtime privilege inventory.
+- Added `0022_authorized_source_capture_column_grants.sql`: `integrity_evidence` exact 12-column SELECT + 12-column INSERT; `study_references` exact 6-column SELECT including the three capture-scope fields; no UPDATE/DELETE.
+- Disposable PostgreSQL/RLS Acceptance passed for operation-bound pending evidence, exact replay/conflict, rollback, no Tenant context, cross-Tenant isolation, late first-write denial, exact persistent privilege inventory (236 total), and the DB-008 reset/reapply path. This exercises the evidence repository, not the complete application service's Audit/evidence atomicity.
+- DB-008 confirmed runtime is non-owner/non-superuser/NOBYPASSRLS, no table-wide/PUBLIC/DDL grants, 17 forced-RLS tables, exact 236 column privileges, and all DB-002~007 regressions.
 - No live Test Orthanc A retrieval, B zero-write proof, or active-transaction-during-WADO integration test has run. Current service-level tests use mocks and do not prove real DICOM interoperability or CAP-014.
-- Acceptance `TC-INT-001-CAP-001~014` therefore remain `PLANNED`; this implementation checkpoint is `PARTIAL`, not PASS. Next work is the least-privilege grant migration + DB tests, then Test Orthanc A/B integration before any broader PACS coordinator work.
+- `TC-INT-001-CAP-013` is `PASS` for its exact privilege/RLS/migration-reset scope. `CAP-001~012` and `CAP-014` remain `PLANNED`; this Ticket remains `PARTIAL`, not full source-capture/P0 PASS. Next work is live Test Orthanc A/B integration before any broader PACS coordinator work.
 
 ## 14. 현재 체크포인트 판정
 
 ```text
 Ticket: MEDIQ-INT-001
 Scope: INT-001-DEC-003 authorized synthetic source-capture service sub-gate
-Changed: server-derived operation scope; resolved-session-fence executor; A-only WADO capture and bounded hashing; destination mapping checks; fixed Audit events; pending evidence + Audit application transaction; mocked API tests; synchronized implementation records
-Not changed: grant migration; live PostgreSQL/RLS verification; live Orthanc verification; HTTP/OpenAPI; STOW; destination verification; full A→B flow
-Security impact: fail-closed authorization and scope checks are implemented at service level; runtime least-privilege compatibility and real source boundary are not yet demonstrated
-Tests executed: `npm run test:api -- --reporter=dot` — API build passed; 34 files / 584 tests passed
-Tests not executed: final migration/catalog inventory; full-service PostgreSQL/RLS atomicity; Test Orthanc A retrieval and B zero-write; full P0 E2E
+Changed: server-derived operation scope; resolved-session-fence executor; A-only WADO capture and bounded hashing; destination mapping checks; fixed Audit events; pending evidence + Audit application transaction; mocked API tests; exact permanent-grant migration; PostgreSQL/RLS Acceptance and synchronized records
+Not changed: live Test Orthanc source retrieval; B zero-write integration; full-service DB Audit/evidence atomicity; HTTP/OpenAPI; operation-state transition; STOW; destination verification; full A→B flow
+Security impact: fail-closed service checks plus exact runtime column privileges and Tenant RLS are verified in disposable PostgreSQL; real PACS source/effect boundary is still unverified
+Tests executed: API build + 34 files/584 tests; migration consistency; 6 migration-runner tests; DB-008 full gate exit 0 including 236-column runtime privilege inventory, INT-001 RLS Acceptance, reset/reapply, DB-002~007 regressions and cleanup
+Tests not executed: live Test Orthanc A retrieval and B zero-write; product HTTP path; full-service PostgreSQL Audit/evidence atomicity; full P0 E2E
 Evidence: TEST-EVIDENCE.md
 Implementation record: IMPLEMENTATION-REPORT.md
-Remaining risks: missing permanent runtime grants; mocked rather than real DB/PACS path; CAP cases not yet passed
+Remaining risks: live source retrieval and B-side zero-effect remain unproven; mocked service tests do not prove source authenticity or full-service atomicity; destination comparison/completion gate and CAP-014 remain open
 Status: PARTIAL
 ```

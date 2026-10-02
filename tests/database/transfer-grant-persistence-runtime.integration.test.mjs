@@ -31,7 +31,7 @@ function principal(subject) {
   return Object.freeze({ issuer, subject });
 }
 
-test("GRT-002 persists and reconstitutes TransferGrant under scratch-only exact grants and Tenant RLS", async (t) => {
+test("GRT-002 persists and reconstitutes TransferGrant under exact permanent grants and Tenant RLS", async (t) => {
   const connectionString = process.env.MEDIQ_TEST_DATABASE_URL;
   assert.ok(connectionString, "MEDIQ_TEST_DATABASE_URL is required");
   assert.equal(decodeURIComponent(new URL(connectionString).username), "mediq_runtime");
@@ -66,7 +66,7 @@ test("GRT-002 persists and reconstitutes TransferGrant under scratch-only exact 
       const byTable = (table, kind) => privileges.rows
         .filter((row) => row.table_name === table && row.privilege_type === kind)
         .map((row) => row.column_name).sort();
-      assert.equal(privileges.rows.length, 209, "GRT002_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+      assert.equal(privileges.rows.length, 236, "GRT002_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
       assert.deepEqual(byTable("transfer_grants", "INSERT"), [
         "consent_id", "created_at", "exchange_session_id", "expires_at", "grant_id",
         "idempotency_key", "imaging_package_id", "issued_at", "recipient_actor_id",
@@ -83,7 +83,7 @@ test("GRT-002 persists and reconstitutes TransferGrant under scratch-only exact 
       assert.deepEqual(byTable("transfer_grant_scopes", "SELECT"), ["grant_id", "scope"]);
       assert.deepEqual(
         privileges.rows.filter((row) => row.privilege_type === "INSERT" &&
-          !["patient_refs", "exchange_sessions", "consents", "consent_actions", "audit_events", "transfer_grants", "transfer_grant_scopes", "pacs_transfer_operations", "provenance_records"].includes(row.table_name)),
+          !["patient_refs", "exchange_sessions", "consents", "consent_actions", "audit_events", "transfer_grants", "transfer_grant_scopes", "pacs_transfer_operations", "provenance_records", "integrity_evidence"].includes(row.table_name)),
         [],
       );
       const broad = await pool.query(`

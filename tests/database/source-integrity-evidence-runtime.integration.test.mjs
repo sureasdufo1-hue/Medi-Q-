@@ -91,15 +91,22 @@ test("INT-001 operation-bound pending source Integrity PostgreSQL/RLS Acceptance
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='SELECT')::int AS evidence_select,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='INSERT')::int AS evidence_insert,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='UPDATE')::int AS evidence_update,
-        count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='DELETE')::int AS evidence_delete
+        count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='DELETE')::int AS evidence_delete,
+        count(*) FILTER (WHERE table_name='study_references' AND privilege_type='SELECT')::int AS study_select,
+        count(*) FILTER (WHERE table_name='study_references' AND privilege_type='SELECT'
+          AND column_name IN ('study_instance_uid','series_count','instance_count'))::int AS capture_scope_select,
+        count(*) FILTER (WHERE table_name='study_references' AND privilege_type IN ('INSERT','UPDATE','DELETE'))::int AS study_write
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 233,
+      total: 236,
       evidence_select: 12,
       evidence_insert: 12,
       evidence_update: 0,
       evidence_delete: 0,
+      study_select: 6,
+      capture_scope_select: 3,
+      study_write: 0,
     });
     const tablePrivileges = await client.query(`
       SELECT count(*)::int AS total FROM information_schema.table_privileges
