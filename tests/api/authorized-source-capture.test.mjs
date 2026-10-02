@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
@@ -474,9 +475,10 @@ describe("AuthorizedSourceCaptureService", () => {
     const persistedAudit = JSON.stringify(harness.committedAudits);
     expect(persistedAudit).not.toMatch(/TEST-PATIENT|2\.25\.(100|101|111|112|113)|password|credential/i);
     expect(JSON.stringify(result)).not.toMatch(/TEST-PATIENT|2\.25\./);
+    expect(JSON.stringify(result)).not.toMatch(/sha256:/i);
   });
 
-  it("TC-PACS-001-HANDOFF-001/004/006 emits only the committed exact hashed source inventory on the dedicated internal path", async () => {
+  it("TC-PACS-001-HANDOFF-001/004/006 and DIGEST-003/005/006 emit only committed source byte evidence on the internal path", async () => {
     const harness = makeHarness();
     const result = await harness.service.captureForCoordinator(command());
 
@@ -501,19 +503,30 @@ describe("AuthorizedSourceCaptureService", () => {
         totalBytes: 12,
       },
       expectedInstances: [
-        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.111" },
-        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.112" },
-        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.113" },
+        ...instanceFixture.map(({ sopInstanceUid, bytes }) => ({
+          seriesInstanceUid: "2.25.101",
+          sopInstanceUid,
+          byteLength: bytes.byteLength,
+          sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+        })),
       ],
     });
     expect(handoff.sourceEvidence.aggregateDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(harness.committedEvidence[0]?.source_digest).toBe(handoff.sourceEvidence.aggregateDigest);
-    expect(harness.dicomCalls.instanceIdentities).toEqual(handoff.expectedInstances);
+    expect(harness.dicomCalls.instanceIdentities).toEqual(
+      handoff.expectedInstances.map(({ seriesInstanceUid, sopInstanceUid }) => ({
+        seriesInstanceUid,
+        sopInstanceUid,
+      })),
+    );
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(handoff)).toBe(true);
     expect(Object.isFrozen(handoff.sourceEvidence)).toBe(true);
     expect(Object.isFrozen(handoff.expectedInstances)).toBe(true);
     expect(handoff.expectedInstances.every(Object.isFrozen)).toBe(true);
+    expect(handoff.expectedInstances.reduce((sum, instance) => sum + instance.byteLength, 0)).toBe(
+      handoff.sourceEvidence.totalBytes,
+    );
     expect(JSON.stringify(handoff)).not.toMatch(/TEST-PATIENT|LOCAL-PATIENT|patientId|localPatientId|password|credential/i);
     expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
     expect(harness.operationState).toBe("CREATED");
@@ -524,7 +537,7 @@ describe("AuthorizedSourceCaptureService", () => {
     ]);
   });
 
-  it("TC-PACS-001-HANDOFF-002 rejects caller-provided inventory or authority bindings before Authorization and DICOM I/O", async () => {
+  it("TC-PACS-001-HANDOFF-002 and DIGEST-004/006 reject caller-provided inventory or authority bindings before I/O", async () => {
     const harness = makeHarness();
     for (const override of [
       { expectedInstances: [{ seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.111" }] },
@@ -563,7 +576,7 @@ describe("AuthorizedSourceCaptureService", () => {
     { name: "evidence persistence failure", options: { failEvidenceInsert: true }, mode: "unavailable", expectRollback: true },
     { name: "success Audit failure", options: { failAuditAction: "PACS_SOURCE_CAPTURED" }, mode: "unavailable", expectRollback: true },
     { name: "final transaction commit failure", options: { failFinalCommit: true }, mode: "unavailable", expectRollback: true },
-  ])("TC-PACS-001-HANDOFF-003/007 returns no handoff for $name", async ({ options, mode, expectedState = "CREATED", expectRollback = false }) => {
+  ])("TC-PACS-001-HANDOFF-003/007 and DIGEST-004 return no partial evidence for $name", async ({ options, mode, expectedState = "CREATED", expectRollback = false }) => {
     const harness = makeHarness(options);
     if (mode === "denied") {
       const result = await harness.service.captureForCoordinator(command());

@@ -178,4 +178,37 @@ npm run test:dicom-port-contract
 - No public route, worker, schema, migration, persistent UID inventory, PACS destination content or operation state was added or changed. The handoff remains transient application memory; process-crash recovery/zeroization is not claimed.
 - `git diff --check`: exit `0` after final implementation and documentation synchronization; no whitespace errors.
 
-**Judgment:** `TC-PACS-001-HANDOFF-001~007` PASS only for the internal ephemeral source-identity handoff. This does not prove full Mandatory Preflight, operation dispatch, destination verification invocation, product-level no-STOW/security gates, STOW, full PACS coordinator or A→B transfer.
+## 9. PACS-001-DEC-006 — Per-instance source digest handoff
+
+| Acceptance | Actual evidence | Judgment |
+|---|---|---|
+| `TC-PACS-001-DIGEST-001/002` | Integrity builder tests preserve the fixed aggregate `SHA256-MANIFEST-V1` known vector and return immutable per-instance SHA-256/byte lengths from the same sequential streams. Reversed descriptor input returns the same canonical inventory; existing duplicate UID, count, content-length, size-bound, malformed stream and cancellation cases remain passing. | PASS — unit scope |
+| `TC-PACS-001-DIGEST-003` | `captureForCoordinator()` binds each `sha256:<hex>` and byte length to the exact server-derived Series/SOP descriptor. Unit fixture checks digest from known bytes and aggregate sums. Isolated HTTPS A integration independently compares each handoff digest/length with synthetic manifest values and observed WADO stream hashes/lengths. | PASS — synthetic source scope |
+| `TC-PACS-001-DIGEST-004` | Existing denial/failure matrix exercises Consent/Grant/mapping denial, source metadata/stream/hash failure, changed scope, evidence/Audit insertion failure and simulated outer commit failure; no partial coordinator result escapes. | PASS — unit + isolated persistence-failure scope |
+| `TC-PACS-001-DIGEST-005` | Ordinary `capture()` retains its exact four-field success allowlist. Existing pending evidence persists only aggregate manifest fields; no migration, per-instance UID/hash row, payload, PatientID or Local Patient ID was added. Isolated runtime-role Audit/evidence observer passed. | PASS — API + isolated DB scope |
+| `TC-PACS-001-DIGEST-006` | The isolated runtime acceptance executed only authorized A metadata/WADO GETs. B was EMPTY before and after; STOW/destination-verification call counts were zero; operation stayed `CREATED`; no public route/worker was added. | PASS — this internal no-side-effect slice only, not full product no-STOW Acceptance |
+
+### Commands and results
+
+```powershell
+npm run build:api
+npx vitest run tests/api/source-integrity-manifest.test.mjs tests/api/authorized-source-capture.test.mjs --reporter=dot
+npm run test:api -- --reporter=dot
+npm run typecheck:api
+npm run test:dicom-port-contract
+./scripts/test-int001-source-capture.ps1 -EnvFile .env
+git diff --check
+```
+
+- `npm run build:api`: exit `0`.
+- Focused integrity/source-capture tests: 2 files / 68 tests passed.
+- Full API build/regression: 35 files / 668 tests passed.
+- API typecheck and DICOM Port contract: both exited `0`.
+- Isolated source-capture runner: final exit `0`; `authorized_capture_test=PASS tests=35 failed=0`; independent Audit/evidence observer PASS; `orthanc_b_before=EMPTY`, `orthanc_b_after=EMPTY`; `temporary_project_cleanup=PASS existing_mediq_stack=UNCHANGED`.
+- One initial isolated run failed because the integration assertion compared the fixture's unprefixed hex digest with the handoff's normative `sha256:<hex>` representation. The fixture expectation was corrected; the subsequent isolated run passed all 35 tests. No production behavior was weakened.
+- An initial focused test assertion compared the two-field DICOM call observation to the expanded four-field handoff item. The test was corrected to compare the identity projection; the final focused run passed 68/68.
+- No DICOM payload was persisted, logged, or sent to B. No source bytes are retained after hashing; bounded encrypted temporary package staging and purge evidence remain a prerequisite to forwarding exact checked bytes.
+
+**Judgment:** `TC-PACS-001-DIGEST-001~006` PASS only for the internal ephemeral per-instance source-digest handoff. Together with `HANDOFF-001~007`, this does not prove complete Mandatory Preflight, operation dispatch, destination-byte verification, product-level no-STOW/security gates, STOW, the full PACS coordinator, or A→B transfer. No live STOW is authorized.
+
+**Previous judgment — PACS-001-DEC-005:** `TC-PACS-001-HANDOFF-001~007` PASS only for the internal ephemeral source-identity handoff. This does not prove full Mandatory Preflight, operation dispatch, destination verification invocation, product-level no-STOW/security gates, STOW, full PACS coordinator or A→B transfer.

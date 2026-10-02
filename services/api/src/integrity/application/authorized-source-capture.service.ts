@@ -26,7 +26,8 @@ import {
   SOURCE_INTEGRITY_LIMITS,
   SOURCE_INTEGRITY_ALGORITHM,
   SourceIntegrityInputError,
-  buildSourceIntegrityManifest,
+  buildSourceIntegrityCapture,
+  type SourceIntegrityCapture,
   type SourceIntegrityManifest,
 } from "./source-integrity-manifest.builder.js";
 import {
@@ -119,6 +120,8 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
   readonly expectedInstances: readonly Readonly<{
     seriesInstanceUid: string;
     sopInstanceUid: string;
+    byteLength: number;
+    sha256: `sha256:${string}`;
   }>[];
 }
 
@@ -379,10 +382,11 @@ function createCoordinatorHandoff(input: {
   readonly identity: VerifiedActorTenantContext;
   readonly scope: SourceCaptureScope;
   readonly evidence: SourceIntegrityEvidenceRecord;
-  readonly manifest: SourceIntegrityManifest;
+  readonly capture: SourceIntegrityCapture;
   readonly descriptors: readonly ValidatedSourceInstance[];
 }): AuthorizedSourceCaptureCoordinatorHandoff {
-  const { identity, scope, evidence, manifest, descriptors } = input;
+  const { identity, scope, evidence, capture, descriptors } = input;
+  const { manifest } = capture;
   if (
     identity.tenantId.toLowerCase() !== scope.tenantId ||
     evidence.operationId !== scope.operationId ||
@@ -394,7 +398,25 @@ function createCoordinatorHandoff(input: {
     evidence.sourceDigest !== manifest.aggregateDigest ||
     evidence.sourceObjectCount !== manifest.objectCount ||
     evidence.status !== "PENDING" ||
-    descriptors.length !== manifest.objectCount
+    descriptors.length !== manifest.objectCount ||
+    capture.instances.length !== manifest.objectCount
+  ) {
+    throw new AuthorizedSourceCaptureUnavailableError();
+  }
+
+  const perInstance = new Map(
+    capture.instances.map((instance) => [instance.sopInstanceUid, instance]),
+  );
+  const descriptorUids = new Set(
+    descriptors.map((descriptor) => descriptor.sopInstanceUid),
+  );
+  if (
+    perInstance.size !== manifest.objectCount ||
+    descriptorUids.size !== descriptors.length ||
+    descriptorUids.size !== perInstance.size ||
+    [...perInstance.keys()].some((sopInstanceUid) => !descriptorUids.has(sopInstanceUid)) ||
+    capture.instances.reduce((sum, instance) => sum + instance.byteLength, 0) !==
+      manifest.totalBytes
   ) {
     throw new AuthorizedSourceCaptureUnavailableError();
   }
@@ -412,13 +434,27 @@ function createCoordinatorHandoff(input: {
                 ? 1
                 : 0,
       )
-      .map((descriptor) =>
-        Object.freeze({
+      .map((descriptor) => {
+        const integrity = perInstance.get(descriptor.sopInstanceUid);
+        if (
+          !integrity ||
+          !/^sha256:[0-9a-f]{64}$/.test(integrity.sha256) ||
+          !Number.isSafeInteger(integrity.byteLength) ||
+          integrity.byteLength < 1
+        ) {
+          throw new AuthorizedSourceCaptureUnavailableError();
+        }
+        return Object.freeze({
           seriesInstanceUid: descriptor.seriesInstanceUid,
           sopInstanceUid: descriptor.sopInstanceUid,
-        }),
-      ),
+          byteLength: integrity.byteLength,
+          sha256: integrity.sha256,
+        });
+      }),
   );
+  if (expectedInstances.length !== perInstance.size) {
+    throw new AuthorizedSourceCaptureUnavailableError();
+  }
 
   return Object.freeze({
     operationId: scope.operationId,
@@ -695,9 +731,9 @@ export class AuthorizedSourceCaptureService {
         });
       });
 
-      let manifest: SourceIntegrityManifest;
+      let capture: SourceIntegrityCapture;
       try {
-        manifest = await buildSourceIntegrityManifest({
+        capture = await buildSourceIntegrityCapture({
           expectedInstanceCount: start.scope.instanceCount as number,
           instances: instanceDescriptors,
           signal: deadline.signal,
@@ -717,6 +753,7 @@ export class AuthorizedSourceCaptureService {
         );
         throw new AuthorizedSourceCaptureUnavailableError();
       }
+      const manifest: SourceIntegrityManifest = capture.manifest;
 
       assertNotAborted(deadline);
       let completion: AuthorizedSourceCaptureResult | AuthorizedSourceCaptureCoordinatorResult;
@@ -820,7 +857,7 @@ export class AuthorizedSourceCaptureService {
                   identity: authorizationContext,
                   scope: current,
                   evidence: evidence.record,
-                  manifest,
+                  capture,
                   descriptors,
                 }),
               } as const);

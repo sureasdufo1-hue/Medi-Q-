@@ -71,7 +71,20 @@ export interface SourceIntegrityManifest {
   readonly totalBytes: number;
 }
 
+export interface SourceIntegrityInstanceEvidence {
+  readonly sopInstanceUid: string;
+  readonly byteLength: number;
+  readonly sha256: `sha256:${string}`;
+}
+
+export interface SourceIntegrityCapture {
+  readonly manifest: SourceIntegrityManifest;
+  /** Ephemeral per-instance digests for a trusted internal caller only. */
+  readonly instances: readonly SourceIntegrityInstanceEvidence[];
+}
+
 interface HashedInstance {
+  readonly sopInstanceUid: string;
   readonly uidBytes: Buffer;
   readonly byteLength: number;
   readonly digest: Buffer;
@@ -258,6 +271,7 @@ async function hashInstance(
     }
 
     return Object.freeze({
+      sopInstanceUid: descriptor.sopInstanceUid,
       uidBytes: Buffer.from(descriptor.sopInstanceUid, "ascii"),
       byteLength: instanceBytes,
       digest: instanceHash.digest(),
@@ -282,6 +296,17 @@ async function hashInstance(
 export async function buildSourceIntegrityManifest(
   input: SourceIntegrityManifestInput,
 ): Promise<SourceIntegrityManifest> {
+  return (await buildSourceIntegrityCapture(input)).manifest;
+}
+
+/**
+ * Builds the persisted aggregate manifest and its ephemeral per-instance
+ * evidence from the same sequential WADO streams. Callers must not persist,
+ * log, or expose the per-instance inventory outside the trusted coordinator.
+ */
+export async function buildSourceIntegrityCapture(
+  input: SourceIntegrityManifestInput,
+): Promise<SourceIntegrityCapture> {
   const limits = resolveLimits(input);
   validateInput(input, limits);
   if (input.signal?.aborted) reject("ABORTED");
@@ -320,10 +345,20 @@ export async function buildSourceIntegrityManifest(
     manifestHash.update(instance.digest);
   }
 
-  return Object.freeze({
+  const manifest = Object.freeze({
     algorithm: SOURCE_INTEGRITY_ALGORITHM,
     aggregateDigest: `sha256:${manifestHash.digest("hex")}`,
     objectCount: hashedInstances.length,
     totalBytes,
   });
+  const instances = Object.freeze(
+    hashedInstances.map((instance) =>
+      Object.freeze({
+        sopInstanceUid: instance.sopInstanceUid,
+        byteLength: instance.byteLength,
+        sha256: `sha256:${instance.digest.toString("hex")}` as const,
+      }),
+    ),
+  );
+  return Object.freeze({ manifest, instances });
 }

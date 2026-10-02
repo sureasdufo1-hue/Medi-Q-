@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import {
+  buildSourceIntegrityCapture,
   buildSourceIntegrityManifest,
   SOURCE_INTEGRITY_ALGORITHM,
   SOURCE_INTEGRITY_LIMITS,
@@ -38,7 +40,7 @@ function expectCode(promise, code) {
 }
 
 describe("P0 bounded source integrity manifest", () => {
-  it("emits the fixed SHA256-MANIFEST-V1 known vector", async () => {
+  it("TC-PACS-001-DIGEST-001 preserves the fixed SHA256-MANIFEST-V1 aggregate known vector", async () => {
     const a = instance("1.2.3", [0x01, 0x02, 0x03]);
     const b = instance("1.2.4", [0x10, 0x20]);
 
@@ -53,6 +55,44 @@ describe("P0 bounded source integrity manifest", () => {
       objectCount: 2,
       totalBytes: 5,
     });
+  });
+
+  it("TC-PACS-001-DIGEST-001/002 returns deterministic immutable per-instance digests from the same streams", async () => {
+    const a = instance("1.2.3", [0x01, 0x02, 0x03]);
+    const b = instance("1.2.4", [0x10, 0x20]);
+    const capture = await buildSourceIntegrityCapture({
+      expectedInstanceCount: 2,
+      instances: [b.descriptor, a.descriptor],
+    });
+    const reordered = await buildSourceIntegrityCapture({
+      expectedInstanceCount: 2,
+      instances: [a.descriptor, b.descriptor],
+    });
+
+    expect(capture.manifest).toEqual({
+      algorithm: SOURCE_INTEGRITY_ALGORITHM,
+      aggregateDigest: "sha256:855de908102c02a22d8d8c3f86e0096864689848ec77ba64c538878b4d1c0cca",
+      objectCount: 2,
+      totalBytes: 5,
+    });
+    expect(capture.instances).toEqual([
+      {
+        sopInstanceUid: "1.2.3",
+        byteLength: 3,
+        sha256: `sha256:${createHash("sha256").update(Buffer.from([0x01, 0x02, 0x03])).digest("hex")}`,
+      },
+      {
+        sopInstanceUid: "1.2.4",
+        byteLength: 2,
+        sha256: `sha256:${createHash("sha256").update(Buffer.from([0x10, 0x20])).digest("hex")}`,
+      },
+    ]);
+    expect(reordered.manifest).toEqual(capture.manifest);
+    expect(reordered.instances).toEqual(capture.instances);
+    expect(Object.isFrozen(capture)).toBe(true);
+    expect(Object.isFrozen(capture.manifest)).toBe(true);
+    expect(Object.isFrozen(capture.instances)).toBe(true);
+    expect(capture.instances.every(Object.isFrozen)).toBe(true);
   });
 
   it("canonicalizes enumeration order and opens one object stream at a time", async () => {

@@ -1163,7 +1163,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
     });
   }
 
-  await t.test("TC-INT-001-CAP-010/014 and TC-PACS-001-HANDOFF-001/005/006 commit the exact hashed A inventory without writing B", async () => {
+  await t.test("TC-INT-001-CAP-010/014 and TC-PACS-001-HANDOFF-001/005/006 plus DIGEST-003/005/006 commit exact A byte evidence without writing B", async () => {
     const harness = createHarness({ observeInstanceStreams: true });
     try {
       const result = await harness.service.captureForCoordinator({
@@ -1189,6 +1189,8 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.deepEqual(handoff.expectedInstances, expectedInstances.map((instance) => ({
         seriesInstanceUid: manifest.seriesInstanceUID,
         sopInstanceUid: instance.sopInstanceUID,
+        byteLength: instance.sizeBytes,
+        sha256: `sha256:${instance.sha256}`,
       })));
       assert.deepEqual(handoff, {
         operationId: fixture.operationId,
@@ -1211,6 +1213,8 @@ test("authorized source capture uses only A WADO after database-backed authoriza
         expectedInstances: expectedInstances.map((instance) => ({
           seriesInstanceUid: manifest.seriesInstanceUID,
           sopInstanceUid: instance.sopInstanceUID,
+          byteLength: instance.sizeBytes,
+          sha256: `sha256:${instance.sha256}`,
         })),
       });
       assert.match(handoff.sourceEvidence.evidenceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
