@@ -17,6 +17,13 @@ const ids = Object.freeze({
   wrongScope: "1d000000-0000-4000-8000-000000000009",
   crossTenant: "1d000000-0000-4000-8000-000000000010",
   unavailable: "1d000000-0000-4000-8000-000000000011",
+  bindingMismatch: "1d000000-0000-4000-8000-000000000012",
+  sourceMismatch: "1d000000-0000-4000-8000-000000000013",
+  notCreated: "1d000000-0000-4000-8000-000000000014",
+  fixtureStateTransition: "1d000000-0000-4000-8000-000000000015",
+  operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
+  operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
+  operationNotCreated: "1b000000-0000-4000-8000-000000000013",
 });
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 try {
@@ -37,6 +44,10 @@ try {
       ids.wrongScope,
       ids.crossTenant,
       ids.unavailable,
+      ids.bindingMismatch,
+      ids.sourceMismatch,
+      ids.notCreated,
+      ids.fixtureStateTransition,
     ]],
   );
   const actualAudit = new Map(
@@ -55,6 +66,8 @@ try {
     [deniedAudit(ids.revokedGrant), 1],
     [deniedAudit(ids.expiredGrant), 1],
     [deniedAudit(ids.wrongScope), 1],
+    [deniedAudit(ids.notCreated), 1],
+    [`${ids.fixtureStateTransition}|PACS_TRANSFER_OPERATION_STATE_CHANGED|FAILURE|SYNTHETIC_SETUP_FAILURE`, 1],
     [`${ids.failure}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.failure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
     [`${ids.success}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
@@ -82,7 +95,25 @@ try {
     evidence_status: "PENDING",
     source_object_count: 3,
   });
-  console.log("int001_capture_audit=PASS denied=7 hidden_or_unavailable=0 failed=1 success=1");
+
+  const operationMatrix = await pool.query(
+    `SELECT op.operation_id::text AS operation_id,
+            op.state AS operation_state,
+            count(e.integrity_id)::integer AS evidence_count
+       FROM pacs_transfer_operations op
+       LEFT JOIN integrity_evidence e ON e.operation_id = op.operation_id
+      WHERE op.operation_id = ANY($1::uuid[])
+      GROUP BY op.operation_id, op.state
+      ORDER BY op.operation_id`,
+    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated]],
+  );
+  assert.deepEqual(operationMatrix.rows, [
+    { operation_id: ids.operationBindingMismatch, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.operationSourceMismatch, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.operationNotCreated, operation_state: "FAILED", evidence_count: 0 },
+  ]);
+  console.log("int001_capture_audit=PASS denied=8 unresolved=4 failed=1 success=1");
+  console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_capture_persistence=PASS pending=1 operation_state=CREATED");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)

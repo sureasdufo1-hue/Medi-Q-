@@ -17,6 +17,8 @@ import {
 import { RuntimeDatabaseService } from "../../services/api/dist/database/runtime-database.service.js";
 import { ActorRegistryRepository } from "../../services/api/dist/identity/persistence/actor-registry.repository.js";
 import { ActorTenantContextService } from "../../services/api/dist/identity/application/actor-tenant-context.service.js";
+import { PacsTransferOperation } from "../../services/api/dist/pacs/domain/pacs-transfer-operation.js";
+import { PostgresPacsTransferOperationRepository } from "../../services/api/dist/pacs/persistence/postgres-pacs-transfer-operation.repository.js";
 import {
   AuthorizedSourceCaptureService,
   AuthorizedSourceCaptureInvalidRequestError,
@@ -42,6 +44,9 @@ const fixture = Object.freeze({
   consentId: "19000000-0000-4000-8000-000000000001",
   grantId: "1a000000-0000-4000-8000-000000000001",
   operationId: "1b000000-0000-4000-8000-000000000001",
+  operationBindingMismatchId: "1b000000-0000-4000-8000-000000000011",
+  operationSourceMismatchId: "1b000000-0000-4000-8000-000000000012",
+  operationNotCreatedId: "1b000000-0000-4000-8000-000000000013",
   correlationDenied: "1d000000-0000-4000-8000-000000000001",
   correlationFailure: "1d000000-0000-4000-8000-000000000002",
   correlationSuccess: "1d000000-0000-4000-8000-000000000003",
@@ -53,6 +58,10 @@ const fixture = Object.freeze({
   correlationWrongScope: "1d000000-0000-4000-8000-000000000009",
   correlationCrossTenant: "1d000000-0000-4000-8000-000000000010",
   correlationUnavailable: "1d000000-0000-4000-8000-000000000011",
+  correlationBindingMismatch: "1d000000-0000-4000-8000-000000000012",
+  correlationSourceMismatch: "1d000000-0000-4000-8000-000000000013",
+  correlationNotCreated: "1d000000-0000-4000-8000-000000000014",
+  correlationFixtureStateTransition: "1d000000-0000-4000-8000-000000000015",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -229,17 +238,17 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
   });
 }
 
-async function readOperationState(harness) {
+async function readOperationState(harness, operationId = fixture.operationId) {
   return harness.actorContext.run(principal, fixture.tenantId, async (_identity, client) => {
     const operation = await client.query(
       `SELECT state FROM pacs_transfer_operations WHERE operation_id = $1::uuid`,
-      [fixture.operationId],
+      [operationId],
     );
     const evidence = await client.query(
       `SELECT verification_stage, status, source_object_count
          FROM integrity_evidence
         WHERE operation_id = $1::uuid`,
-      [fixture.operationId],
+      [operationId],
     );
     return Object.freeze({
       operationState: operation.rows[0]?.state ?? null,
@@ -361,6 +370,111 @@ test("authorized source capture uses only A WADO after database-backed authoriza
           assert.equal(counters.activeTenantTransactions, 0);
           const state = await readOperationState(harness);
           assert.equal(state.operationState, "CREATED");
+          assert.deepEqual(state.evidence, []);
+        } finally {
+          await harness.database.onModuleDestroy();
+        }
+      });
+    }
+  });
+
+  await t.test("CAP-003 denies mismatched persisted bindings and non-CREATED operations before DICOM", async (matrix) => {
+    const transitionHarness = createHarness();
+    try {
+      await transitionHarness.actorContext.run(
+        principal,
+        fixture.tenantId,
+        async (_identity, client) => {
+          const selected = await client.query(
+            `SELECT operation_id, tenant_id, exchange_session_id, study_ref_id,
+                    actor_id, idempotency_key, request_digest, state, version,
+                    reason_code, source_object_count, destination_object_count,
+                    created_at, updated_at, stow_started_at
+               FROM pacs_transfer_operations
+              WHERE operation_id = $1::uuid`,
+            [fixture.operationNotCreatedId],
+          );
+          assert.equal(selected.rowCount, 1);
+          const row = selected.rows[0];
+          const current = PacsTransferOperation.reconstitute({
+            operationId: row.operation_id,
+            tenantId: row.tenant_id,
+            exchangeSessionId: row.exchange_session_id,
+            studyRefId: row.study_ref_id,
+            actorId: row.actor_id,
+            idempotencyKey: row.idempotency_key,
+            requestDigest: row.request_digest,
+            state: row.state,
+            version: row.version,
+            reasonCode: row.reason_code,
+            sourceObjectCount: row.source_object_count,
+            destinationObjectCount: row.destination_object_count,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            stowStartedAt: row.stow_started_at,
+          });
+          assert.equal(current.snapshot.state, "CREATED");
+          const failed = current.transitionTo({
+            nextState: "FAILED",
+            now: new Date(current.snapshot.updatedAt.getTime() + 1_000),
+            reasonCode: "SYNTHETIC_SETUP_FAILURE",
+          });
+          await new PostgresPacsTransferOperationRepository(client).transition({
+            current,
+            next: failed,
+            correlationId: fixture.correlationFixtureStateTransition,
+          });
+        },
+      );
+    } finally {
+      await transitionHarness.database.onModuleDestroy();
+    }
+
+    const cases = [
+      {
+        name: "operation Session does not bind the referenced Study package",
+        operationId: fixture.operationBindingMismatchId,
+        correlationId: fixture.correlationBindingMismatch,
+        expectedState: "CREATED",
+      },
+      {
+        name: "Study source Hospital differs from the operation Session",
+        operationId: fixture.operationSourceMismatchId,
+        correlationId: fixture.correlationSourceMismatch,
+        expectedState: "CREATED",
+      },
+      {
+        name: "fully bound operation outside CREATED state is denied",
+        operationId: fixture.operationNotCreatedId,
+        correlationId: fixture.correlationNotCreated,
+        expectedState: "FAILED",
+      },
+    ];
+
+    for (const scenario of cases) {
+      await matrix.test(scenario.name, async () => {
+        const harness = createHarness();
+        try {
+          const result = await harness.service.capture({
+            principal,
+            tenantCandidate: fixture.tenantId,
+            correlationId: scenario.correlationId,
+            operationId: scenario.operationId,
+            consentId: fixture.consentId,
+            grantId: fixture.grantId,
+          });
+          assert.deepEqual(result, { kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+          const counters = harness.counters();
+          assert.equal(counters.metadataCalls, 0);
+          assert.equal(counters.instanceCalls, 0);
+          assert.deepEqual(counters.sourceRequests, []);
+          assert.deepEqual(counters.sourcePaths, []);
+          assert.equal(counters.bNetworkAttempts, 0);
+          assert.equal(counters.stowCalls, 0);
+          assert.equal(counters.destinationVerificationCalls, 0);
+          assert.equal(counters.activeTenantTransactions, 0);
+          const state = await readOperationState(harness, scenario.operationId);
+          assert.equal(state.operationState, scenario.expectedState);
           assert.deepEqual(state.evidence, []);
         } finally {
           await harness.database.onModuleDestroy();

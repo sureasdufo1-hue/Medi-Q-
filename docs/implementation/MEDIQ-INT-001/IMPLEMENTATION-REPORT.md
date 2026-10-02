@@ -88,13 +88,13 @@ The later `INT-001-DEC-003` sub-gate adds an internal-only authorized source-cap
 - Hash suite: `PASS` (12/12); source-evidence repository suite: `PASS` (6/6)
 - API typecheck and Drizzle migration consistency: `PASS`
 - DB-008 full clean/reset/reapply, catalog/RLS, new source-evidence integration and DB-002~007 regressions: `PASS`; see `TEST-EVIDENCE.md`
-- `TC-INT-001-CAP-001`, `CAP-002`, and `CAP-013~014`: `PASS` within exact scopes; CAP-001 verifies scope-spoof rejection before transaction/I/O and operation-bound Study/minimal result; CAP-002 verifies the initial-authorization denial matrix, conditional Audit, RLS-hidden scope and unavailable-DB behavior; CAP-014 verifies isolated PostgreSQL/RLS + real HTTPS Test Orthanc A WADO, failure/success paths, Audit/evidence observer, B empty before/after, cleanup and persistent-stack preservation
-- Remaining CAP-003~012 as complete Acceptance, destination comparison, product route, STOW, destination verification and A→B E2E: open/not run; see explicit limits in `TEST-EVIDENCE.md`
+- `TC-INT-001-CAP-001~003` and `CAP-013~014`: `PASS` within exact scopes; CAP-001 verifies caller-scope rejection and operation-derived Study; CAP-002 verifies the initial-authorization denial/Audit matrix; CAP-003 verifies mismatched persisted binding and non-`CREATED` state denial; CAP-014 verifies isolated PostgreSQL/RLS + real HTTPS Test Orthanc A WADO, failure/success effects, observer, B empty before/after, cleanup and stack preservation
+- Remaining CAP-004~012 as complete Acceptance, destination comparison, product route, STOW, destination verification and A→B E2E: open/not run; see explicit limits in `TEST-EVIDENCE.md`
 
 ## 8. 변경하지 않은 사항
 
 - All `AGENTS.md` authorization, tenant, source-of-record, Audit and no-STOW boundaries remain unchanged.
-- The builder/repository are not themselves a public route. An internal source-capture service is registered behind the verified authorization boundary; CAP-001/002/014 invoked it only against disposable Test Orthanc A and temporary PostgreSQL. Test setup wrote only synthetic fixtures to temporary A; the service issued no B request, STOW or destination-verification call.
+- The builder/repository are not themselves a public route. An internal source-capture service is registered behind the verified authorization boundary; CAP-001/002/003/014 invoked it only against disposable Test Orthanc A and temporary PostgreSQL. Test setup wrote only synthetic fixtures to temporary A; the service issued no B request, STOW or destination-verification call.
 - All CAP-014 resources were removed after verification. The runner confirmed existing `mediq` containers, volumes and networks were unchanged. No patient data, production environment or operational credential was used.
 
 ## 9. 결정 및 예외
@@ -107,23 +107,23 @@ The later `INT-001-DEC-003` sub-gate adds an internal-only authorized source-cap
 ## 10. 잔여 위험과 후속 작업
 
 - The internal source-capture service obtains bytes from configured Test Hospital A after DB-backed authorization in the verified test environment. No public/product route or production endpoint is wired; synthetic CAP-014 does not establish production source authenticity or operational PACS readiness.
-- CAP-014 demonstrated failure Audit and pending-evidence behavior against real temporary PostgreSQL. CAP-001 verifies caller-scope rejection and DB-derived Study use; CAP-002 verifies the enumerated initial-authorization denial matrix and its conditional Audit at the live boundary. Remaining CAP-003~012/complete atomicity Acceptance, destination comparison and terminal `FAILED`/completion enforcement are not all closed by these sub-gates.
+- CAP-014 demonstrated failure Audit and pending-evidence behavior against real temporary PostgreSQL. CAP-001 verifies caller-scope rejection and DB-derived Study; CAP-002 verifies the initial-authorization denial/Audit matrix; CAP-003 verifies persisted binding and non-`CREATED` denial at the live boundary. Remaining CAP-004~012/complete atomicity Acceptance, destination comparison and terminal `FAILED`/completion enforcement are not all closed by these sub-gates.
 - 2 GiB/64 MiB limits have not been performance-benchmarked on a 2 GiB study or production-like workload.
-- Follow-up: close remaining CAP-003~012 Acceptance gaps with evidence; then separately implement destination verification and completion enforcement under a new recommendation/Acceptance gate. Keep STOW disabled until full Preflight and product no-STOW/B-unchanged negatives pass.
+- Follow-up: close remaining CAP-004~012 Acceptance gaps with evidence; then separately implement destination verification and completion enforcement under a new recommendation/Acceptance gate. Keep STOW disabled until full Preflight and product no-STOW/B-unchanged negatives pass.
 
 ## 11. 최종 판정
 
 ```text
 Ticket: MEDIQ-INT-001
-Scope: Bounded hash + operation-bound pending evidence foundation; internal synthetic/Test-only authorized source-capture sub-gate; CAP-001/002 and CAP-013/014 scoped Acceptance
+Scope: Bounded hash + operation-bound pending evidence foundation; internal synthetic/Test-only authorized source-capture sub-gate; CAP-001~003 and CAP-013/014 scoped Acceptance
 Changed: SHA256-MANIFEST-V1 builder; operation-bound persistence and permanent exact grants; verified-Tenant/session-fence source-capture service; real A-only HTTPS WADO integration harness; isolated Compose runner, synthetic fixture/DB setup, B empty probe, read-only Audit/evidence observer; synchronized records
 Not changed: public route, Viewer/Download, PACS import coordinator, STOW, destination verification/comparison, transfer completion, full A→B E2E
-Security impact: fail-closed Authorization and PatientMapping gates; exact runtime/RLS and transaction-outside-WADO boundary verified in disposable environments; CAP-002 denies made zero DICOM calls and conditional Audit behavior was observed; B is unreachable to the service container; claims limited to scoped CAP-001/002/014
-Tests executed: API regression 34/584; hash 12/12; evidence repository 6/6; typecheck; migration consistency; DB-008/DB-002~007; CAP-001/002/014 shared isolated runner 14/14, three consecutive successful runs, Audit/evidence observer, B empty before/after + cleanup; see TEST-EVIDENCE.md
-Tests not executed: remaining CAP-003~012 end-to-end scenarios, product import/API path, destination comparison, STOW/no-STOW product coordinator, live destination verification, full P0 E2E
+Security impact: fail-closed Authorization and PatientMapping gates; exact runtime/RLS and transaction-outside-WADO boundary verified in disposable environments; CAP-002 denial matrix and CAP-003 binding/state rejects made zero DICOM calls; conditional Audit behavior was observed; B is unreachable to the service container; claims limited to scoped CAP-001~003/014
+Tests executed: API regression 34/584; hash 12/12; evidence repository 6/6; typecheck; migration consistency; DB-008/DB-002~007; CAP-001~003/014 shared isolated runner 18/18, three consecutive successful runs, Audit/evidence observer, B empty before/after + cleanup; see TEST-EVIDENCE.md
+Tests not executed: remaining CAP-004~012 end-to-end scenarios, product import/API path, destination comparison, STOW/no-STOW product coordinator, live destination verification, full P0 E2E
 Evidence: TEST-EVIDENCE.md
 Implementation record: IMPLEMENTATION-REPORT.md
-Remaining risks: CAP-001/002/014 use synthetic data and disposable local services; one earlier CAP-002 runner attempt exited 1 without a safely attributable cause before three later consecutive passes; no public/production source path, destination verification or completion gate; remaining CAP-003~012 and production-like workload benchmark open
+Remaining risks: CAP-001~003/014 use synthetic data and disposable local services; an initial CAP-003 fixture attempt was rejected by the database initial-state guard, then corrected without bypassing it and followed by three passes; the separate earlier CAP-002 runner exit 1 remains unexplained; no public/production source path, destination verification or completion gate; remaining CAP-004~012 and production-like workload benchmark open
 Status: PARTIAL
 ```
 
@@ -137,6 +137,7 @@ Status: PARTIAL
 | 2026-10-02 | `PARTIAL` | Added exact permanent source-capture runtime column grants; DB-008 full clean/reset/reapply, 236-column privilege/RLS, INT-001 persistence and DB-002~007 regression all PASS. Live Test Orthanc A/B capture remains open |
 | 2026-10-02 | `PARTIAL` | CAP-014 isolated Test Orthanc A/B + disposable PostgreSQL passed: 4/4 tests, authorization/failure/success Audit+evidence checked, B empty before/after, temporary cleanup and existing stack preservation; full P0 remains open |
 | 2026-10-02 | `PARTIAL` | CAP-002 denial matrix added after recommendation/Acceptance; isolated runner passed 14/14 on three consecutive runs, including zero DICOM effects and conditional Audit behavior. One earlier exit 1 remains unexplained; CAP-003~012 and full P0 remain open |
+| 2026-10-02 | `PARTIAL` | CAP-002 denial matrix passed 18/18 shared tests on three consecutive runs; CAP-003 persisted-binding/state matrix then passed the same 18/18 three times. State fixture used the approved domain/repository transition; initial direct later-state insert was rejected by the DB trigger and was not retained. CAP-004~012 and full P0 remain open |
 
 ## 13. Authorized Source-Capture Sub-gate — CAP-014/CAP-001 Historical Checkpoint
 
@@ -202,18 +203,34 @@ This section preserves the checkpoint before the later CAP-002 denial-matrix ext
 
 **실행 결과 (2026-10-02):** 최종 fixture/runner 보정 뒤 `./scripts/test-int001-source-capture.ps1`를 연속 세 차례 실행했고 매번 exit 0, 14/14 TAP tests, Audit/evidence observer PASS, B EMPTY 전후, 임시자원 정리 및 기존 `mediq` stack 불변을 확인했다. CAP-002 observer는 예상한 7개 denial Audit만 확인했고 RLS-hidden cross-Tenant 및 DB unavailable correlation에는 Audit이 없었으며 모든 거부 분기는 DICOM gateway/A 요청과 evidence가 0이었다. 전체 API 회귀 `npm run test:api -- --reporter=dot`도 exit 0, API build 포함 34 files/584 tests PASS. 초기 fixture seed에서 비 UUID synthetic idempotency key(SQLSTATE `22P02`)가 거부됐고, 수정 후 한 integration 실행은 exit 1이었으나 민감 TAP 원문을 노출하지 않도록 한 실행기의 안전 출력만으로 원인을 판정하지 못했다. Runner 기대 개수와 seed key를 수정한 뒤 세 차례 연속 통과했으며 미분류 실패 이력은 잔여 하네스 신뢰성 위험으로 유지한다. 판정은 CAP-002 scope만 `PASS`; CAP-003~012와 Ticket 전체는 계속 열린다.
 
+### 13.6 CAP-003 persisted-operation binding and state gate recommendation (recorded before test changes)
+
+**결정 ID·상태·권한:** `INT-001-CAP-003-REC-001`, adopted 2026-10-02 under standing `PDEC-001` and the approved `INT-001-DEC-003` / `TC-INT-001-CAP-003`. This is a synthetic/Test-only verification refinement; it does not widen product scope or weaken any invariant.
+
+**문제:** CAP-001/002 verify caller scope and initial authorization, but do not independently prove that the internal service rejects a persisted operation whose individually valid references form a mismatched Session/Package/Study/source-Hospital aggregate, or a fully bound operation that is no longer `CREATED`. The persistence schema has individual foreign keys; the authorized scope resolver's relational joins are the boundary that must prevent an inconsistent aggregate from reaching the PACS adapter.
+
+**채택 권고안:** Extend the disposable fixture with two deliberately inconsistent but individually FK-valid synthetic operation graphs: (1) the operation Session is paired with a Study/package belonging to a different Session; (2) the operation Session source Hospital differs from the Study/package source Hospital. Add one internally consistent operation initially as `CREATED`; move it to `FAILED` only through the existing `PacsTransferOperation` domain transition and `PostgresPacsTransferOperationRepository`, with an explicit setup Audit. Invoke the actual source-capture service with a verified synthetic principal and the existing isolated Test configuration. For both malformed graphs, expect fixed generic `DENIED/AUTHORIZATION_DENIED`, no resolved-scope disclosure, no source-capture denial Audit because the complete trusted graph cannot resolve, zero source gateway/A/B calls, zero evidence, and unchanged operation state. For the valid non-`CREATED` operation, expect fixed denial, exactly one minimized source-capture denial Audit, zero DICOM/evidence, and state still `FAILED`; independently verify the setup transition Audit. Never bypass the database initial-state/transition trigger by directly inserting a later state. Preserve B-empty, forbidden STOW/destination calls, and cleanup/existing-stack invariants.
+
+**대안·선택 이유:** (1) rely on unit/mocked repository tests — rejected because they do not prove the actual PostgreSQL joins/RLS and DICOM effect boundary. (2) directly insert `PREFLIGHT_PASSED` — rejected by evidence from the first fixture attempt (`SQLSTATE 23514`, `PACS_TRANSFER_OPERATION_INITIAL_STATE_INVALID`) and by the invariant that new operations must start as `CREATED`; bypassing this trigger would fabricate state. (3) alter the primary success operation in-place — rejected because it couples cases and risks test-order contamination. (4) seed separate synthetic aggregates and create the non-`CREATED` case through the existing domain/repository transition, then exercise the live source-capture service — selected because it preserves state invariants and uses real RLS/joins while keeping all mutations isolated and repeatable.
+
+**범위·영향·잔여 위험:** Acceptance, synthetic fixture, integration test, read-only observer, runner expectation, and evidence/docs only unless a concrete implementation defect is found. No application route, API/OpenAPI, migration/schema, permanent grant, PACS configuration, B data, real PHI, credential, STOW, or production behavior is in scope. This closes only the initial persisted-binding/state boundary; it does not cover CAP-009 in-flight state races, later authorization/mapping changes, destination verification, or full P0.
+
+**Acceptance/검증:** `docs/ACCEPTANCE-TESTS.md` recorded the exact mismatch/non-`CREATED` matrix before test edits. The first runner attempt exited during disposable fixture seed because a later state was directly inserted; the DB trigger rejected it and cleanup confirmed the existing stack unchanged. The fixture was revised to insert `CREATED` and use the approved domain/repository transition to `FAILED`.
+
+**실행 결과 (2026-10-02):** `./scripts/test-int001-source-capture.ps1` exited 0 three consecutive times; each run passed 18/18 Node tests, the independent Audit/evidence/operation-state observer, B EMPTY before/after, cleanup, and existing-stack preservation. The mismatched Session↔Package/Study and source-Hospital bindings returned only generic denial, with zero DICOM calls, zero evidence, no source-capture denial Audit, and unchanged `CREATED` state. The fully bound operation was transitioned `CREATED→FAILED` via `PacsTransferOperation` + `PostgresPacsTransferOperationRepository` and emitted its separate setup transition Audit; source capture then returned generic denial, wrote exactly one minimized source-capture denial Audit, made zero DICOM calls, created no evidence, and left the operation `FAILED`. `npm run test:api -- --reporter=dot` exited 0 with API build and 34 files/584 tests. Syntax and `git diff --check` passed. CAP-003 is `PASS` for this scoped matrix only; CAP-004~012 and the full Ticket remain open.
+
 ## 14. 현재 체크포인트 판정
 
 ```text
 Ticket: MEDIQ-INT-001
-Scope: INT-001-DEC-003 authorized synthetic source-capture sub-gate; CAP-001/002 and CAP-013/014 scoped Acceptance
+Scope: INT-001-DEC-003 authorized synthetic source-capture sub-gate; CAP-001~003 and CAP-013/014 scoped Acceptance
 Changed: server-derived operation scope; resolved-session-fence executor; A-only WADO capture and bounded hashing; destination mapping checks; fixed Audit events; pending evidence + Audit application transaction; mocked and real isolated integration tests; exact permanent-grant migration; PostgreSQL/RLS Acceptance and synchronized records
 Not changed: HTTP/OpenAPI; PACS import coordinator; operation-state transition; STOW; destination verification; full A→B flow
-Security impact: exact runtime column privileges/Tenant RLS, CAP-001 caller-scope boundary, CAP-002 initial-authorization denial/Audit boundary, and CAP-014 source effect boundary are verified in disposable PostgreSQL/Test Orthanc; no B network access/write; scope is synthetic and internal-only
-Tests executed: API build + 34 files/584 tests; migration consistency; 6 migration-runner tests; DB-008 full gate exit 0 including 236-column runtime privilege inventory and regressions; CAP-001/002/014 shared runner exit 0, 14/14 tests on three consecutive runs, Audit/evidence observer, B empty before/after, isolated cleanup
-Tests not executed: remaining CAP-003~012 end-to-end Acceptance; product HTTP path; destination comparison/verification; STOW and full P0 E2E
+Security impact: exact runtime column privileges/Tenant RLS, CAP-001 caller-scope boundary, CAP-002 authorization-denial boundary, CAP-003 persisted-binding/state boundary, and CAP-014 source effect boundary are verified in disposable PostgreSQL/Test Orthanc; no B network access/write; scope is synthetic and internal-only
+Tests executed: API build + 34 files/584 tests; migration consistency; 6 migration-runner tests; DB-008 full gate exit 0 including 236-column runtime privilege inventory and regressions; CAP-001~003/014 shared runner exit 0, 18/18 tests on three consecutive runs, Audit/evidence observer, B empty before/after, isolated cleanup
+Tests not executed: remaining CAP-004~012 end-to-end Acceptance; product HTTP path; destination comparison/verification; STOW and full P0 E2E
 Evidence: TEST-EVIDENCE.md
 Implementation record: IMPLEMENTATION-REPORT.md
-Remaining risks: synthetic local CAP-001/002/014 is not production PACS or public product validation; one earlier CAP-002 runner attempt had an unclassified exit 1 before three consecutive clean runs; remaining CAP-003~012, destination comparison/completion gate and full P0 are open
+Remaining risks: synthetic local CAP-001~003/014 is not production PACS or public product validation; the earlier CAP-002 runner attempt with unclassified exit 1 remains unexplained; remaining CAP-004~012, destination comparison/completion gate and full P0 are open
 Status: PARTIAL
 ```
