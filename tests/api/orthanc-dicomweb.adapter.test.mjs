@@ -130,6 +130,30 @@ describe("OrthancDicomwebAdapter DCM-002 synthetic transport contract", () => {
     expect(() => invalidResolver.resolve(context(TEST_HOSPITAL_A_ID), "QIDO_STUDIES")).toThrow("DICOM_CONFIGURATION_INVALID");
   });
 
+  it("rejects unsafe source origins before any upstream fetch", async () => {
+    for (const origin of [
+      "http://orthanc-a:8042",
+      "https://untrusted.invalid:8042",
+      "https://orthanc-a:8443",
+      "https://user@orthanc-a:8042",
+      "https://orthanc-a:8042/dicom-web",
+      "https://orthanc-a:8042?target=other",
+      "https://orthanc-a:8042#fragment",
+    ]) {
+      const fetchImpl = vi.fn();
+      const gateway = new OrthancDicomwebAdapter(
+        new TestOrthancEndpointResolver(testConfig({ orthancAUrl: origin })),
+        { fetch: fetchImpl },
+      );
+      await expect(gateway.retrieveStudyMetadata({
+        context: context(TEST_HOSPITAL_A_ID),
+        studyInstanceUid: STUDY,
+        maximumItems: 1,
+      })).rejects.toThrow();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    }
+  });
+
   it("resolves QIDO/WADO only for A and STOW/verification only for B", async () => {
     const fetchImpl = vi.fn();
     const instance = adapter(fetchImpl);

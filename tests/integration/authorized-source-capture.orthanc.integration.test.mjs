@@ -95,13 +95,18 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
   let activeTenantTransactions = 0;
   let initialAuthorizationCommitted = false;
   let pendingFailure = failFirstInstance;
-  let bNetworkAttempts = 0;
+  let forbiddenEndpointAttempts = 0;
   let stowCalls = 0;
   let destinationVerificationCalls = 0;
   let metadataCalls = 0;
   let instanceCalls = 0;
   const sourceRequests = [];
   const sourcePaths = [];
+  const sourceRequestObservations = [];
+  const configuredAAuthorization = `Basic ${Buffer.from(
+    `${config.orthancAUsername}:${config.orthancAPassword}`,
+    "utf8",
+  ).toString("base64")}`;
 
   const actorContext = Object.freeze({
     run: async (...args) => {
@@ -132,13 +137,34 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
           ? input
           : new URL(typeof input === "string" ? input : input.url);
         const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-        if (url.hostname !== "orthanc-a") {
-          bNetworkAttempts += 1;
+        if (
+          url.protocol !== "https:" ||
+          url.hostname !== "orthanc-a" ||
+          url.port !== "8042" ||
+          url.username ||
+          url.password
+        ) {
+          forbiddenEndpointAttempts += 1;
           throw new Error("SOURCE_CAPTURE_TEST_NETWORK_BOUNDARY");
         }
+        assert.ok(url.pathname.startsWith("/dicom-web/"));
+        assert.equal(url.hash, "");
+        assert.equal(url.search, "");
         assert.equal(method, "GET", "The source-capture adapter must not write to A");
+        assert.equal(init?.redirect, "error", "Upstream redirects must not change the configured origin");
+        const authorization = new Headers(init?.headers).get("authorization");
+        assert.ok(authorization === configuredAAuthorization, "The source request must use the configured A Authorization header");
         assert.equal(activeTenantTransactions, 0, "No verified-Tenant transaction may span WADO");
         assert.equal(initialAuthorizationCommitted, true, "A WADO must follow committed initial authorization");
+        sourceRequestObservations.push(Object.freeze({
+          protocol: url.protocol,
+          hostname: url.hostname,
+          port: url.port,
+          pathname: url.pathname,
+          method,
+          redirect: init?.redirect,
+          configuredAAuthorization: authorization === configuredAAuthorization,
+        }));
         sourceRequests.push(url.pathname.includes("/metadata") ? "METADATA" : "INSTANCE");
         sourcePaths.push(url.pathname);
         const response = await globalThis.fetch(input, init);
@@ -229,7 +255,8 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
       initialAuthorizationCommitted,
       sourceRequests: [...sourceRequests],
       sourcePaths: [...sourcePaths],
-      bNetworkAttempts,
+      sourceRequestObservations: [...sourceRequestObservations],
+      forbiddenEndpointAttempts,
       stowCalls,
       destinationVerificationCalls,
       metadataCalls,
@@ -293,8 +320,41 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.tenantContextRuns, 0);
       assert.deepEqual(counters.sourceRequests, []);
       assert.deepEqual(counters.sourcePaths, []);
-      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
       assert.equal(counters.stowCalls, 0);
+    } finally {
+      await harness.database.onModuleDestroy();
+    }
+  });
+
+  await t.test("CAP-004 rejects caller-supplied PACS endpoint and credential selectors before DB or network", async () => {
+    const harness = createHarness();
+    try {
+      await assert.rejects(
+        harness.service.capture({
+          principal,
+          tenantCandidate: fixture.tenantId,
+          correlationId: fixture.correlationDenied,
+          operationId: fixture.operationId,
+          consentId: fixture.consentId,
+          grantId: fixture.grantId,
+          endpointUrl: "http://attacker.invalid:8042/dicom-web/",
+          sourceUrl: "https://other.invalid/dicom-web/",
+          username: "caller-controlled",
+          password: "caller-controlled",
+          authorization: "Bearer caller-controlled",
+        }),
+        (error) => error instanceof AuthorizedSourceCaptureInvalidRequestError,
+      );
+      const counters = harness.counters();
+      assert.equal(counters.tenantContextRuns, 0);
+      assert.equal(counters.metadataCalls, 0);
+      assert.equal(counters.instanceCalls, 0);
+      assert.deepEqual(counters.sourceRequests, []);
+      assert.deepEqual(counters.sourceRequestObservations, []);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
+      assert.equal(counters.stowCalls, 0);
+      assert.equal(counters.destinationVerificationCalls, 0);
     } finally {
       await harness.database.onModuleDestroy();
     }
@@ -364,7 +424,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
           assert.equal(counters.instanceCalls, 0);
           assert.deepEqual(counters.sourceRequests, []);
           assert.deepEqual(counters.sourcePaths, []);
-          assert.equal(counters.bNetworkAttempts, 0);
+          assert.equal(counters.forbiddenEndpointAttempts, 0);
           assert.equal(counters.stowCalls, 0);
           assert.equal(counters.destinationVerificationCalls, 0);
           assert.equal(counters.activeTenantTransactions, 0);
@@ -469,7 +529,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
           assert.equal(counters.instanceCalls, 0);
           assert.deepEqual(counters.sourceRequests, []);
           assert.deepEqual(counters.sourcePaths, []);
-          assert.equal(counters.bNetworkAttempts, 0);
+          assert.equal(counters.forbiddenEndpointAttempts, 0);
           assert.equal(counters.stowCalls, 0);
           assert.equal(counters.destinationVerificationCalls, 0);
           assert.equal(counters.activeTenantTransactions, 0);
@@ -500,7 +560,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.instanceCalls, 0);
       assert.deepEqual(counters.sourceRequests, []);
       assert.deepEqual(counters.sourcePaths, []);
-      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
       assert.equal(counters.stowCalls, 0);
       assert.equal(counters.destinationVerificationCalls, 0);
       const state = await readOperationState(harness);
@@ -532,7 +592,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.instanceCalls, 0);
       assert.deepEqual(counters.sourceRequests, []);
       assert.deepEqual(counters.sourcePaths, []);
-      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
       assert.equal(counters.stowCalls, 0);
       assert.equal(counters.destinationVerificationCalls, 0);
     } finally {
@@ -558,7 +618,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.initialAuthorizationCommitted, true);
       assert.equal(counters.activeTenantTransactions, 0);
       assert.deepEqual(counters.sourceRequests, ["METADATA", "INSTANCE"]);
-      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
       assert.equal(counters.stowCalls, 0);
       assert.equal(counters.destinationVerificationCalls, 0);
       const state = await readOperationState(harness);
@@ -599,7 +659,18 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.ok(harness.counters().sourcePaths.every((path) =>
         path.startsWith(`/dicom-web/studies/${manifest.studyInstanceUID}/`),
       ));
-      assert.equal(harness.counters().bNetworkAttempts, 0);
+      assert.equal(harness.counters().forbiddenEndpointAttempts, 0);
+      const observations = harness.counters().sourceRequestObservations;
+      assert.equal(observations.length, manifest.instanceCount + 1);
+      assert.ok(observations.every((request) =>
+        request.protocol === "https:" &&
+        request.hostname === "orthanc-a" &&
+        request.port === "8042" &&
+        request.pathname.startsWith(`/dicom-web/studies/${manifest.studyInstanceUID}/`) &&
+        request.method === "GET" &&
+        request.redirect === "error" &&
+        request.configuredAAuthorization === true,
+      ));
       assert.equal(harness.counters().stowCalls, 0);
       assert.equal(harness.counters().destinationVerificationCalls, 0);
       const state = await readOperationState(harness);

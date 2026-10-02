@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
 import {
   AuthorizationDeniedError,
@@ -7,6 +8,7 @@ import {
 import { ResolvedObjectAuthorizationPolicy } from "../../services/api/dist/authorization/application/resolved-object-authorization.policy.js";
 import { PostgresAuthorizationEvidenceReader } from "../../services/api/dist/authorization/persistence/postgres-authorization-evidence.reader.js";
 import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrity/application/authorized-source-capture.service.js";
+import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
 import {
   TEST_HOSPITAL_A_ID,
   TEST_HOSPITAL_B_ID,
@@ -438,12 +440,23 @@ describe("AuthorizedSourceCaptureService", () => {
     expect(harness.rollbackReasons.length).toBeGreaterThan(0);
   });
 
-  it("rejects caller-supplied scope fields and malformed commands before authorization", async () => {
+  it("TC-INT-001-CAP-001/004 rejects caller-supplied scope, endpoint and credentials before authorization; no browser controller", async () => {
     const harness = makeHarness();
-    await expect(
-      harness.service.capture(command({ studyInstanceUid: "2.25.100" })),
-    ).rejects.toMatchObject({ message: "SOURCE_CAPTURE_REQUEST_INVALID" });
+    for (const override of [
+      { studyInstanceUid: "2.25.100" },
+      { endpointUrl: "http://attacker.invalid/dicom-web/" },
+      { sourceUrl: "https://other.invalid/dicom-web/" },
+      { username: "caller-controlled" },
+      { password: "caller-controlled" },
+      { authorization: "Bearer caller-controlled" },
+    ]) {
+      await expect(
+        harness.service.capture(command(override)),
+      ).rejects.toMatchObject({ message: "SOURCE_CAPTURE_REQUEST_INVALID" });
+    }
     expect(harness.authorizationCalls).toBe(0);
     expect(harness.dicomCalls.metadata).toBe(0);
+    expect(harness.dicomCalls.instances).toBe(0);
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, PacsImportModule) ?? []).toEqual([]);
   });
 });

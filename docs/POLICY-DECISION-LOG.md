@@ -863,6 +863,7 @@
 | 2026-10-01 | `PROV-001-DEC-001` | Initial PACS_IMPORT Provenance bound to one operation, pending-only, with required operation/destination/study and no late first-write |
 | 2026-10-02 | `INT-001-DEC-002` | Source-capture Integrity Evidence schema/writer sub-gate: operation-bound, immutable PENDING baseline; exact grants are scratch-only until authorized capture is wired |
 | 2026-10-02 | `INT-001-DEC-003` | Authorized synthetic-only source-capture service recommended and accepted with 14 Acceptance cases; two fenced auth transactions, A-only bounded WADO, destination mapping match, atomic PENDING evidence/success Audit; route/STOW remain disabled |
+| 2026-10-02 | `INT-001-CAP-004-REC-001` | Verification-only source endpoint trust refinement: reject caller endpoint/credential overrides; assert exact configured A HTTPS origin/auth/redirect boundary; reuse local CA/SAN/downgrade tests; no dynamic registry, public route, STOW or production TLS claim |
 
 ## AUD-002-DEC-001 — 검증된 Tenant 문맥의 Grant 거부 Audit
 

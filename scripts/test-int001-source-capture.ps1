@@ -232,7 +232,7 @@ COMMIT;
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "18" -or $testFail -ne "0") {
+    if ($testPass -ne "19" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
@@ -267,4 +267,4 @@ finally {
 
 if ($cleanupFailure) { throw $cleanupFailure }
 if ($failure) { throw $failure }
-Write-Output "TC-INT-001-CAP-001/002/003/014=PASS scoped_authorized_source_capture=true"
+Write-Output "TC-INT-001-CAP-001/002/003/004/014=PASS scoped_authorized_source_capture=true"
