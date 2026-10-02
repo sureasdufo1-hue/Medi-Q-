@@ -3,7 +3,7 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `ERD.md`
-**Version:** v1.4 Durable PACS Transfer Operation Amendment
+**Version:** v1.5 Operation-scoped Temporary Payload Metadata Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
 **Target RDBMS:** PostgreSQL
@@ -2391,7 +2391,7 @@ ViewerSession (runtime / short-lived)
 
 ViewerSession ID, Study UID 또는 Temporary storage reference는 단독으로 권한을 부여하지 않는다. P1 `MobileVault`와 `SecureMedicalCapsule`은 별도 extension model이며 현재 P0 18-table ERD에 추가하지 않는다.
 
-`PACS-001-DEC-007`은 새 P0 entity/table을 추가하지 않는다. 구현 시 temporary package metadata는 기존 `ImagingPackage.storage_ref`, `retention_expires_at`, `deleted_at`과 `StudyReference`/`ExchangeSession` 관계를 재사용하며, `PACS_IMPORT` purpose는 transfer operation과 authenticated storage metadata에 결속한다. An optional unregistered same-stream AES-GCM seam now passes `STAGE-001` only in a synthetic unit harness; persistent metadata/RLS lifecycle, SERVICE purge and remaining Acceptance are not implemented. Encrypted DICOM bytes stay outside the ERD/private temporary filesystem; volatile per-instance DEK exists only in one API process.
+`PACS-001-DEC-007/008`은 P0 product table을 추가하지 않는다. DEC-008 amends temporary payload metadata to four operation-scoped columns on `StudyReference`; package-wide `ImagingPackage.storage_ref/state/deleted_at` is not used for one Study's purge. `PACS_IMPORT` purpose binds to the durable transfer operation and authenticated storage metadata. An optional unregistered same-stream AES-GCM seam passes `STAGE-001` only in a synthetic unit harness; per-Study metadata/RLS lifecycle, SERVICE purge and remaining Acceptance are not implemented. Encrypted DICOM bytes stay outside the ERD/private temporary filesystem; volatile per-instance DEK exists only in one API process.
 
 **공통 기준:** Hospital PACS가 Source of Record이고 MediQ Cloud는 Permanent PACS/장기 Archive가 아니다. P0 Viewer 데이터는 Source PACS에서 온디맨드로 조회한다.
 
@@ -2520,6 +2520,34 @@ erDiagram
 ```
 
 Unique constraints enforce one operation per `(exchange_session_id, study_ref_id)` and one `(tenant_id, actor_id, idempotency_key)`. All four parent FKs use restrictive deletion. Audit references an operation through the existing metadata `resource_type/resource_id` fields without a direct FK; no DICOM/Payload entity or PACS credential relationship is added. Runtime SELECT/INSERT/UPDATE is column-scoped and Tenant RLS is enabled + forced. The table does not imply a transfer endpoint or permission.
+
+---
+
+# P0 Operation-scoped Temporary Payload Metadata Amendment — 2026-10-03
+
+`PACS-001-DEC-008` adds four lifecycle metadata columns to the existing `study_references` table; it does not add another product table. Study-level granularity matches the existing one-operation-per-Session/Study constraint and prevents one Study purge from mutating a shared multi-Study package.
+
+```mermaid
+erDiagram
+    PACS_TRANSFER_OPERATIONS ||--o| STUDY_REFERENCES : stages_for
+    IMAGING_PACKAGES ||--o{ STUDY_REFERENCES : contains
+
+    STUDY_REFERENCES {
+        uuid study_ref_id PK
+        uuid package_id FK
+        uuid source_hospital_id FK
+        varchar study_instance_uid
+        varchar modality
+        int series_count
+        int instance_count
+        uuid temporary_storage_ref
+        varchar temporary_payload_state
+        timestamptz temporary_payload_expires_at
+        timestamptz temporary_payload_purged_at
+    }
+```
+
+The operation-to-Study relationship is resolved by the exact `(exchange_session_id, study_ref_id)` scope; the new fields do not create a direct FK or grant authority. Metadata inherits the existing forced Tenant RLS boundary on `study_references`; runtime SELECT/UPDATE is limited to exact columns. `PACS_TEMPORARY_OBJECT_PURGED` Audit records use the internal StudyReference UUID, never the DICOM Study UID. Purge leaves ImagingPackage metadata and sibling Study payloads unchanged.
 
 ---
 

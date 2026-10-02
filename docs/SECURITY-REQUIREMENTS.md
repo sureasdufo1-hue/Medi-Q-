@@ -1221,7 +1221,7 @@ MediQ Temporary Imaging Copy는 Application Authorization을 우회한 직접 �
 **Classification:** CAPSTONE-P0
 **Priority:** MUST
 
-Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry deny, retryable purge, Tenant-RLS SERVICE cleanup 및 metadata-only Audit lifecycle을 가져야 한다. P0 synthetic timing은 `PACS-001-DEC-007`로 권고되며 Production retention은 별도 결정이다.
+Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry deny, retryable purge, Tenant-RLS SERVICE cleanup 및 metadata-only Audit lifecycle을 가져야 한다. P0 synthetic timing은 `PACS-001-DEC-007`로 권고되며, per-Study metadata binding은 `PACS-001-DEC-008`을 따른다. Production retention은 별도 결정이다.
 
 구체적인 Production Retention 기간은 P0에서 고정하지 않는다.
 
@@ -1236,7 +1236,7 @@ Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry d
 
 Temporary Imaging Payload가 저장되는 경우 개발환경에서 적용 가능한 저장 암호화 또는 동등한 보호수단을 적용해야 한다.
 
-`PACS-001-DEC-007`에 따라 각 instance는 AES-256-GCM으로 암호화하고, 단일 프로세스 P0에서 random DEK는 memory-only이며 파일·DB에 저장하지 않는다. Tenant/Session/Package/StudyReference/Purpose binding, 64 MiB/object, 2 GiB/package, 10 GiB/environment, TTL 및 purge evidence를 강제한다. Process restart/다른 replica에서는 해당 객체를 복호화할 수 없고 fail closed 및 purge 대상으로 처리한다. Enterprise HSM/KMS는 P0 필수가 아니며 생산용 multi-replica Managed KMS/HSM 통합은 별도 Gate다. 구현·검증 전에는 지속성 임시 DICOM 저장 경로를 활성화하지 않는다.
+`PACS-001-DEC-007/008`에 따라 각 instance는 AES-256-GCM으로 암호화하고, 단일 프로세스 P0에서 random DEK는 memory-only이며 파일·DB에 저장하지 않는다. Tenant/Session/Package/StudyReference/operation/Purpose binding, per-Study temporary ref/state/expiry/purge evidence, 64 MiB/object, 2 GiB/package, 10 GiB/environment, TTL을 강제한다. 한 Study의 purge나 retry는 sibling Study/ImagingPackage 상태를 바꿀 수 없다. Process restart/다른 replica에서는 해당 객체를 복호화할 수 없고 fail closed 및 Tenant-RLS purge 대상으로 처리한다. Enterprise HSM/KMS는 P0 필수가 아니며 생산용 multi-replica Managed KMS/HSM 통합은 별도 Gate다. 구현·검증 전에는 지속성 임시 DICOM 저장 경로를 활성화하지 않는다.
 
 **Acceptance:** `TC-PACS-001-STAGE-001~003/009` (`ACCEPTANCE-TESTS.md`; `STAGE-001` PASS only in synthetic unit harness, `STAGE-002/003/009` NOT RUN)
 
@@ -2165,7 +2165,7 @@ Viewer access는 short-lived여야 하며 Consent 철회, Grant revoke/expiry �
 
 ## SEC-CACHE-001 — Ephemeral Cache Protection
 
-임시 DICOM 객체는 전송 중·저장 중 암호화, Tenant/Session/Package/Study/Purpose binding, 승인된 크기 제한, TTL 및 Tenant-RLS 감사 가능한 purge evidence를 가져야 한다. P0 설계는 `PACS-001-DEC-007`이다. Optional same-WADO-chunk seam의 `STAGE-001`만 synthetic unit scope PASS이며 `STAGE-002~012`는 NOT RUN이다. 제품 경로는 전체 lifecycle 및 no-STOW 검증 전 활성화할 수 없다.
+임시 DICOM 객체는 전송 중·저장 중 암호화, Tenant/Session/Package/Study/operation/Purpose binding, 승인된 크기 제한, TTL 및 Tenant-RLS 감사 가능한 purge evidence를 가져야 한다. P0 설계는 `PACS-001-DEC-007/008`이다. Optional same-WADO-chunk seam의 `STAGE-001`만 synthetic unit scope PASS이며 per-Study metadata migration/lifecycle 및 `STAGE-002~013`은 검증 전이다. 제품 경로는 전체 lifecycle 및 no-STOW 검증 전 활성화할 수 없다.
 
 ## SEC-CACHE-002 — Client and Intermediary Cache Control
 

@@ -3,7 +3,7 @@
 | 항목 | 값 |
 |---|---|
 | Ticket | `MEDIQ-PACS-001` |
-| 제목 | PACS Import coordinator prerequisites — identity binding and operation-time authorization fence sub-gates |
+| 제목 | PACS Import coordinator prerequisites — identity/fence, encrypted spool and temporary-payload lifecycle sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
 | 결과 | `PARTIAL` — identity/fence and source handoffs PASS in their scoped boundaries; seven spool-core cases and exact-source `STAGE-001` pass only in isolated synthetic unit harnesses; storage lifecycle and full coordinator absent |
@@ -244,3 +244,27 @@ git diff --check
 - Test inputs were synthetic byte markers only; tests used isolated OS temporary directories. No Orthanc, PostgreSQL, runtime `.env`, configured API container, mounted imaging volume, real PHI, DICOM payload or PACS endpoint was used by these new tests.
 
 **Scope judgment:** `STORE-CORE-001~007` and `STAGE-001` PASS only within the local in-process synthetic unit harness. A separate assertion proves the builder waits for a chunk sink before pulling another, but this is only one primitive property and does not PASS `STAGE-009`. Source capture now has an optional internal storage seam, but the Nest module/Compose/runtime does not supply or register a store; tests do not prove Test Orthanc or DB/RLS behavior. `STAGE-002~012` remain NOT RUN: durable package metadata, cross-process/shared quota, per-Tenant SERVICE cleanup, restart orphan recovery, purge Audit/saga, runtime volume/secret setup, maximum-study/performance bounds and isolated Orthanc A/B no-STOW are absent. No public route, worker, `PREFLIGHT_PASSED`, `STOW_STARTED`, destination call or STOW path was added. `MEDIQ-PACS-001` remains PARTIAL.
+
+## 11. PACS-001-DEC-008 — StudyReference temporary payload metadata checkpoint
+
+### 실행한 명령과 결과
+
+| 명령 | 실제 결과 | 판정 범위 |
+|---|---|---|
+| `npm run build:api` | 종료 코드 `0` | API TypeScript build |
+| `npm run test:api -- --reporter=dot` | 36 files / 678 tests passed | Existing API regression; no new repository-specific persistence test was added |
+| `npm run typecheck:api` | 종료 코드 `0` | Strict API typecheck |
+| `npm run test:dicom-port-contract` | 종료 코드 `0` | DICOM Port type contract |
+| `npm run db:migrations:check` | `Everything's fine` | Drizzle journal/schema migration consistency; not database application |
+| `npm run test:db-migrations` | 6 passed / 0 failed | Migration runner unit tests only |
+| PowerShell parser check for `scripts/test-db-008-full-schema.ps1` | `PowerShell syntax PASS` | Script syntax only; no script execution |
+| `git diff --check` | 종료 코드 `0` | Whitespace integrity; Git emitted configured LF→CRLF warnings only |
+
+### 미실행·잔여 위험
+
+- `scripts/test-db-008-full-schema.ps1` was **not** run. Therefore migration `0023`, the updated exact runtime privileges (`244` total; `study_references` SELECT 10 / UPDATE 4), 18-table/24-migration/`18|50|17|42` catalog, and post-amendment clean/repeat/reset/reapply have not been verified against PostgreSQL.
+- No PostgreSQL/RLS repository Acceptance was run. Same-package sibling-Study isolation, wrong-Tenant denial, operation-state fencing, restart cleanup, ciphertext deletion ordering, purge Audit atomicity and idempotent recovery are all **NOT RUN**.
+- The new repository has compile evidence only. It is not wired to the encrypted store, source capture, Nest module, worker or runtime volume. Do not treat it as an active or verified temporary storage lifecycle.
+- No database was migrated by this checkpoint; no Orthanc endpoint, PACS, STOW, real patient information, production credential or DICOM payload was used.
+
+**Judgment:** build/API regression/migration consistency checks PASS at their stated scopes. DEC-008 database and lifecycle Acceptance remain NOT RUN; ticket remains `PARTIAL` and no persistent storage runtime activation is authorized by this evidence.

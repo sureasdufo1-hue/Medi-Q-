@@ -143,6 +143,19 @@ const EVENT_RULES: Readonly<Record<string, EventRule>> = Object.freeze({
       "SOURCE_CAPTURE_PERSISTENCE_FAILED",
     ],
   },
+  PACS_TEMPORARY_OBJECT_PURGED: {
+    resourceType: "STUDY",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [
+      "CAPTURE_FAILURE",
+      "EXPLICIT_CLOSE",
+      "TRANSFER_TERMINAL",
+      "TTL_EXPIRED",
+      "PROCESS_RESTART",
+    ],
+  },
 });
 
 const ALLOWED_KEYS = new Set([

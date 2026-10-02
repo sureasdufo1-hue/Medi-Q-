@@ -2479,9 +2479,9 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 ## Temporary Processing
 
 - 기본은 memory/streaming pipeline이다.
-- PACS transfer bounded package staging의 P0 설계는 `PACS-001-DEC-007`이다. `AuthorizedSourceCaptureService`에는 optional same-stream encrypted staging seam이 있으나 Nest provider/Compose/runtime에는 주입되지 않는다. Synthetic unit harness의 `STAGE-001`만 scoped PASS이며 `STAGE-002~012`와 product storage lifecycle은 NOT RUN이다. 이 seam은 dispatch capability가 아니며 persistent runtime path를 활성화하지 않는다.
-- 구현 시 instance 단위 AES-256-GCM + process-memory-only random DEK, backpressure, Tenant/Session/Package/StudyReference/Purpose binding, 64 MiB/object·2 GiB/package·10 GiB/environment limits, 30분 post-capture TTL, 즉시 만료 차단 및 Tenant-RLS purge Audit를 강제한다. Process restart/다른 replica는 복호화 불가로 fail closed한다.
-- 기존 `storage_ref`, `retention_expires_at`, `deleted_at`만 사용하며 Tenant/Session/Patient/Study는 persisted relation/RLS로 확인한다. PostgreSQL에는 payload나 raw key를 저장하지 않는다. 별도 table/column은 근거와 Schema Change Gate 없이 추가하지 않는다.
+- PACS transfer bounded package staging의 P0 설계는 `PACS-001-DEC-007/008`이다. `AuthorizedSourceCaptureService`에는 optional same-stream encrypted staging seam이 있으나 Nest provider/Compose/runtime에는 주입되지 않는다. Synthetic unit harness의 `STAGE-001`만 scoped PASS이며 per-Study metadata/lifecycle 및 `STAGE-002~013`은 아직 검증되지 않았다. 이 seam은 dispatch capability가 아니며 persistent runtime path를 활성화하지 않는다.
+- 구현 시 instance 단위 AES-256-GCM + process-memory-only random DEK, backpressure, Tenant/Session/Package/StudyReference/operation/Purpose binding, 64 MiB/object·2 GiB/package·10 GiB/environment limits, 30분 post-capture TTL, 즉시 만료 차단 및 Tenant-RLS purge Audit를 강제한다. Process restart/다른 replica는 복호화 불가로 fail closed한다.
+- Per-Study metadata는 `study_references.temporary_storage_ref`, `temporary_payload_state`, `temporary_payload_expires_at`, `temporary_payload_purged_at`에만 둔다. Shared multi-Study `imaging_packages`의 단일 저장 참조/soft-delete 상태는 한 operation purge에 사용하지 않는다. PostgreSQL에는 payload나 raw key를 저장하지 않는다.
 - Cloud temporary copy는 의료영상 Source of Record나 장기 Archive가 아니다.
 - Source PACS unavailable 시 영구 Cloud Copy로 우회하지 않고 Fail Closed한다.
 

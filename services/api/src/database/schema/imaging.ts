@@ -6,6 +6,7 @@ import {
   pgTable,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -89,6 +90,16 @@ export const studyReferences = pgTable(
     seriesCount: integer("series_count"),
     instanceCount: integer("instance_count"),
     createdAt: createdAt("created_at"),
+    temporaryStorageRef: uuid("temporary_storage_ref"),
+    temporaryPayloadState: varchar("temporary_payload_state", { length: 32 }),
+    temporaryPayloadExpiresAt: timestamp("temporary_payload_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    temporaryPayloadPurgedAt: timestamp("temporary_payload_purged_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (table) => [
     unique("study_references_package_uid_unique").on(
@@ -103,9 +114,44 @@ export const studyReferences = pgTable(
       "study_references_instance_count_check",
       sql`${table.instanceCount} IS NULL OR ${table.instanceCount} >= 0`,
     ),
+    check(
+      "study_references_temporary_payload_state_check",
+      sql`${table.temporaryPayloadState} IS NULL OR ${table.temporaryPayloadState} IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING', 'PURGED')`,
+    ),
+    check(
+      "study_references_temporary_payload_shape_check",
+      sql`(
+        ${table.temporaryPayloadState} IS NULL
+        AND ${table.temporaryStorageRef} IS NULL
+        AND ${table.temporaryPayloadExpiresAt} IS NULL
+        AND ${table.temporaryPayloadPurgedAt} IS NULL
+      ) OR (
+        ${table.temporaryPayloadState} IS NOT NULL
+        AND
+        ${table.temporaryPayloadState} IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')
+        AND ${table.temporaryStorageRef} IS NOT NULL
+        AND ${table.temporaryPayloadExpiresAt} IS NOT NULL
+        AND ${table.temporaryPayloadPurgedAt} IS NULL
+      ) OR (
+        ${table.temporaryPayloadState} IS NOT NULL
+        AND
+        ${table.temporaryPayloadState} = 'PURGED'
+        AND ${table.temporaryStorageRef} IS NOT NULL
+        AND ${table.temporaryPayloadExpiresAt} IS NOT NULL
+        AND ${table.temporaryPayloadPurgedAt} IS NOT NULL
+      )`,
+    ),
     index("study_references_package_id_idx").on(table.packageId),
     index("study_references_source_hospital_id_idx").on(table.sourceHospitalId),
     index("study_references_study_instance_uid_idx").on(table.studyInstanceUid),
+    index("study_references_temporary_payload_cleanup_idx")
+      .on(table.temporaryPayloadState, table.temporaryPayloadExpiresAt)
+      .where(
+        sql`${table.temporaryPayloadState} IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')`,
+      ),
+    uniqueIndex("study_references_temporary_storage_ref_unique")
+      .on(table.temporaryStorageRef)
+      .where(sql`${table.temporaryStorageRef} IS NOT NULL`),
     ...tenantRlsPolicies(
       "study_references",
       sql`EXISTS (

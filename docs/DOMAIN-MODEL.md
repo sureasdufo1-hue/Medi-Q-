@@ -2238,18 +2238,20 @@ closed_at
 
 ## TemporaryImagingObject
 
-`TemporaryImagingObject`는 Imaging Payload의 영구 Domain 소유권을 나타내지 않는다. 필요한 경우 `ImagingPackage` 하위의 ephemeral lifecycle metadata로 모델링한다.
+`TemporaryImagingObject`는 Imaging Payload의 영구 Domain 소유권을 나타내지 않는다. P0에서는 기존 `StudyReference`에 operation 단위의 ephemeral lifecycle metadata로 저장한다. `ImagingPackage`가 여러 Study를 포함하고 전송 operation이 Session/Study 단위이므로 package-wide 상태를 임시 객체 한 개의 수명주기로 사용하지 않는다.
 
 ```text
-storage_ref
-tenant_id
-exchange_session_id
-purpose: VIEW_BUFFER | TRANSFER_RETRY
-encrypted
-created_at
-expires_at
-purged_at
+temporary_storage_ref: opaque UUID
+study_ref_id: server-resolved StudyReference
+operation_id: server-resolved PACS_TRANSFER_OPERATION
+temporary_payload_state: STAGING | AVAILABLE | PURGE_PENDING | PURGED
+temporary_payload_expires_at
+temporary_payload_purged_at
+purpose: PACS_IMPORT
+encrypted: AES-256-GCM per instance
 ```
+
+Tenant·Session·Patient·Package·Study는 verified operation graph와 forced RLS에서 파생한다. 같은 Study operation의 동시 staging은 거부한다. `STOW_STARTED` 이전에 완전 purge된 payload만 새 random reference로 재조회할 수 있고, 이후에는 재-fetch를 거부한다. Purge는 같은 package 내 다른 StudyReference 또는 ImagingPackage lifecycle을 변경하지 않는다.
 
 ## P1 Mobile Extension
 

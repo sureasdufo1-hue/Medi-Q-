@@ -509,8 +509,8 @@ DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정�
 
 - Study 전체를 Buffer/Blob 한 개로 메모리에 적재하지 않는다.
 - Node Web Streams와 backpressure를 사용한다.
-- 임시 저장 정책은 `PACS-001-DEC-007`을 따른다. 구현에는 optional internal same-stream AES-GCM seam이 있으나 Nest/Compose runtime에는 등록되지 않았다. `STAGE-001`은 synthetic unit harness에서만 PASS이며 `STAGE-002~012`는 NOT RUN이다. 이 scoped result는 persistent storage activation이나 dispatch permission이 아니다.
-- Study/Package 전체를 memory에 적재하지 않는다. 객체마다 새 DEK의 AES-256-GCM으로 암호화하고, synthetic 단일 프로세스 P0에서는 DEK를 process memory에만 둔다. Restart 또는 다른 replica에서는 복호화하지 않고 fail closed/purge 처리한다. Tenant/Session/Package/StudyReference/고정 purpose/object reference/예상 길이·digest에 결속한다.
+- 임시 저장 정책은 `PACS-001-DEC-007/008`을 따른다. 구현에는 optional internal same-stream AES-GCM seam이 있으나 Nest/Compose runtime에는 등록되지 않았다. `STAGE-001`은 synthetic unit harness에서만 PASS이며 per-Study metadata/lifecycle 및 `STAGE-002~013`은 아직 검증되지 않았다. 이 scoped result는 persistent storage activation이나 dispatch permission이 아니다.
+- Study/Package 전체를 memory에 적재하지 않는다. 객체마다 새 DEK의 AES-256-GCM으로 암호화하고, synthetic 단일 프로세스 P0에서는 DEK를 process memory에만 둔다. Restart 또는 다른 replica에서는 복호화하지 않고 fail closed/purge 처리한다. Tenant/Session/Package/StudyReference/operation/고정 purpose/object reference/예상 길이·digest에 결속한다.
 - 구현 시 가드레일은 객체 64 MiB, Package/Exchange 2 GiB·2,000 객체, Environment 10 GiB, 전송 최대 15분, 성공한 source capture 후 TTL 30분이다. 어느 한도든 넘으면 fail closed하고 부분 staging을 폐기한다.
 - 완전한 GCM tag 및 예상 SHA-256/길이 검증 전에는 평문을 downstream에 한 byte도 제공하지 않는다. 일시 평문 메모리는 단일 객체(최대 64 MiB)로 제한하고 DICOM 동시 작업은 최대 2개다.
 - 만료 시점부터 읽기를 즉시 거부한다. Terminal transfer 결과·취소·명시적 종료·TTL 만료 시 ciphertext와 unwrap capability를 삭제하며 Tenant별 `SERVICE` Actor/RLS 경계에서 purge Audit 증거를 기록한다. 파일시스템과 DB 사이의 실패는 idempotent retry로 수렴시킨다.
