@@ -19,6 +19,7 @@ import { ActorRegistryRepository } from "../../services/api/dist/identity/persis
 import { ActorTenantContextService } from "../../services/api/dist/identity/application/actor-tenant-context.service.js";
 import {
   AuthorizedSourceCaptureService,
+  AuthorizedSourceCaptureInvalidRequestError,
   AuthorizedSourceCaptureUnavailableError,
 } from "../../services/api/dist/integrity/application/authorized-source-capture.service.js";
 
@@ -56,6 +57,7 @@ function createHarness({ failFirstInstance = false } = {}) {
     database,
     new ActorRegistryRepository(),
   );
+  let tenantContextRuns = 0;
   let activeTenantTransactions = 0;
   let initialAuthorizationCommitted = false;
   let pendingFailure = failFirstInstance;
@@ -63,9 +65,11 @@ function createHarness({ failFirstInstance = false } = {}) {
   let stowCalls = 0;
   let destinationVerificationCalls = 0;
   const sourceRequests = [];
+  const sourcePaths = [];
 
   const actorContext = Object.freeze({
     run: async (...args) => {
+      tenantContextRuns += 1;
       activeTenantTransactions += 1;
       let committed = false;
       try {
@@ -100,6 +104,7 @@ function createHarness({ failFirstInstance = false } = {}) {
         assert.equal(activeTenantTransactions, 0, "No verified-Tenant transaction may span WADO");
         assert.equal(initialAuthorizationCommitted, true, "A WADO must follow committed initial authorization");
         sourceRequests.push(url.pathname.includes("/metadata") ? "METADATA" : "INSTANCE");
+        sourcePaths.push(url.pathname);
         const response = await globalThis.fetch(input, init);
         if (pendingFailure && url.pathname.includes("/instances/")) {
           pendingFailure = false;
@@ -177,9 +182,11 @@ function createHarness({ failFirstInstance = false } = {}) {
     database,
     actorContext,
     counters: () => Object.freeze({
+      tenantContextRuns,
       activeTenantTransactions,
       initialAuthorizationCommitted,
       sourceRequests: [...sourceRequests],
+      sourcePaths: [...sourcePaths],
       bNetworkAttempts,
       stowCalls,
       destinationVerificationCalls,
@@ -222,6 +229,32 @@ test("authorized source capture uses only A WADO after database-backed authoriza
   } finally {
     await baselineHarness.database.onModuleDestroy();
   }
+
+  await t.test("CAP-001 rejects caller-supplied Study scope before DB or A WADO", async () => {
+    const harness = createHarness();
+    try {
+      await assert.rejects(
+        harness.service.capture({
+          principal,
+          tenantCandidate: fixture.tenantId,
+          correlationId: fixture.correlationDenied,
+          operationId: fixture.operationId,
+          consentId: fixture.consentId,
+          grantId: fixture.grantId,
+          studyInstanceUid: "2.25.999",
+        }),
+        (error) => error instanceof AuthorizedSourceCaptureInvalidRequestError,
+      );
+      const counters = harness.counters();
+      assert.equal(counters.tenantContextRuns, 0);
+      assert.deepEqual(counters.sourceRequests, []);
+      assert.deepEqual(counters.sourcePaths, []);
+      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.stowCalls, 0);
+    } finally {
+      await harness.database.onModuleDestroy();
+    }
+  });
 
   await t.test("an invalid Grant is denied before any A WADO request", async () => {
     const harness = createHarness();
@@ -289,6 +322,9 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       if (result.kind !== "CAPTURED") return;
       assert.equal(result.status, "PENDING");
       assert.equal(result.objectCount, manifest.instanceCount);
+      assert.deepEqual(Object.keys(result).sort(), ["evidenceId", "kind", "objectCount", "status"]);
+      assert.equal(JSON.stringify(result).includes(manifest.studyInstanceUID), false);
+      assert.equal(JSON.stringify(result).includes(manifest.patient.patientId), false);
       assert.equal(harness.counters().initialAuthorizationCommitted, true);
       assert.equal(harness.counters().activeTenantTransactions, 0);
       assert.deepEqual(harness.counters().sourceRequests, [
@@ -297,6 +333,10 @@ test("authorized source capture uses only A WADO after database-backed authoriza
         "INSTANCE",
         "INSTANCE",
       ]);
+      assert.equal(harness.counters().sourcePaths.length, manifest.instanceCount + 1);
+      assert.ok(harness.counters().sourcePaths.every((path) =>
+        path.startsWith(`/dicom-web/studies/${manifest.studyInstanceUID}/`),
+      ));
       assert.equal(harness.counters().bNetworkAttempts, 0);
       assert.equal(harness.counters().stowCalls, 0);
       assert.equal(harness.counters().destinationVerificationCalls, 0);
