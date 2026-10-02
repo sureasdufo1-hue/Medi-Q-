@@ -64,12 +64,27 @@ function adapter(fetchImpl, options = {}) {
   });
 }
 
-function dicomJson(data, type = "application/dicom+json") {
-  return new Response(JSON.stringify(data), { status: 200, headers: { "content-type": type } });
+function dicomJson(data, type = "application/dicom+json", extraHeaders = {}) {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { "content-type": type, ...extraHeaders },
+  });
 }
 
 function tag(vr, ...values) {
   return { vr, Value: values };
+}
+
+function expectedInstance(sopInstanceUid, seriesInstanceUid = SERIES) {
+  return { seriesInstanceUid, sopInstanceUid };
+}
+
+function destinationInstanceRow(sopInstanceUid, seriesInstanceUid = SERIES, studyInstanceUid = STUDY) {
+  return {
+    "00080018": tag("UI", sopInstanceUid),
+    "0020000D": tag("UI", studyInstanceUid),
+    "0020000E": tag("UI", seriesInstanceUid),
+  };
 }
 
 function wadoMetadataRow(sopInstanceUid, patientId = "TEST-PATIENT-007") {
@@ -432,22 +447,265 @@ describe("OrthancDicomwebAdapter DCM-002 synthetic transport contract", () => {
 
   it("requires the B verification operation and projects only destination UIDs", async () => {
     const fetchImpl = vi.fn(async (url) => {
-      const value = String(url).includes("/series/")
-        ? [{ "00080018": tag("UI", SOP) }, { "00080018": tag("UI", SOP_2) }]
+      const value = String(url).includes("/instances")
+        ? [destinationInstanceRow(SOP), destinationInstanceRow(SOP_2)]
         : [{ "0020000E": tag("UI", SERIES) }];
       return dicomJson(value);
     });
     const result = await adapter(fetchImpl).verifyDestinationStudy({
       context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
-      expectedSopInstanceUids: [SOP, SOP_2], maximumItems: 10,
+      expectedInstances: [expectedInstance(SOP), expectedInstance(SOP_2)], maximumItems: 10,
     });
-    expect(result).toEqual({ studyInstanceUid: STUDY, actualSopInstanceUids: [SOP, SOP_2].sort() });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      studyInstanceUid: STUDY,
+      actualSeriesInstanceUids: [SERIES],
+      actualSopInstanceUids: [SOP, SOP_2].sort(),
+      matchesExpected: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
 
     await expect(adapter(fetchImpl).verifyDestinationStudy({
       context: context(TEST_HOSPITAL_A_ID), studyInstanceUid: STUDY,
-      expectedSopInstanceUids: [], maximumItems: 10,
+      expectedInstances: [], maximumItems: 10,
     })).rejects.toThrow("DICOM_ENDPOINT_DENIED");
+  });
+
+  it("rejects an empty, duplicate, malformed, or over-limit expected inventory before QIDO", async () => {
+    const fetchImpl = vi.fn();
+    const verify = adapter(fetchImpl);
+    const base = { context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY, maximumItems: 1 };
+    await expect(verify.verifyDestinationStudy({ ...base, expectedInstances: [] })).rejects.toThrow("DICOM_REQUEST_INVALID");
+    await expect(verify.verifyDestinationStudy({
+      ...base,
+      expectedInstances: [expectedInstance(SOP), expectedInstance(SOP)],
+    })).rejects.toThrow("DICOM_REQUEST_INVALID");
+    await expect(verify.verifyDestinationStudy({
+      ...base,
+      expectedInstances: [expectedInstance("1.02")],
+    })).rejects.toThrow("DICOM_REQUEST_INVALID");
+    await expect(verify.verifyDestinationStudy({
+      ...base,
+      expectedInstances: [expectedInstance(SOP), expectedInstance(SOP_2)],
+    })).rejects.toThrow("DICOM_REQUEST_INVALID");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports missing instances and unexpected Series as non-matching, even when counts can appear plausible", async () => {
+    const fetchImpl = vi.fn(async (url) => dicomJson(
+      String(url).includes("/instances")
+        ? [destinationInstanceRow(SOP)]
+        : [{ "0020000E": tag("UI", SERIES) }],
+    ));
+    const missing = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP), expectedInstance(SOP_2)], maximumItems: 10,
+    });
+    expect(missing.matchesExpected).toBe(false);
+
+    const wrongSeries = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP, SOP_CLASS)], maximumItems: 10,
+    });
+    expect(wrongSeries.matchesExpected).toBe(false);
+
+    const extraSeries = await adapter(vi.fn(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/series")) {
+        return dicomJson([
+          { "0020000E": tag("UI", SERIES) },
+          { "0020000E": tag("UI", SOP_CLASS) },
+        ]);
+      }
+      return path.includes(`/series/${encodeURIComponent(SERIES)}/`)
+        ? dicomJson([destinationInstanceRow(SOP)])
+        : dicomJson([]);
+    })).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    });
+    expect(extraSeries.matchesExpected).toBe(false);
+  });
+
+  it("rejects duplicate destination Series and SOP identities", async () => {
+    const duplicateSeriesFetch = vi.fn(async () => dicomJson([
+      { "0020000E": tag("UI", SERIES) },
+      { "0020000E": tag("UI", SERIES) },
+    ]));
+    const duplicateSeries = adapter(duplicateSeriesFetch);
+    await expect(duplicateSeries.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+    expect(duplicateSeriesFetch).toHaveBeenCalledOnce();
+
+    const duplicateSop = adapter(vi.fn(async (url) => dicomJson(
+      String(url).includes("/instances")
+        ? [destinationInstanceRow(SOP), destinationInstanceRow(SOP)]
+        : [{ "0020000E": tag("UI", SERIES) }],
+    )));
+    await expect(duplicateSop.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+  });
+
+  it("rejects an instance whose response Study or Series contradicts the QIDO path", async () => {
+    const fetchImpl = vi.fn(async (url) => dicomJson(
+      String(url).includes("/instances")
+        ? [destinationInstanceRow(SOP, SERIES, SOP_CLASS)]
+        : [{ "0020000E": tag("UI", SERIES) }],
+    ));
+    await expect(adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+  });
+
+  it("follows Warning 299 pagination and verifies every bounded instance page", async () => {
+    const identities = Array.from({ length: 101 }, (_, index) =>
+      `1.2.840.10008.9999.${index + 1}`,
+    );
+    const calls = [];
+    const fetchImpl = vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      calls.push({ path: parsed.pathname, offset: Number(parsed.searchParams.get("offset")), limit: Number(parsed.searchParams.get("limit")) });
+      if (!parsed.pathname.includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      const offset = Number(parsed.searchParams.get("offset"));
+      const limit = Number(parsed.searchParams.get("limit"));
+      const page = identities.slice(offset, offset + limit).map((uid) => destinationInstanceRow(uid));
+      const remaining = identities.length - offset - page.length;
+      return dicomJson(page, "application/dicom+json", remaining > 0
+        ? { warning: `299 orthanc: There are ${remaining} additional results that can be requested` }
+        : {});
+    });
+    const result = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: identities.map((uid) => expectedInstance(uid)), maximumItems: 101,
+    });
+    expect(result.matchesExpected).toBe(true);
+    expect(result.actualSopInstanceUids).toHaveLength(101);
+    expect(calls.filter((call) => call.path.includes("/instances")).map(({ offset }) => offset)).toEqual([0, 100, 0, 100]);
+  });
+
+  it("supports an origin page ceiling smaller than the requested limit and rejects inconsistent Warning counts", async () => {
+    const identities = Array.from({ length: 45 }, (_, index) => `1.2.840.10008.8888.${index + 1}`);
+    const fetchImpl = vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      if (!parsed.pathname.includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      const offset = Number(parsed.searchParams.get("offset"));
+      const page = identities.slice(offset, offset + 20).map((uid) => destinationInstanceRow(uid));
+      const remaining = identities.length - offset - page.length;
+      return dicomJson(page, "application/dicom+json", remaining > 0
+        ? { warning: `299 orthanc: There are ${remaining} additional results that can be requested` }
+        : {});
+    });
+    const result = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: identities.map((uid) => expectedInstance(uid)), maximumItems: 45,
+    });
+    expect(result.matchesExpected).toBe(true);
+    expect(fetchImpl.mock.calls
+      .filter(([url]) => new URL(String(url)).pathname.includes("/instances"))
+      .map(([url]) => new URL(String(url)).searchParams.get("offset")))
+      .toEqual(["0", "20", "40", "0", "20", "40"]);
+
+    const inconsistent = adapter(vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      if (!parsed.pathname.includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      const offset = Number(parsed.searchParams.get("offset"));
+      return offset === 0
+        ? dicomJson([destinationInstanceRow(identities[0])], "application/dicom+json", { warning: "299 orthanc: There are 5 additional results that can be requested" })
+        : dicomJson([destinationInstanceRow(identities[1])]);
+    }));
+    await expect(inconsistent.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: identities.slice(0, 6).map((uid) => expectedInstance(uid)), maximumItems: 10,
+    })).rejects.toThrow();
+  });
+
+  it("rejects duplicate SOP identities repeated on a later QIDO page and Series overflow", async () => {
+    const identities = Array.from({ length: 101 }, (_, index) => `1.2.840.10008.7777.${index + 1}`);
+    const repeatedPage = adapter(vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      if (!parsed.pathname.includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      const offset = Number(parsed.searchParams.get("offset"));
+      if (offset === 0) {
+        return dicomJson(identities.slice(0, 100).map((uid) => destinationInstanceRow(uid)), "application/dicom+json", {
+          warning: "299 orthanc: There are 1 additional results that can be requested",
+        });
+      }
+      return dicomJson([destinationInstanceRow(identities[99])]);
+    }));
+    await expect(repeatedPage.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: identities.map((uid) => expectedInstance(uid)), maximumItems: 101,
+    })).rejects.toThrow();
+
+    const seriesOverflow = adapter(vi.fn(async () => dicomJson(
+      Array.from({ length: 65 }, (_, index) => ({ "0020000E": tag("UI", `1.2.840.10008.6666.${index + 1}`) })),
+    )));
+    await expect(seriesOverflow.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+  });
+
+  it("fails closed on malformed pagination warnings and global instance overflow", async () => {
+    const malformedWarning = adapter(vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      return parsed.pathname.includes("/instances")
+        ? dicomJson([destinationInstanceRow(SOP)], "application/dicom+json", { warning: "299 orthanc: partial results" })
+        : dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+    }));
+    await expect(malformedWarning.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+
+    const overflow = adapter(vi.fn(async (url) => {
+      const parsed = new URL(String(url));
+      if (!parsed.pathname.includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      return dicomJson([destinationInstanceRow(SOP), destinationInstanceRow(SOP_2)]);
+    }));
+    await expect(overflow.verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 1,
+    })).rejects.toThrow();
+  });
+
+  it("requires two consecutive complete destination scans to have the same exact hierarchy", async () => {
+    let instanceScan = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (!String(url).includes("/instances")) return dicomJson([{ "0020000E": tag("UI", SERIES) }]);
+      instanceScan += 1;
+      return dicomJson(instanceScan === 1
+        ? [destinationInstanceRow(SOP), destinationInstanceRow(SOP_2)]
+        : [destinationInstanceRow(SOP), destinationInstanceRow("1.2.840.10008.9999.3")]);
+    });
+    const result = await adapter(fetchImpl).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP), expectedInstance(SOP_2)], maximumItems: 10,
+    });
+    expect(result.actualSopInstanceUids).toHaveLength(2);
+    expect(result.matchesExpected).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("aborts the complete destination scan at its configured total deadline", async () => {
+    let upstreamAborted = false;
+    const fetchImpl = vi.fn((_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        upstreamAborted = true;
+        reject(new Error("synthetic abort"));
+      }, { once: true });
+    }));
+    await expect(adapter(fetchImpl, {
+      deadlines: { destinationVerificationTotalMs: 40 },
+    }).verifyDestinationStudy({
+      context: context(TEST_HOSPITAL_B_ID), studyInstanceUid: STUDY,
+      expectedInstances: [expectedInstance(SOP)], maximumItems: 10,
+    })).rejects.toThrow();
+    expect(upstreamAborted).toBe(true);
   });
 
   it("rejects oversized instance declarations and invalid query bounds before network I/O", async () => {

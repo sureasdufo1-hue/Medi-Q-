@@ -171,13 +171,19 @@ test("B Orthanc destination Study baseline is read-only and repeatable", async (
   const request = {
     context: bContext,
     studyInstanceUid: manifest.studyInstanceUID,
-    expectedSopInstanceUids: manifest.instances.map((instance) => instance.sopInstanceUID),
+    expectedInstances: manifest.instances.map((instance) => ({
+      seriesInstanceUid: manifest.seriesInstanceUID,
+      sopInstanceUid: instance.sopInstanceUID,
+    })),
     maximumItems: 2_000,
   };
   const before = await adapter.verifyDestinationStudy(request);
   const after = await adapter.verifyDestinationStudy(request);
   assert.deepEqual(after.actualSopInstanceUids, before.actualSopInstanceUids);
+  assert.deepEqual(after.actualSeriesInstanceUids, before.actualSeriesInstanceUids);
+  assert.equal(before.matchesExpected, false);
+  assert.equal(after.matchesExpected, false);
   // This is only a read-only baseline. Existing B data, including a matching
   // synthetic Study, is not overwritten and is not interpreted as a transfer.
-  console.log(`B destination baseline: ${before.actualSopInstanceUids.length} instance UID(s); no writes performed.`);
+  console.log(`B destination baseline: ${before.actualSopInstanceUids.length} instance UID(s), exact match=${before.matchesExpected}; no writes performed.`);
 });

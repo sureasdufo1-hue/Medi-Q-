@@ -96,6 +96,7 @@ Library capability                        ≠ MediQ support
 | DICOMweb plugin | A/B `/plugins` report `dicom-web`; authenticated QIDO/WADO responses observed | ENV-007 fixture provisioning and DCM-002 synthetic adapter integration | No destination-B STOW |
 | Orthanc A/B config | Separate internal networks and volumes; healthchecks; no host-published ports | A/B readiness and boundary tested | Application integration pending |
 | DICOM Gateway Port/adapter | Typed Port + `OrthancDicomwebAdapter`; server-owned A/B resolver; not registered as application route | `MEDIQ-DCM-001/002` scoped evidence | No Authorization wiring, Preflight or external product caller |
+| Destination verification | Two complete B QIDO scans, exact Study→Series→SOP set comparison, duplicate/path/paging checks and five-minute cap | `MEDIQ-PACS-006` scoped unit + read-only B integration | No post-STOW verification, integrity, coordinator or completion claim |
 | QIDO/WADO/frame | A fixture QIDO, minimal metadata, per-instance WADO hash/size, rendered JPEG | `MEDIQ-DCM-002` read-only Orthanc integration PASS | Synthetic fixture only; not a Viewer or Authorization claim |
 | STOW/destination | STOW mock contract; B read-only baseline has 0 matching fixture instances | `MEDIQ-DCM-002` mocked STOW + B QIDO baseline | No live STOW or A→B transfer; Preflight remains mandatory |
 | Multipart parser/proxy | `@ubercode/multipart-stream@1.1.0`, one-part streaming parser with byte/header/time caps | `MEDIQ-DCM-002` malformed/limit/Orthanc Acceptance | Single-maintainer dependency; source/lockfile reviewed, residual risk recorded |
@@ -358,6 +359,14 @@ Provenance status == COMPLETED
 Audit contains PACS_TRANSFER_COMPLETED
 ```
 
+### 10.3.1 Exact destination hierarchy and QIDO completeness
+
+Destination verification compares the authoritative expected `StudyInstanceUID → SeriesInstanceUID → SOPInstanceUID` hierarchy with the complete observed Hospital B hierarchy. Study existence or equal object counts alone are insufficient. The expected inventory must be non-empty, server-resolved, unique, valid and within the P0 limits (64 Series / 2,000 Instances). Destination QIDO rows must be checked against the requested Study/Series path; duplicate Series or SOP Instance UIDs, missing/extra identities and wrong hierarchy are rejected or reported as a mismatch.
+
+QIDO-RS `limit` and `offset` pagination is used for bounded enumeration. The adapter follows the DICOM PS3.18 Warning 299 indication for additional results, advances offsets safely, rejects non-progress/inconsistent or over-limit results, and does not call a capped first page a complete inventory. The normative pagination semantics and the warning for remaining results are specified in [DICOM PS3.18 §8.3.4.4](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_8.3.4.4.html). PS3.18 also warns that offset results may be inconsistent if the origin's contents change during pagination. The internal verifier therefore requires two identical complete scans and caps the total at five minutes; this reduces but does not eliminate concurrent-change risk. QIDO remains a time-bounded observation, not an atomic PACS snapshot; an inconsistent or unavailable scan cannot complete an Exchange.
+
+An exact UID hierarchy match still does not prove byte integrity. `COMPLETED` additionally requires source↔destination content integrity, completed Provenance and the required completion Audit to be persisted atomically with the legal operation transition. The internal PACS-006 verifier alone does not authorize access, perform STOW or transition an operation to `COMPLETED`.
+
 ---
 
 # 11. Rendered Frame Profile
@@ -489,6 +498,7 @@ DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정�
 | Maximum Instance Count | 2,000 | DCM-002 INITIAL GUARDRAIL | bounded error |
 | Maximum STOW Multipart Batch | 100 instances 또는 256 MiB 중 먼저 도달 | OPEN DECISION | 다음 batch 분할 |
 | Maximum Concurrent DICOM Operations | 2 | DCM-002 INITIAL GUARDRAIL | bounded queue/backpressure |
+| Destination Verification Total Time | 5 min | PACS-006 INITIAL GUARDRAIL | abort and remain non-complete |
 | Temporary Storage per Exchange | 2 GiB | OPEN DECISION | fail closed/purge |
 | Temporary Storage per Environment | 10 GiB | OPEN DECISION | admission control |
 | Maximum Transfer Duration | 15 min | OPEN DECISION | cancel/verify/purge |
@@ -675,7 +685,7 @@ Client에는 safe error code와 Correlation ID만 제공한다. Orthanc URL, cre
 | DICOM-INT-003 | CT Image Storage | Explicit VR LE | WADO Instance | binary/hash/Content-Type PASS | NOT RUN |
 | DICOM-INT-004 | CT Image Storage | Explicit VR LE | OHIF Render | Window/Level, scroll render | NOT RUN |
 | DICOM-INT-005 | CT Image Storage | Explicit VR LE | STOW Hospital B | all Instance response 확인 | NOT RUN |
-| DICOM-INT-006 | CT Image Storage | Explicit VR LE | Destination QIDO | expected Instance set 존재 | NOT RUN |
+| DICOM-INT-006 | CT Image Storage | Explicit VR LE | Destination QIDO | complete paginated Study→Series→SOP hierarchy exactly equals the server-resolved expected set; integrity/provenance/Audit required for terminal completion | NOT RUN — no protected post-STOW coordinator |
 | DICOM-INT-007 | CT Image Storage | Explicit VR LE | End-to-end | Integrity/Provenance/Audit PASS | NOT RUN |
 | DICOM-INT-008 | MR Image Storage | Explicit VR LE | Full path | 별도 지원 판정 | NOT RUN |
 | DICOM-INT-009 | CT Image Storage | Implicit VR LE | Full path | compatibility 판정 | NOT RUN |

@@ -1071,21 +1071,23 @@ THR-020
 
 ### Given
 
-PACS Import API 성공.
+Protected PACS import has passed the complete Mandatory Preflight, and the server holds the authoritative source Study→Series→SOP Instance inventory and content-integrity evidence for the operation.
 
 ### When
 
-Hospital B Orthanc에 QIDO 또는 동등한 확인을 수행한다.
+After the single authorized STOW attempt, the coordinator performs bounded, read-only destination reconciliation against the exact server-resolved Hospital B and Study. QIDO `limit`/`offset` pagination must be complete; any additional-results Warning must be followed, limits and deadlines must be honored, and two consecutive complete Series/per-Series SOP Instance inventories must be identical and equal the expected hierarchy.
 
 ### Then
 
-대상 StudyInstanceUID가 존재해야 한다.
+- Every expected Series and SOP Instance exists at the exact destination Study hierarchy.
+- No missing, extra, duplicate, malformed, cross-Study, or cross-Series identity is accepted.
+- `COMPLETED` is allowed only when exact destination identity equality, source↔destination byte integrity, completed Provenance, and the required completion Audit are committed with the legal operation transition.
+- An incomplete, changing/inconsistent, over-limit, failed, or ambiguous scan never yields `COMPLETED`; preserve the evidence-backed `PARTIAL`, `RESULT_UNKNOWN`, or `FAILED` state.
+- No blind STOW retry is permitted. A QIDO mismatch or unavailable query is not proof that no write occurred.
 
-### Expected
+### Current status
 
-```text
-Study exists = true
-```
+`NOT RUN` — no protected product coordinator or post-STOW workflow exists. `MEDIQ-PACS-006` adds only an internal read-only verification primitive; it does not satisfy this end-to-end Acceptance.
 
 ---
 
@@ -4107,6 +4109,20 @@ Normative recommendation: `DCM-002-DEC-001`. This ticket implements and probes a
 | `TC-DCM-002-SEC-004` | Confirm adapter is not registered behind a product route or Authorization executor | Adapter stays internal and cannot be invoked by external user; no Authorization-before-call claim | Scope boundary | PASS — static repository wiring review; intentionally not registered |
 | `TC-DCM-002-RUN-001` | Abort/deadline during QIDO/WADO/STOW stream or response wait | Request/body streams cancel; no unbounded wait or STOW retry; started STOW response loss is UNKNOWN | Runtime resilience | PASS — idle/deadline and lost-response unit cases |
 | `TC-DCM-002-RUN-002` | Exercise upper bounds and stream backpressure with synthetic streams | Enforce 100-study QIDO page, 2,000 metadata instances, 64 MiB per-instance, 16 KiB multipart-header and concurrency-2 ceilings | P0 resource guardrails | PASS — page/input, actual streamed >64 MiB, header, and concurrency caps tested |
+
+# MEDIQ-PACS-006 — Destination Study Verification Acceptance
+
+Normative decision: `PACS-006-DEC-001`. The cases below distinguish the internal QIDO verification primitive from the later protected post-STOW completion workflow. No case in this section authorizes STOW or makes `AT-FUNC-013` PASS.
+
+| ID | Scenario | Required result | Scope | Status |
+|---|---|---|---|---|
+| `TC-PACS-006-INPUT-001` | Empty, malformed, duplicate, over-limit, or structurally invalid expected Series/SOP inventory | Reject with a fixed error before any upstream request; expected inventory is non-empty, each SOP UID is unique, every UID is valid, and configured Series/Instance ceilings are enforced | Internal request validation | PASS — focused request-validation cases; no network on invalid input |
+| `TC-PACS-006-QIDO-001` | Destination Series/Instance inventory spans QIDO pages or an origin result cap | Use bounded `limit`/`offset`; continue when the DICOM Warning 299 signals more results; prove completeness only at a terminal page; reject malformed/unrecognized warning, inconsistent remaining count, non-progress, repeated page identity, timeout, cancellation, body cap, or result ceiling. Two full scans must match within a five-minute overall deadline | Mock QIDO + read-only Test Orthanc B | PASS — Warning 299, 100-item and smaller-origin pages, offset progression, inconsistent count, total deadline and repeated B baseline tested; no arbitrary-vendor conformance claim |
+| `TC-PACS-006-EXACT-001` | Actual destination matches expected Series set and per-Series SOP UID sets exactly; equal-count cases have missing/extra instances, extra Series, or the same SOP placed under a different Series; inventory changes between complete scans | Only identical exact hierarchy across two complete scans reports `matchesExpected=true`; missing, extra, wrong-Series or wrong-Study identity reports mismatch and cannot support completion | Internal verifier | PASS — exact match, missing, extra Series, wrong Series and scan drift cases; no post-STOW claim |
+| `TC-PACS-006-DUP-001` | Duplicate Series row, duplicate SOP row within/across pages/Series, malformed UID, or response identity contradicts the requested Study/Series path | Fail closed; `Set.has()` detects duplicates before mutation; no identifiers or upstream response details enter errors/logs | Negative protocol/security | PASS — duplicate Series/SOP, later-page duplicate, invalid UID and Study/Series-path mismatch cases |
+| `TC-PACS-006-FAIL-001` | B QIDO 401/5xx, malformed JSON/media, timeout, cancellation, byte/result cap or paging inconsistency | Fixed sanitized failure or explicit mismatch; never report verified, never call STOW, and never transition an operation to `COMPLETED` | Negative/read-only | PASS — adapter failure paths fail closed; operation-completion integration remains NOT RUN |
+| `TC-PACS-006-COMP-001` | Equal source/destination counts, matching UID inventory alone, STOW 200/202, missing integrity/provenance/Audit, or a failed/unknown destination query | Must not transition to `COMPLETED`; completion requires exact hierarchy, integrity verification, completed Provenance, and atomic state+completion-Audit persistence. Unknown outcomes remain `RESULT_UNKNOWN`; no blind retry | Protected product completion | NOT RUN — coordinator/evidence integration absent |
+| `TC-PACS-006-BOUNDARY-001` | Execute all scoped checks against the local synthetic Test Orthanc profile | Only Test B read-only QIDO is used; Hospital B contents are unchanged; no STOW/POST, route/provider or public result is introduced; cleanup and existing-stack preservation pass | Environment boundary | PASS — 7/7 integration tests, B empty/repeatable, no STOW/POST; no product transfer claim |
 
 **Not covered / remains NOT RUN:** any live STOW or A→B write; positive HTTPS/mTLS; live protected HTTP auth or safe-error/BOLA; operation-time Consent/Authorization/Grant/revocation fencing; Mandatory Preflight and wrong-mapping no-STOW; patient mapping administration; retry/reconciliation workflow; integrity/provenance/audit transaction; public Viewer/Download/API; general Hospital interoperability; full `AT-DICOM-001~004`, `AT-SEC-012/013`, or complete P0 A→MediQ→B Acceptance. The interface/runtime network test must not be reported as these product gates.
 

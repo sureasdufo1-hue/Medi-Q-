@@ -37,6 +37,7 @@ const DICOMWEB_ROOT = "/dicom-web/";
 const MAX_STUDIES = 100;
 const MAX_SERIES = 64;
 const MAX_INSTANCES = 2_000;
+const QIDO_VERIFICATION_PAGE_SIZE = 100;
 const MAX_INSTANCE_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_QIDO_JSON_BYTES = 1024 * 1024;
@@ -48,6 +49,7 @@ export interface DicomAdapterDeadlines {
   readonly qidoHeadersMs: number;
   readonly qidoIdleMs: number;
   readonly qidoTotalMs: number;
+  readonly destinationVerificationTotalMs: number;
   readonly wadoHeadersMs: number;
   readonly wadoIdleMs: number;
   readonly wadoTotalMs: number;
@@ -66,6 +68,7 @@ const DEFAULT_DEADLINES: DicomAdapterDeadlines = {
   qidoHeadersMs: 15_000,
   qidoIdleMs: 60_000,
   qidoTotalMs: 30_000,
+  destinationVerificationTotalMs: 300_000,
   wadoHeadersMs: 30_000,
   wadoIdleMs: 60_000,
   wadoTotalMs: 120_000,
@@ -324,42 +327,125 @@ export class OrthancDicomwebAdapter implements DicomGateway {
     validateUid(request.studyInstanceUid);
     boundedInteger(request.maximumItems, 1, MAX_INSTANCES, "DICOM_REQUEST_INVALID");
     if (
-      !Array.isArray(request.expectedSopInstanceUids) ||
-      request.expectedSopInstanceUids.length > request.maximumItems ||
-      new Set(request.expectedSopInstanceUids).size !== request.expectedSopInstanceUids.length
+      !Array.isArray(request.expectedInstances) ||
+      request.expectedInstances.length === 0 ||
+      request.expectedInstances.length > request.maximumItems
     ) {
       throw new Error("DICOM_REQUEST_INVALID");
     }
-    for (const uid of request.expectedSopInstanceUids) validateUid(uid);
-    const seriesRows = await this.#qidoArray(
-      request.context,
-      `studies/${segment(request.studyInstanceUid)}/series`,
-      [["includefield", "0020000E"]],
-      Math.min(request.maximumItems, MAX_INSTANCES),
-    );
-    if (seriesRows.length > MAX_SERIES) throw new Error("DICOM_UPSTREAM_INVALID");
-    const seenSeries = new Set<string>();
-    const actual = new Set<string>();
-    for (const row of seriesRows) {
-      const seriesUid = requiredTagString(row, "0020000E", "UI");
-      if (!seenSeries.add(seriesUid)) throw new Error("DICOM_UPSTREAM_INVALID");
-      const instanceRows = await this.#qidoArray(
-        request.context,
-        `studies/${segment(request.studyInstanceUid)}/series/${segment(seriesUid)}/instances`,
-        [["includefield", "00080018"]],
-        Math.min(request.maximumItems, MAX_INSTANCES),
-      );
-      for (const instance of instanceRows) {
-        const sopUid = requiredTagString(instance, "00080018", "UI");
-        if (!actual.add(sopUid) || actual.size > request.maximumItems) {
-          throw new Error("DICOM_UPSTREAM_INVALID");
-        }
+    const expectedBySeries = new Map<string, Set<string>>();
+    const expectedSops = new Set<string>();
+    for (const identity of request.expectedInstances) {
+      if (!identity || typeof identity !== "object") {
+        throw new Error("DICOM_REQUEST_INVALID");
       }
+      validateUid(identity.seriesInstanceUid);
+      validateUid(identity.sopInstanceUid);
+      if (expectedSops.has(identity.sopInstanceUid)) {
+        throw new Error("DICOM_REQUEST_INVALID");
+      }
+      expectedSops.add(identity.sopInstanceUid);
+      let seriesSops = expectedBySeries.get(identity.seriesInstanceUid);
+      if (!seriesSops) {
+        seriesSops = new Set<string>();
+        expectedBySeries.set(identity.seriesInstanceUid, seriesSops);
+      }
+      seriesSops.add(identity.sopInstanceUid);
     }
-    return {
-      studyInstanceUid: request.studyInstanceUid,
-      actualSopInstanceUids: [...actual].sort(),
-    };
+    if (expectedBySeries.size > MAX_SERIES) {
+      throw new Error("DICOM_REQUEST_INVALID");
+    }
+
+    const verificationScope = createRequestScope(
+      request.context.signal,
+      this.#deadlines.destinationVerificationTotalMs,
+      this.#deadlines.destinationVerificationTotalMs,
+    );
+    const verificationContext = { ...request.context, signal: verificationScope.signal };
+    try {
+      const expectedSeriesInstanceUids = [...expectedBySeries.keys()].sort();
+      const expectedIdentityKeys = [...expectedBySeries].flatMap(([seriesUid, sopUids]) =>
+        [...sopUids].map((sopUid) => `${seriesUid}\u0000${sopUid}`),
+      ).sort();
+      const scanDestination = async () => {
+        const seriesRows = await this.#qidoAll(
+          verificationContext,
+          `studies/${segment(request.studyInstanceUid)}/series`,
+          [["includefield", "0020000E"]],
+          MAX_SERIES,
+        );
+        const seenSeries = new Set<string>();
+        const seriesUids = seriesRows.map((row) => requiredTagString(row, "0020000E", "UI"));
+        for (const seriesUid of seriesUids) {
+          if (seenSeries.has(seriesUid)) throw new Error("DICOM_UPSTREAM_INVALID");
+          seenSeries.add(seriesUid);
+        }
+        const actualBySeries = new Map<string, Set<string>>();
+        const actualSops = new Set<string>();
+        for (const seriesUid of seriesUids) {
+          const remainingItems = request.maximumItems - actualSops.size;
+          const instanceRows = await this.#qidoAll(
+            verificationContext,
+            `studies/${segment(request.studyInstanceUid)}/series/${segment(seriesUid)}/instances`,
+            [
+              ["includefield", "00080018"],
+              ["includefield", "0020000D"],
+              ["includefield", "0020000E"],
+            ],
+            remainingItems,
+          );
+          const seriesSops = new Set<string>();
+          for (const instance of instanceRows) {
+            const actualStudyUid = requiredTagString(instance, "0020000D", "UI");
+            const actualSeriesUid = requiredTagString(instance, "0020000E", "UI");
+            const sopUid = requiredTagString(instance, "00080018", "UI");
+            if (actualStudyUid !== request.studyInstanceUid || actualSeriesUid !== seriesUid) {
+              throw new Error("DICOM_UPSTREAM_INVALID");
+            }
+            if (actualSops.has(sopUid)) throw new Error("DICOM_UPSTREAM_INVALID");
+            actualSops.add(sopUid);
+            seriesSops.add(sopUid);
+          }
+          actualBySeries.set(seriesUid, seriesSops);
+        }
+        const actualSeriesInstanceUids = [...actualBySeries.keys()].sort();
+        const actualSopInstanceUids = [...actualSops].sort();
+        const actualIdentityKeys = [...actualBySeries].flatMap(([seriesUid, sopUids]) =>
+          [...sopUids].map((sopUid) => `${seriesUid}\u0000${sopUid}`),
+        ).sort();
+        return {
+          actualSeriesInstanceUids,
+          actualSopInstanceUids,
+          actualIdentityKeys,
+          exact: sameStrings(actualSeriesInstanceUids, expectedSeriesInstanceUids) &&
+            sameStrings(actualIdentityKeys, expectedIdentityKeys),
+        };
+      };
+      const first = await scanDestination();
+      if (!first.exact) {
+        return {
+          studyInstanceUid: request.studyInstanceUid,
+          actualSeriesInstanceUids: first.actualSeriesInstanceUids,
+          actualSopInstanceUids: first.actualSopInstanceUids,
+          matchesExpected: false,
+        };
+      }
+      const second = await scanDestination();
+      const stable =
+        sameStrings(first.actualSeriesInstanceUids, second.actualSeriesInstanceUids) &&
+        sameStrings(first.actualIdentityKeys, second.actualIdentityKeys);
+      return {
+        studyInstanceUid: request.studyInstanceUid,
+        actualSeriesInstanceUids: second.actualSeriesInstanceUids,
+        actualSopInstanceUids: second.actualSopInstanceUids,
+        matchesExpected: stable && second.exact,
+      };
+    } catch (error) {
+      verificationScope.abort();
+      throw sanitizeError(error, "DICOM_VERIFICATION_UNAVAILABLE");
+    } finally {
+      verificationScope.dispose();
+    }
   }
 
   async #retrieveMultipartInstance(
@@ -443,26 +529,68 @@ export class OrthancDicomwebAdapter implements DicomGateway {
     path: string,
     fields: readonly (readonly [string, string])[],
     limit: number,
-  ): Promise<readonly Record<string, unknown>[]> {
+    offset: number,
+  ): Promise<{
+    readonly rows: readonly Record<string, unknown>[];
+    readonly remainingResults?: number;
+  }> {
     const release = await this.#semaphore.acquire(context.signal);
     const scope = createRequestScope(context.signal, this.#deadlines.qidoHeadersMs, this.#deadlines.qidoTotalMs);
     try {
       const endpoint = this.#resolve(context, "QIDO_STUDIES");
       const url = endpointUrl(endpoint, path);
       url.searchParams.set("limit", String(limit));
+      url.searchParams.set("offset", String(offset));
       for (const [name, value] of fields) url.searchParams.append(name, value);
       const response = await this.#fetchHeaders(url, endpoint, "application/dicom+json", scope);
       requireStatus(response, 200);
       requireMediaType(response, "application/dicom+json");
       const rows = await readJsonArray(response, MAX_QIDO_JSON_BYTES, scope, this.#deadlines.qidoIdleMs);
       if (rows.length > limit) throw new Error("DICOM_UPSTREAM_INVALID");
-      return rows;
+      const remainingResults = qidoRemainingResults(response.headers.get("warning"));
+      return {
+        rows,
+        ...(remainingResults === undefined ? {} : { remainingResults }),
+      };
     } catch (error) {
       scope.abort();
       throw sanitizeError(error, "DICOM_QIDO_FAILED");
     } finally {
       scope.dispose();
       release();
+    }
+  }
+
+  async #qidoAll(
+    context: QueryStudiesRequest["context"],
+    path: string,
+    fields: readonly (readonly [string, string])[],
+    maximumItems: number,
+  ): Promise<readonly Record<string, unknown>[]> {
+    const rows: Record<string, unknown>[] = [];
+    let offset = 0;
+    let expectedRemainingBeforePage: number | undefined;
+    while (true) {
+      const remaining = maximumItems - rows.length;
+      const limit = Math.min(QIDO_VERIFICATION_PAGE_SIZE, remaining + 1);
+      const page = await this.#qidoArray(context, path, fields, limit, offset);
+      const remainingResults = page.remainingResults ?? 0;
+      if (
+        expectedRemainingBeforePage !== undefined &&
+        page.rows.length + remainingResults !== expectedRemainingBeforePage
+      ) {
+        throw new Error("DICOM_UPSTREAM_INVALID");
+      }
+      if (page.rows.length > remaining) throw new Error("DICOM_UPSTREAM_INVALID");
+      rows.push(...page.rows);
+
+      if (remainingResults === 0 && page.rows.length < limit) return rows;
+      if (page.rows.length === 0) throw new Error("DICOM_UPSTREAM_INVALID");
+      offset += page.rows.length;
+      if (!Number.isSafeInteger(offset) || offset > MAX_INSTANCES + 1) {
+        throw new Error("DICOM_UPSTREAM_INVALID");
+      }
+      expectedRemainingBeforePage = remainingResults;
     }
   }
 
@@ -638,6 +766,26 @@ function isValidUid(uid: string): boolean {
     uid.length <= 64 &&
     /^(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*$/.test(uid)
   );
+}
+
+function qidoRemainingResults(warningHeader: string | null): number | undefined {
+  if (warningHeader === null || warningHeader.trim() === "") return undefined;
+  const warnings = warningHeader.trim().split(/,\s*(?=299\s)/i);
+  let remaining: number | undefined;
+  for (const warning of warnings) {
+    const match = /^299\s+.*?:\s*There are\s+([1-9][0-9]*)\s+additional results that can be requested\s*$/i.exec(warning.trim());
+    if (!match) throw new Error("DICOM_UPSTREAM_INVALID");
+    const parsed = Number(match[1]);
+    if (!Number.isSafeInteger(parsed) || (remaining !== undefined && remaining !== parsed)) {
+      throw new Error("DICOM_UPSTREAM_INVALID");
+    }
+    remaining = parsed;
+  }
+  return remaining;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function validatePatientId(value: string): void {

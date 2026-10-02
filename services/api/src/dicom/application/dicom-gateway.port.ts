@@ -125,14 +125,21 @@ export interface DicomStowResult {
 export interface VerifyDestinationStudyRequest {
   readonly context: DicomGatewayRequestContext;
   readonly studyInstanceUid: string;
-  readonly expectedSopInstanceUids: readonly string[];
+  /** Server-resolved source identity; never accept this inventory from a client. */
+  readonly expectedInstances: readonly {
+    readonly seriesInstanceUid: string;
+    readonly sopInstanceUid: string;
+  }[];
   /** Adapter enforces its configured response ceiling. */
   readonly maximumItems: number;
 }
 
 export interface VerifyDestinationStudyResult {
   readonly studyInstanceUid: string;
+  readonly actualSeriesInstanceUids: readonly string[];
   readonly actualSopInstanceUids: readonly string[];
+  /** Exact Series/SOP identity match stable across two complete scans; not byte integrity or authorization. */
+  readonly matchesExpected: boolean;
 }
 
 export interface CheckDicomCapabilityRequest {

@@ -72,7 +72,9 @@ class SyntheticConformingDicomGateway implements DicomGateway {
   ): Promise<VerifyDestinationStudyResult> {
     return {
       studyInstanceUid: request.studyInstanceUid,
-      actualSopInstanceUids: [...request.expectedSopInstanceUids],
+      actualSeriesInstanceUids: [...new Set(request.expectedInstances.map((item) => item.seriesInstanceUid))],
+      actualSopInstanceUids: request.expectedInstances.map((item) => item.sopInstanceUid),
+      matchesExpected: true,
     };
   }
 }
