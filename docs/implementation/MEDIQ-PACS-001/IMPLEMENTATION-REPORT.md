@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity binding and operation-time authorization fence sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 상태 | `PARTIAL` — identity and no-side-effect operation-time authorization fence sub-gates PASS; full coordinator not implemented |
+| 상태 | `PARTIAL` — identity and no-side-effect operation-time authorization fence sub-gates PASS; `PACS-001-DEC-005` handoff design/Acceptance recorded, implementation NOT RUN; full coordinator not implemented |
 
 ## 1. 목표 및 판정 범위
 
@@ -111,6 +111,7 @@
 ## 8. 미구현 사항 및 잔여 위험
 
 - The full coordinator must prove it gets the mapping from trusted persisted state and calls this validator for every exact source instance before dispatch.
+- `PACS-001-DEC-005` now specifies a separate ephemeral, server-derived Series/SOP handoff from the exact metadata descriptors used for source hashing. It preserves the ordinary four-field source-capture result and adds no persistent UID inventory; its implementation and `HANDOFF-001~007` Acceptance remain NOT RUN.
 - The fence has only been proven for internal paths using the shared helper and same database; full coordinator's atomic authorization + durable `STOW_STARTED` dispatch boundary remains open.
 - Endpoint/TLS preflight integration, Integrity/Provenance/Audit gates, STOW result parsing, destination verification/reconciliation, and product-level zero-STOW/B-unchanged negative tests remain open.
 - Exact equality of synthetic PatientID strings is not real-patient identity proof or cross-hospital identity matching.
@@ -138,3 +139,4 @@ Status: PARTIAL
 |---|---|---|
 | 2026-10-01 | `PARTIAL` | `PACS-001-DEC-002` 권고안/Acceptance 후 identity preflight primitive와 read-only WADO projection 구현; full coordinator는 후속 |
 | 2026-10-01 | `PARTIAL` | `PACS-001-DEC-003` 권고안/5개 Fence Acceptance 후 shared Session fence와 operation-time internal Authorization 재검증 구현; PostgreSQL revoke serialization/denial/no-operation-state PASS. 후속으로 migration `0018` 원본 체크섬 drift를 exact byte 복원으로 해결하고 DB-008 aggregate/local migration smoke 전부 PASS; full coordinator는 미완 |
+| 2026-10-02 | `PARTIAL` | `PACS-001-DEC-005`의 ephemeral source identity handoff 권고안과 `HANDOFF-001~007` Acceptance 기록; 코드/시험은 아직 미실행 |
