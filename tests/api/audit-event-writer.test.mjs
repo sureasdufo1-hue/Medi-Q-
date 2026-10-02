@@ -35,7 +35,7 @@ function input(overrides = {}) {
 }
 
 describe("AuditEvent", () => {
-  it("accepts only existing fixed event/resource/result/reason combinations", () => {
+  it("TC-INT-001-CAP-011 accepts only fixed event/resource/result/reason combinations", () => {
     const allowed = [
       ["SESSION_CREATED", "EXCHANGE_SESSION", "SUCCESS", null],
       ["CONSENT_REQUESTED", "CONSENT", "SUCCESS", null],
@@ -52,9 +52,14 @@ describe("AuditEvent", () => {
       ["PACS_SOURCE_CAPTURE_STARTED", "STUDY", "ALLOW", null],
       ["PACS_SOURCE_CAPTURED", "STUDY", "SUCCESS", null],
       ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "AUTHORIZATION_DENIED"],
+      ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "OPERATION_NOT_CAPTUREABLE"],
+      ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "PATIENT_MAPPING_INVALID"],
       ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "SOURCE_PATIENT_ID_MISMATCH"],
+      ["PACS_SOURCE_CAPTURE_DENIED", "STUDY", "DENY", "SOURCE_METADATA_INVALID"],
       ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_READ_FAILED"],
+      ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_CANCELLED"],
       ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_DEADLINE"],
+      ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_PERSISTENCE_FAILED"],
     ];
 
     for (const [action, resourceType, result, reasonCode] of allowed) {
@@ -70,11 +75,31 @@ describe("AuditEvent", () => {
     ["GRANT_DENIED resource mismatch", { action: "GRANT_DENIED", resourceType: "TRANSFER_GRANT", result: "DENY", reasonCode: "GRANT_ISSUE_DENIED" }],
     ["unknown reason", { action: "PACS_TRANSFER_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "free text" }],
     ["source capture free-form failure reason", { action: "PACS_SOURCE_CAPTURE_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "upstream patient TEST-PHI" }],
+    ["source capture wrong result", { action: "PACS_SOURCE_CAPTURE_STARTED", resourceType: "STUDY", result: "SUCCESS", reasonCode: null }],
+    ["source capture wrong resource", { action: "PACS_SOURCE_CAPTURED", resourceType: "EXCHANGE_SESSION", result: "SUCCESS", reasonCode: null }],
+    ["source capture denial wrong result", { action: "PACS_SOURCE_CAPTURE_DENIED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "AUTHORIZATION_DENIED" }],
+    ["source capture failure wrong result", { action: "PACS_SOURCE_CAPTURE_FAILED", resourceType: "STUDY", result: "DENY", reasonCode: "SOURCE_READ_FAILED" }],
     ["GRANT_DENIED free-form reason", { action: "GRANT_DENIED", result: "DENY", reasonCode: "policy detail" }],
     ["missing required session", { exchangeSessionId: null }],
+    ["source capture missing session", { action: "PACS_SOURCE_CAPTURE_STARTED", resourceType: "STUDY", result: "ALLOW", exchangeSessionId: null }],
+    ["source capture missing Study reference", { action: "PACS_SOURCE_CAPTURED", resourceType: "STUDY", result: "SUCCESS", resourceId: null }],
+    ["non-UUID Audit event id", { auditEventId: "TEST-AUDIT" }],
     ["non-UUID actor", { actorId: "TEST-ACTOR" }],
+    ["non-UUID Tenant", { tenantId: "TEST-TENANT" }],
+    ["non-UUID Session", { exchangeSessionId: "TEST-SESSION" }],
+    ["non-UUID Study reference", { action: "PACS_SOURCE_CAPTURED", resourceType: "STUDY", result: "SUCCESS", resourceId: "2.25.12345" }],
+    ["non-UUID correlation", { correlationId: "TEST-CORRELATION" }],
     ["invalid date", { occurredAt: new Date(Number.NaN) }],
-    ["unknown payload", { patientId: "TEST-PATIENT-1" }],
+    ["invalid created timestamp", { createdAt: new Date(Number.NaN) }],
+    ["DICOM Study UID field", { studyInstanceUid: "2.25.12345" }],
+    ["DICOM Series UID field", { seriesInstanceUid: "2.25.12346" }],
+    ["DICOM SOP Instance UID field", { sopInstanceUid: "2.25.12347" }],
+    ["local PatientID field", { patientId: "TEST-PATIENT-007" }],
+    ["DICOM payload field", { payload: "SYNTHETIC-DICOM-BYTES" }],
+    ["credential field", { credential: "TEST-ONLY-CREDENTIAL" }],
+    ["token field", { token: "TEST-ONLY-TOKEN" }],
+    ["key field", { key: "TEST-ONLY-KEY" }],
+    ["free-text diagnostic field", { errorMessage: "Synthetic upstream detail" }],
   ])("rejects %s", (_name, overrides) => {
     expect(() => AuditEvent.create(input(overrides))).toThrow(InvalidAuditEventError);
   });

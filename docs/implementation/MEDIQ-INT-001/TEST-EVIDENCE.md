@@ -6,7 +6,7 @@
 | 제목 | Bounded source integrity and authorized synthetic source-capture sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — CAP-001~010, CAP-013~014 pass only within recorded synthetic scopes; CAP-005/007/008 passed their recorded 3×31/31 and CAP-009/010 each passed 3×32/32 isolated gates; CAP-011~012, destination/transfer workflow and full P0 remain open |
+| 결과 | `PARTIAL` — CAP-001~011, CAP-013~014 pass only within recorded synthetic scopes; CAP-005/007/008 passed their recorded 3×31/31 and CAP-009/010/011 each passed 3×32/32 isolated gates; CAP-012, destination/transfer workflow and full P0 remain open |
 
 ## 1. 검증 환경
 
@@ -14,7 +14,7 @@
 |---|---|
 | OS | Windows local development workspace |
 | Runtime·Toolchain | Node.js 24.18.0; npm 11; TypeScript 6.0.3; Vitest 5.0.2 |
-| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/005/006/009/010/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
+| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/005/006/009/010/011/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
 | 데이터 | Synthetic/Test only |
 
 ## 2. 검증 매트릭스
@@ -212,7 +212,7 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 ### Current boundary
 
 - New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
-- `TC-INT-001-CAP-001~010` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005/007/008 each passed three consecutive fresh isolated runs (31/31); CAP-009/010 each passed three consecutive fresh isolated runs (32/32). The historical pre-metadata Tenant-context failure root cause remains unknown. CAP-011~012 remain open.
+- `TC-INT-001-CAP-001~011` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005/007/008 each passed three consecutive fresh isolated runs (31/31); CAP-009/010/011 each passed three consecutive fresh isolated runs (32/32). The historical pre-metadata Tenant-context failure root cause remains unknown. CAP-012 remains open.
 - The exact permanent runtime grant migration is present and validated. The service remains internal-only and is not reachable through HTTP; CAP-014 proves only the isolated synthetic source-capture boundary, not destination import or B-side product behavior.
 - No STOW, B write, destination verification or full A→B E2E was run or claimed.
 
@@ -346,3 +346,18 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 - Each run: exit 0; 32/32 tests; independent DB observer PASS for exactly one correlation-bound `PACS_SOURCE_CAPTURE_STARTED/ALLOW`, one `PACS_SOURCE_CAPTURED/SUCCESS`, and one operation-bound `SOURCE_CAPTURE/PENDING` row with expected `SHA256-MANIFEST-V1` digest/count and no destination verification fields; operation remained `CREATED`.
 - The service response contained exactly `evidenceId`, `kind=CAPTURED`, `objectCount`, and `status=PENDING`; no UID, PatientID, digest, payload or credential. A-only source WADO consumed all expected streams; no Tenant transaction spanned WADO; all streams closed; B EMPTY before/after; STOW/destination calls 0; cleanup PASS; existing `mediq` stack unchanged.
 - Judgment: `TC-INT-001-CAP-010` is `PASS (scoped)` for the positive operation-bound source-capture commit. CAP-012 negative persistence-failure/rollback, product route, destination verification, STOW and full A→B remain unverified.
+
+## 17. CAP-011 — Source-capture Audit catalog and metadata minimization (PASS, scoped)
+
+- Decision/Acceptance: `INT-001-CAP-011-REC-001` and expanded `TC-INT-001-CAP-011` were recorded before test changes. Scope is limited to the four existing source-capture Audit actions and their current internal producer paths; no production Audit catalog/schema change was made.
+- API build/regression: `npm run test:api -- --reporter=dot`; exit 0; 35 files / 640 tests passed. Focused command `npx vitest run tests/api/audit-event-writer.test.mjs tests/api/authorized-source-capture.test.mjs --reporter=dot`; exit 0; 2 files / 78 tests passed.
+- Domain tests accepted all 11 fixed action/resource/result/reason tuples and rejected wrong combinations, unapproved/free-text reasons, missing/malformed context, DICOM UID as resource ID, and extra Study/Series/SOP UID, PatientID, payload, credential, token, key and free-text fields.
+- Source-capture service tests asserted the exact 12-field parameterized Audit insert context for start+success, denial and failure: valid Audit UUID, verified synthetic actor/Tenant, Session UUID, `resource_type=STUDY`, internal Study-reference UUID, fixed result/reason, correlation UUID and matching valid occurred/created timestamps. No DICOM UID/PatientID/payload/credential-like values appeared.
+- Isolated command, executed three consecutive times in fresh disposable projects without in-run retry:
+
+```powershell
+./scripts/test-int001-source-capture.ps1
+```
+
+- Each run: exit 0; 32/32 Node tests; independent read-only observer PASS for exact 12-column `audit_events` schema and raw source-capture Audit row allowlist/context, fixed 11-tuple catalog, Study-reference UUID binding, valid timestamps and sensitive-value absence. A streams/previous runner guarantees remained; B EMPTY before/after; STOW/destination calls 0; cleanup PASS; existing stack unchanged.
+- `git diff --check` passed. Judgment: `TC-INT-001-CAP-011` is `PASS (scoped)` for the enumerated source-capture Audit paths only. Global Audit completeness, retention/tamper resistance, other Audit producers, production PACS and full A→B remain outside this Acceptance; CAP-012 remains open.

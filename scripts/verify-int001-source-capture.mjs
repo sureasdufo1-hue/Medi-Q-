@@ -5,6 +5,16 @@ const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
 if (!databaseUrl) throw new Error("INT001_OBSERVER_DATABASE_URL_REQUIRED");
 const ids = Object.freeze({
+  actor: "0a000000-0000-4000-8000-000000000001",
+  tenant: "02000000-0000-4000-8000-000000000002",
+  session: "16000000-0000-4000-8000-000000000001",
+  sessionOther: "16000000-0000-4000-8000-000000000011",
+  sessionInFlightRevocation: "16000000-0000-4000-8000-000000000021",
+  study: "18000000-0000-4000-8000-000000000001",
+  studyOther: "18000000-0000-4000-8000-000000000011",
+  studySourceMismatch: "18000000-0000-4000-8000-000000000012",
+  studyMissingCount: "18000000-0000-4000-8000-000000000013",
+  studyInFlightRevocation: "18000000-0000-4000-8000-000000000021",
   operation: "1b000000-0000-4000-8000-000000000001",
   denied: "1d000000-0000-4000-8000-000000000001",
   failure: "1d000000-0000-4000-8000-000000000002",
@@ -40,6 +50,48 @@ const ids = Object.freeze({
   operationMissingCount: "1b000000-0000-4000-8000-000000000014",
   operationInFlightRevocation: "1b000000-0000-4000-8000-000000000015",
 });
+const correlationIds = [
+  ids.denied,
+  ids.failure,
+  ids.success,
+  ids.missingConsent,
+  ids.withdrawnConsent,
+  ids.expiredConsent,
+  ids.revokedGrant,
+  ids.expiredGrant,
+  ids.wrongScope,
+  ids.crossTenant,
+  ids.unavailable,
+  ids.bindingMismatch,
+  ids.sourceMismatch,
+  ids.notCreated,
+  ids.fixtureStateTransition,
+  ids.missingCount,
+  ids.metadataEmpty,
+  ids.metadataCountMismatch,
+  ids.metadataSeriesMismatch,
+  ids.metadataWrongStudy,
+  ids.metadataDuplicate,
+  ids.metadataMalformed,
+  ids.metadataMissingTag,
+  ids.metadataOverLimit,
+  ids.metadataUnavailable,
+  ids.patientIdMismatch,
+  ids.inFlightRevocation,
+  ids.grantRevocation,
+];
+const sourceAuditScopes = new Map(
+  correlationIds.map((correlationId) => [correlationId, {
+    sessionId: ids.session,
+    studyRefId: ids.study,
+  }]),
+);
+sourceAuditScopes.set(ids.notCreated, { sessionId: ids.sessionOther, studyRefId: ids.studyOther });
+sourceAuditScopes.set(ids.missingCount, { sessionId: ids.session, studyRefId: ids.studyMissingCount });
+sourceAuditScopes.set(ids.inFlightRevocation, {
+  sessionId: ids.sessionInFlightRevocation,
+  studyRefId: ids.studyInFlightRevocation,
+});
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 try {
   const auditResult = await pool.query(
@@ -47,36 +99,7 @@ try {
        FROM audit_events
       WHERE correlation_id = ANY($1::uuid[])
       GROUP BY correlation_id, action, result, reason_code`,
-    [[
-      ids.denied,
-      ids.failure,
-      ids.success,
-      ids.missingConsent,
-      ids.withdrawnConsent,
-      ids.expiredConsent,
-      ids.revokedGrant,
-      ids.expiredGrant,
-      ids.wrongScope,
-      ids.crossTenant,
-      ids.unavailable,
-      ids.bindingMismatch,
-      ids.sourceMismatch,
-      ids.notCreated,
-      ids.fixtureStateTransition,
-      ids.missingCount,
-      ids.metadataEmpty,
-      ids.metadataCountMismatch,
-      ids.metadataSeriesMismatch,
-      ids.metadataWrongStudy,
-      ids.metadataDuplicate,
-      ids.metadataMalformed,
-      ids.metadataMissingTag,
-      ids.metadataOverLimit,
-      ids.metadataUnavailable,
-      ids.patientIdMismatch,
-      ids.inFlightRevocation,
-      ids.grantRevocation,
-    ]],
+    [correlationIds],
   );
   const actualAudit = new Map(
     auditResult.rows.map((row) => [
@@ -127,6 +150,102 @@ try {
   ]);
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 
+  const auditColumns = await pool.query(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'audit_events'
+      ORDER BY ordinal_position`,
+  );
+  assert.deepEqual(auditColumns.rows.map((row) => row.column_name), [
+    "audit_event_id",
+    "occurred_at",
+    "actor_id",
+    "tenant_id",
+    "exchange_session_id",
+    "resource_type",
+    "resource_id",
+    "action",
+    "result",
+    "reason_code",
+    "correlation_id",
+    "created_at",
+  ], "Audit storage remains the exact metadata-only 12-column contract");
+
+  const sourceAuditResult = await pool.query(
+    `SELECT audit_event_id::text AS audit_event_id,
+            occurred_at,
+            actor_id::text AS actor_id,
+            tenant_id::text AS tenant_id,
+            exchange_session_id::text AS exchange_session_id,
+            resource_type,
+            resource_id::text AS resource_id,
+            action,
+            result,
+            reason_code,
+            correlation_id::text AS correlation_id,
+            created_at
+       FROM audit_events
+      WHERE correlation_id = ANY($1::uuid[])
+        AND action = ANY($2::text[])
+      ORDER BY correlation_id, action, occurred_at, audit_event_id`,
+    [correlationIds, [
+      "PACS_SOURCE_CAPTURE_STARTED",
+      "PACS_SOURCE_CAPTURED",
+      "PACS_SOURCE_CAPTURE_DENIED",
+      "PACS_SOURCE_CAPTURE_FAILED",
+    ]],
+  );
+  const sourceAuditKeys = [
+    "action",
+    "actor_id",
+    "audit_event_id",
+    "correlation_id",
+    "created_at",
+    "exchange_session_id",
+    "occurred_at",
+    "reason_code",
+    "resource_id",
+    "resource_type",
+    "result",
+    "tenant_id",
+  ];
+  const allowedSourceAuditTuples = new Set([
+    "PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|<NULL>",
+    "PACS_SOURCE_CAPTURED|STUDY|SUCCESS|<NULL>",
+    "PACS_SOURCE_CAPTURE_DENIED|STUDY|DENY|AUTHORIZATION_DENIED",
+    "PACS_SOURCE_CAPTURE_DENIED|STUDY|DENY|OPERATION_NOT_CAPTUREABLE",
+    "PACS_SOURCE_CAPTURE_DENIED|STUDY|DENY|PATIENT_MAPPING_INVALID",
+    "PACS_SOURCE_CAPTURE_DENIED|STUDY|DENY|SOURCE_PATIENT_ID_MISMATCH",
+    "PACS_SOURCE_CAPTURE_DENIED|STUDY|DENY|SOURCE_METADATA_INVALID",
+    "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_READ_FAILED",
+    "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_CANCELLED",
+    "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_DEADLINE",
+    "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED",
+  ]);
+  assert.ok(sourceAuditResult.rows.length > 0, "Expected scoped source-capture Audit rows");
+  for (const row of sourceAuditResult.rows) {
+    assert.deepEqual(Object.keys(row).sort(), sourceAuditKeys);
+    assert.match(row.audit_event_id, /^[0-9a-f-]{36}$/i);
+    const expectedScope = sourceAuditScopes.get(row.correlation_id);
+    assert.ok(expectedScope, "Every observed row must bind to a known synthetic case");
+    assert.equal(row.actor_id, ids.actor);
+    assert.equal(row.tenant_id, ids.tenant);
+    assert.equal(row.exchange_session_id, expectedScope.sessionId);
+    assert.equal(row.resource_type, "STUDY");
+    assert.equal(row.resource_id, expectedScope.studyRefId, "resource_id is the internal Study-reference UUID");
+    assert.ok(allowedSourceAuditTuples.has(
+      `${row.action}|${row.resource_type}|${row.result}|${row.reason_code ?? "<NULL>"}`,
+    ));
+    assert.match(row.correlation_id, /^[0-9a-f-]{36}$/i);
+    assert.ok(row.occurred_at instanceof Date && Number.isFinite(row.occurred_at.getTime()));
+    assert.ok(row.created_at instanceof Date && Number.isFinite(row.created_at.getTime()));
+    assert.equal(row.created_at.getTime(), row.occurred_at.getTime());
+  }
+  assert.doesNotMatch(
+    JSON.stringify(sourceAuditResult.rows),
+    /2\.25\.|TEST-PATIENT-007|SYNTHETIC-DICOM-BYTES|credential|token|private key/i,
+  );
+
   const finalState = await pool.query(
     `SELECT op.state AS operation_state,
             count(e.integrity_id)::integer AS evidence_count,
@@ -166,7 +285,7 @@ try {
     { operation_id: ids.operationMissingCount, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationInFlightRevocation, operation_state: "CREATED", evidence_count: 0 },
   ]);
-  console.log("int001_capture_audit=PASS denied=13 unresolved=4 failed=7 started=12 capture_success=1 grant_revoked=1");
+  console.log(`int001_capture_audit=PASS denied=13 unresolved=4 failed=7 started=12 capture_success=1 grant_revoked=1 source_rows=${sourceAuditResult.rows.length} metadata_allowlist=PASS`);
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_cap010_success_capture=PASS evidence=pending_one success_audit=one operation_state=CREATED response_allowlist=true");
 } catch (error) {

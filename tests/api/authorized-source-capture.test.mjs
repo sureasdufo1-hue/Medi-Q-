@@ -376,6 +376,56 @@ function auditActions(harness) {
   }));
 }
 
+function expectSourceCaptureAuditMetadata(harness, expectedEvents) {
+  const records = harness.committedAudits.map((values) => ({
+    auditEventId: values[0],
+    occurredAt: values[1],
+    actorId: values[2],
+    tenantId: values[3],
+    exchangeSessionId: values[4],
+    resourceType: values[5],
+    resourceId: values[6],
+    action: values[7],
+    result: values[8],
+    reasonCode: values[9],
+    correlationId: values[10],
+    createdAt: values[11],
+  }));
+  const expectedKeys = [
+    "action",
+    "actorId",
+    "auditEventId",
+    "correlationId",
+    "createdAt",
+    "exchangeSessionId",
+    "occurredAt",
+    "reasonCode",
+    "resourceId",
+    "resourceType",
+    "result",
+    "tenantId",
+  ];
+
+  expect(records.map(({ action, result, reasonCode }) => ({ action, result, reasonCode })))
+    .toEqual(expectedEvents);
+  for (const record of records) {
+    expect(Object.keys(record).sort()).toEqual(expectedKeys);
+    expect(record.auditEventId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(record.actorId).toBe(ids.actor);
+    expect(record.tenantId).toBe(ids.tenant);
+    expect(record.exchangeSessionId).toBe(ids.session);
+    expect(record.resourceType).toBe("STUDY");
+    expect(record.resourceId).toBe(ids.studyRef);
+    expect(record.correlationId).toBe(ids.correlation);
+    expect(record.occurredAt).toBeInstanceOf(Date);
+    expect(Number.isFinite(record.occurredAt.getTime())).toBe(true);
+    expect(record.createdAt).toBeInstanceOf(Date);
+    expect(Number.isFinite(record.createdAt.getTime())).toBe(true);
+    expect(record.createdAt.getTime()).toBe(record.occurredAt.getTime());
+  }
+  expect(JSON.stringify(records)).not.toMatch(/TEST-PATIENT|2\.25\.|SYNTHETIC-DICOM-BYTES|CREDENTIAL|TOKEN|TEST-ONLY-KEY|errorMessage/i);
+}
+
 describe("AuthorizedSourceCaptureService", () => {
   it("TC-INT-001-CAP-001/004/007/010/014 captures only A bytes after fenced authorization and commits pending evidence with success Audit", async () => {
     const harness = makeHarness();
@@ -393,6 +443,10 @@ describe("AuthorizedSourceCaptureService", () => {
     expect(auditActions(harness)).toEqual([
       { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
       { action: "PACS_SOURCE_CAPTURED", result: "SUCCESS", reason: null },
+    ]);
+    expectSourceCaptureAuditMetadata(harness, [
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reasonCode: null },
+      { action: "PACS_SOURCE_CAPTURED", result: "SUCCESS", reasonCode: null },
     ]);
     expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
     expect(harness.dicomCalls.hospitalIds.every((hospitalId) => hospitalId === TEST_HOSPITAL_A_ID)).toBe(true);
@@ -416,6 +470,9 @@ describe("AuthorizedSourceCaptureService", () => {
       result: "DENY",
       reason: "AUTHORIZATION_DENIED",
     });
+    expectSourceCaptureAuditMetadata(harness, [
+      { action: "PACS_SOURCE_CAPTURE_DENIED", result: "DENY", reasonCode: "AUTHORIZATION_DENIED" },
+    ]);
   });
 
   it("TC-INT-001-CAP-003 rejects a changed operation state before source I/O", async () => {
@@ -519,6 +576,10 @@ describe("AuthorizedSourceCaptureService", () => {
       result: "FAILURE",
       reason: "SOURCE_READ_FAILED",
     });
+    expectSourceCaptureAuditMetadata(harness, [
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reasonCode: null },
+      { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reasonCode: "SOURCE_READ_FAILED" },
+    ]);
   });
 
   it.each([
