@@ -170,6 +170,55 @@ describe("P0 bounded source integrity manifest", () => {
     ]);
   });
 
+  it("awaits each encrypted staging write before requesting the next source chunk", async () => {
+    let releaseFirstWrite;
+    let signalFirstWrite;
+    const firstWrite = new Promise((resolve) => { signalFirstWrite = resolve; });
+    const writeGate = new Promise((resolve) => { releaseFirstWrite = resolve; });
+    let pulls = 0;
+    let writes = 0;
+    const descriptor = {
+      sopInstanceUid: "1.2.30",
+      openStream: async () => ({
+        sopInstanceUid: "1.2.30",
+        mediaType: "application/dicom",
+        contentLength: 2,
+        body: new ReadableStream({
+          pull(controller) {
+            pulls += 1;
+            if (pulls === 1) controller.enqueue(Uint8Array.of(0x01));
+            else if (pulls === 2) controller.enqueue(Uint8Array.of(0x02));
+            else controller.close();
+          },
+        }, { highWaterMark: 0 }),
+        observer: {
+          writeChunk: async () => {
+            writes += 1;
+            if (writes === 1) {
+              signalFirstWrite();
+              await writeGate;
+            }
+          },
+          complete: async () => {},
+          abort: async () => {},
+        },
+      }),
+    };
+    const capturePromise = buildSourceIntegrityCapture({
+      expectedInstanceCount: 1,
+      instances: [descriptor],
+    });
+
+    await firstWrite;
+    expect(pulls).toBe(1);
+    expect(writes).toBe(1);
+    releaseFirstWrite();
+    const capture = await capturePromise;
+    expect(pulls).toBe(3);
+    expect(writes).toBe(2);
+    expect(capture.instances[0].byteLength).toBe(2);
+  });
+
   it("changes the aggregate when exact bytes or object identity changes", async () => {
     const calculate = (uid, bytes) =>
       buildSourceIntegrityManifest({

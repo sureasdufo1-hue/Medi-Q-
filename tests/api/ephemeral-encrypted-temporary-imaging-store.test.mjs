@@ -163,6 +163,63 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
   });
 
+  it("reserves the in-process environment quota before concurrent file writes", async () => {
+    const { store, handle } = await setup({
+      limits: {
+        maximumInstanceBytes: 4,
+        maximumPackageBytes: 8,
+        maximumEnvironmentBytes: 8,
+      },
+    });
+    const bindingB = {
+      ...packageBinding,
+      exchangeSessionId: "20000000-0000-4000-8000-000000000002",
+      packageId: "30000000-0000-4000-8000-000000000002",
+    };
+    const bindingC = {
+      ...packageBinding,
+      exchangeSessionId: "20000000-0000-4000-8000-000000000003",
+      packageId: "30000000-0000-4000-8000-000000000003",
+    };
+    const handleB = await store.beginPackage(bindingB);
+    const handleC = await store.beginPackage(bindingC);
+    const requests = [
+      { handle, binding: packageBinding, sopInstanceUid: "2.25.201" },
+      { handle: handleB, binding: bindingB, sopInstanceUid: "2.25.202" },
+      { handle: handleC, binding: bindingC, sopInstanceUid: "2.25.203" },
+    ];
+    const writers = await Promise.all(requests.map((request) => store.beginInstance({
+      storageRef: request.handle.storageRef,
+      packageBinding: request.binding,
+      instanceBinding: {
+        studyRefId: instanceBinding.studyRefId,
+        seriesInstanceUid: instanceBinding.seriesInstanceUid,
+        sopInstanceUid: request.sopInstanceUid,
+      },
+    })));
+
+    const firstWrites = await Promise.allSettled(
+      writers.map((writer) => writer.write(Buffer.alloc(4, 0x2a))),
+    );
+    expect(firstWrites.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    expect(firstWrites.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const rejected = firstWrites.find((result) => result.status === "rejected");
+    expect(rejected.reason).toMatchObject({ code: "LIMIT_EXCEEDED" });
+    await Promise.all(writers.map((writer) => writer.abort()));
+
+    const retryWriters = await Promise.all(requests.slice(0, 2).map((request) => store.beginInstance({
+      storageRef: request.handle.storageRef,
+      packageBinding: request.binding,
+      instanceBinding: {
+        studyRefId: instanceBinding.studyRefId,
+        seriesInstanceUid: instanceBinding.seriesInstanceUid,
+        sopInstanceUid: request.sopInstanceUid,
+      },
+    })));
+    await Promise.all(retryWriters.map((writer) => writer.write(Buffer.alloc(4, 0x2b))));
+    await Promise.all(retryWriters.map((writer) => writer.abort()));
+  });
+
   it("does not decrypt old ciphertext after process restart and refuses to initialize over orphan files", async () => {
     const { storageRoot, store, handle } = await setup();
     const receipt = await stage(store, handle, Buffer.from("restart-boundary"));

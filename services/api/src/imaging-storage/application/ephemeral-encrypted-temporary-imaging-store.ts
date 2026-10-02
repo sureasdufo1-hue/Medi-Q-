@@ -3,12 +3,13 @@ import {
   chmod,
   lstat,
   mkdir,
+  open as openFile,
   readdir,
   rm,
 } from "node:fs/promises";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { Readable, Transform, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 export const TEMPORARY_IMAGING_LIMITS = Object.freeze({
@@ -69,6 +70,17 @@ export interface TemporaryImagingPurgeReceipt {
   readonly deletedAt: Date;
 }
 
+export interface TemporaryImagingInstanceWriter {
+  /** Await each chunk before asking the source for its next chunk. */
+  write(chunk: Uint8Array): Promise<void>;
+  /** Seal only when independently computed source length and SHA-256 match. */
+  complete(expected: {
+    readonly byteLength: number;
+    readonly sha256: `sha256:${string}`;
+  }): Promise<TemporaryImagingInstanceReceipt>;
+  abort(): Promise<void>;
+}
+
 export type TemporaryImagingStorageErrorCode =
   | "INVALID_INPUT"
   | "BINDING_MISMATCH"
@@ -103,6 +115,7 @@ interface StoredPackage {
   readonly binding: TemporaryImagingPackageBinding;
   readonly directory: string;
   readonly objects: Map<string, StoredObject>;
+  readonly activeSopInstanceUids: Set<string>;
   readonly abortController: AbortController;
   readonly idleWaiters: Array<() => void>;
   byteLength: number;
@@ -284,6 +297,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
       binding: Object.freeze({ ...binding }),
       directory,
       objects: new Map(),
+      activeSopInstanceUids: new Set(),
       abortController: new AbortController(),
       idleWaiters: [],
       byteLength: 0,
@@ -301,6 +315,35 @@ export class EphemeralEncryptedTemporaryImagingStore {
     readonly instanceBinding: TemporaryImagingInstanceBinding;
     readonly source: AsyncIterable<Uint8Array>;
   }): Promise<TemporaryImagingInstanceReceipt> {
+    if (!input.source || typeof input.source[Symbol.asyncIterator] !== "function") {
+      storageError("INVALID_INPUT");
+    }
+    const writer = await this.beginInstance(input);
+    try {
+      let sourceBytes = 0;
+      const sourceDigest = createHash("sha256");
+      for await (const chunk of input.source) {
+        if (!(chunk instanceof Uint8Array)) storageError("INVALID_INPUT");
+        await writer.write(chunk);
+        sourceBytes += chunk.byteLength;
+        sourceDigest.update(chunk);
+      }
+      return await writer.complete({
+        byteLength: sourceBytes,
+        sha256: `sha256:${sourceDigest.digest("hex")}`,
+      });
+    } catch (error) {
+      await writer.abort();
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      throw new TemporaryImagingStorageError("STORAGE_UNAVAILABLE");
+    }
+  }
+
+  async beginInstance(input: {
+    readonly storageRef: string;
+    readonly packageBinding: TemporaryImagingPackageBinding;
+    readonly instanceBinding: TemporaryImagingInstanceBinding;
+  }): Promise<TemporaryImagingInstanceWriter> {
     await this.ready;
     const storedPackage = this.getPackage(input.storageRef);
     this.assertPackageBinding(storedPackage, input.packageBinding);
@@ -309,8 +352,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
       !input.instanceBinding ||
       !validateUuid(input.instanceBinding.studyRefId) ||
       !validateUid(input.instanceBinding.seriesInstanceUid) ||
-      !validateUid(input.instanceBinding.sopInstanceUid) ||
-      !input.source || typeof input.source[Symbol.asyncIterator] !== "function"
+      !validateUid(input.instanceBinding.sopInstanceUid)
     ) {
       storageError("INVALID_INPUT");
     }
@@ -318,6 +360,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
       storageError("LIMIT_EXCEEDED");
     }
     if (
+      storedPackage.activeSopInstanceUids.has(input.instanceBinding.sopInstanceUid) ||
       [...storedPackage.objects.values()].some(
         (object) => object.binding.sopInstanceUid === input.instanceBinding.sopInstanceUid,
       )
@@ -332,78 +375,183 @@ export class EphemeralEncryptedTemporaryImagingStore {
     const cipher = createCipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
     cipher.setAAD(aadFor(input.packageBinding, input.instanceBinding, input.storageRef, objectRef));
     const digest = createHash("sha256");
-    let byteLength = 0;
+    let fileHandle: Awaited<ReturnType<typeof openFile>> | null = null;
     storedPackage.activeStages += 1;
-    const limiter = new Transform({
-      transform: (chunk: Buffer | Uint8Array, _encoding, callback) => {
-        const bytes = Buffer.isBuffer(chunk)
-          ? chunk
-          : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        const nextLength = byteLength + bytes.byteLength;
-        const nextPackageBytes = storedPackage.byteLength + bytes.byteLength;
-        const nextEnvironmentBytes = this.environmentBytes + bytes.byteLength;
-        if (
-          nextLength > this.limits.maximumInstanceBytes ||
-          nextPackageBytes > this.limits.maximumPackageBytes ||
-          nextEnvironmentBytes > this.limits.maximumEnvironmentBytes
-        ) {
-          callback(new TemporaryImagingStorageError("LIMIT_EXCEEDED"));
-          return;
+    storedPackage.activeSopInstanceUids.add(input.instanceBinding.sopInstanceUid);
+    try {
+      fileHandle = await openFile(filePath, "wx", 0o600);
+      if (storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+    } catch (error) {
+      key.fill(0);
+      nonce.fill(0);
+      if (fileHandle) {
+        try {
+          await fileHandle.close();
+        } catch {
+          // Attempt path cleanup even when close reports an error.
         }
+        try {
+          await rm(filePath, { force: true });
+        } catch {
+          storedPackage.purgePending = true;
+        }
+      }
+      storedPackage.activeStages -= 1;
+      storedPackage.activeSopInstanceUids.delete(input.instanceBinding.sopInstanceUid);
+      if (storedPackage.activeStages === 0) {
+        for (const resolveIdle of storedPackage.idleWaiters.splice(0)) resolveIdle();
+      }
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      storageError("STORAGE_UNAVAILABLE");
+    }
+
+    let byteLength = 0;
+    let filePosition = 0;
+    let settled = false;
+    let writing = false;
+    let cleanupPromise: Promise<void> | undefined;
+    const finishActiveStage = () => {
+      storedPackage.activeStages -= 1;
+      storedPackage.activeSopInstanceUids.delete(input.instanceBinding.sopInstanceUid);
+      if (storedPackage.activeStages === 0) {
+        for (const resolveIdle of storedPackage.idleWaiters.splice(0)) resolveIdle();
+      }
+    };
+    const writeCiphertext = async (bytes: Buffer) => {
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const result = await fileHandle!.write(
+          bytes,
+          offset,
+          bytes.byteLength - offset,
+          filePosition + offset,
+        );
+        if (result.bytesWritten < 1) storageError("STORAGE_UNAVAILABLE");
+        offset += result.bytesWritten;
+      }
+      filePosition += bytes.byteLength;
+    };
+    const cleanup = (): Promise<void> => {
+      if (cleanupPromise) return cleanupPromise;
+      if (settled) return Promise.resolve();
+      settled = true;
+      cleanupPromise = (async () => {
+        key.fill(0);
+        nonce.fill(0);
+        try {
+          await fileHandle?.close();
+        } catch {
+          // Removal below remains the authoritative cleanup attempt.
+        }
+        try {
+          await rm(filePath, { force: true });
+          storedPackage.byteLength -= byteLength;
+          this.environmentBytes -= byteLength;
+        } catch {
+          storedPackage.purgePending = true;
+        }
+        finishActiveStage();
+      })();
+      return cleanupPromise;
+    };
+    const runWrite = async (chunk: Uint8Array): Promise<void> => {
+      if (settled || writing || !(chunk instanceof Uint8Array)) storageError("INVALID_INPUT");
+      if (storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+      if (chunk.byteLength === 0) return;
+      const nextLength = byteLength + chunk.byteLength;
+      const nextPackageBytes = storedPackage.byteLength + chunk.byteLength;
+      const nextEnvironmentBytes = this.environmentBytes + chunk.byteLength;
+      if (
+        nextLength > this.limits.maximumInstanceBytes ||
+        nextPackageBytes > this.limits.maximumPackageBytes ||
+        nextEnvironmentBytes > this.limits.maximumEnvironmentBytes
+      ) {
+        storageError("LIMIT_EXCEEDED");
+      }
+      writing = true;
+      try {
+        const bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        // Reserve synchronously before the first await so concurrent package
+        // writers cannot all observe the same environment quota remainder.
         byteLength = nextLength;
         storedPackage.byteLength = nextPackageBytes;
         this.environmentBytes = nextEnvironmentBytes;
         digest.update(bytes);
-        callback(null, bytes);
-      },
-    });
-
-    try {
-      await pipeline(
-        Readable.from(input.source, { objectMode: false }),
-        limiter,
-        cipher,
-        createWriteStream(filePath, { flags: "wx", mode: 0o600 }),
-        { signal: storedPackage.abortController.signal },
-      );
-      if (byteLength < 1) storageError("INTEGRITY_FAILED");
-      const sha256 = `sha256:${digest.digest("hex")}` as const;
-      const authTag = cipher.getAuthTag();
-      const receipt = Object.freeze({
-        objectRef,
-        studyRefId: input.instanceBinding.studyRefId,
-        seriesInstanceUid: input.instanceBinding.seriesInstanceUid,
-        sopInstanceUid: input.instanceBinding.sopInstanceUid,
-        byteLength,
-        sha256,
-      });
-      storedPackage.objects.set(objectRef, {
-        receipt,
-        binding: Object.freeze({ ...input.instanceBinding }),
-        filePath,
-        nonce,
-        key,
-        authTag,
-      });
-      return receipt;
-    } catch (error) {
-      key.fill(0);
-      nonce.fill(0);
+        const encrypted = cipher.update(bytes);
+        await writeCiphertext(encrypted);
+        if (storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
+          storageError("STORAGE_UNAVAILABLE");
+        }
+      } catch (error) {
+        await cleanup();
+        if (error instanceof TemporaryImagingStorageError) throw error;
+        throw new TemporaryImagingStorageError("STORAGE_UNAVAILABLE");
+      } finally {
+        writing = false;
+      }
+    };
+    const complete = async (expected: {
+      readonly byteLength: number;
+      readonly sha256: `sha256:${string}`;
+    }): Promise<TemporaryImagingInstanceReceipt> => {
+      if (settled || writing || storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
+        await cleanup();
+        storageError("STORAGE_UNAVAILABLE");
+      }
       try {
-        await rm(filePath, { force: true });
-      } catch {
-        storedPackage.purgePending = true;
+        if (
+          byteLength < 1 ||
+          !Number.isSafeInteger(expected?.byteLength) ||
+          expected.byteLength !== byteLength ||
+          !/^sha256:[0-9a-f]{64}$/.test(expected?.sha256 ?? "")
+        ) {
+          storageError("INTEGRITY_FAILED");
+        }
+        const finalBytes = cipher.final();
+        await writeCiphertext(finalBytes);
+        const sha256 = `sha256:${digest.digest("hex")}` as const;
+        if (sha256 !== expected.sha256) storageError("INTEGRITY_FAILED");
+        const authTag = cipher.getAuthTag();
+        await fileHandle!.sync();
+        if (storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
+          storageError("STORAGE_UNAVAILABLE");
+        }
+        await fileHandle!.close();
+        const receipt = Object.freeze({
+          objectRef,
+          studyRefId: input.instanceBinding.studyRefId,
+          seriesInstanceUid: input.instanceBinding.seriesInstanceUid,
+          sopInstanceUid: input.instanceBinding.sopInstanceUid,
+          byteLength,
+          sha256,
+        });
+        storedPackage.objects.set(objectRef, {
+          receipt,
+          binding: Object.freeze({ ...input.instanceBinding }),
+          filePath,
+          nonce,
+          key,
+          authTag,
+        });
+        settled = true;
+        finishActiveStage();
+        return receipt;
+      } catch (error) {
+        await cleanup();
+        if (error instanceof TemporaryImagingStorageError) throw error;
+        throw new TemporaryImagingStorageError("STORAGE_UNAVAILABLE");
       }
-      storedPackage.byteLength -= byteLength;
-      this.environmentBytes -= byteLength;
-      if (error instanceof TemporaryImagingStorageError) throw error;
-      throw new TemporaryImagingStorageError("STORAGE_UNAVAILABLE");
-    } finally {
-      storedPackage.activeStages -= 1;
-      if (storedPackage.activeStages === 0) {
-        for (const resolveIdle of storedPackage.idleWaiters.splice(0)) resolveIdle();
-      }
-    }
+    };
+
+    return Object.freeze({
+      write: runWrite,
+      complete,
+      abort: cleanup,
+    });
   }
 
   async sealPackage(input: {

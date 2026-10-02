@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
@@ -9,6 +12,7 @@ import {
 import { ResolvedObjectAuthorizationPolicy } from "../../services/api/dist/authorization/application/resolved-object-authorization.policy.js";
 import { PostgresAuthorizationEvidenceReader } from "../../services/api/dist/authorization/persistence/postgres-authorization-evidence.reader.js";
 import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrity/application/authorized-source-capture.service.js";
+import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
 import {
   TEST_HOSPITAL_A_ID,
@@ -359,6 +363,8 @@ function makeHarness(options = {}) {
     actorTenantContext,
     gateway,
     () => new Date(now),
+    undefined,
+    options.temporaryImagingStore,
   );
 
   return {
@@ -535,6 +541,94 @@ describe("AuthorizedSourceCaptureService", () => {
       { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
       { action: "PACS_SOURCE_CAPTURED", result: "SUCCESS", reason: null },
     ]);
+  });
+
+  it("TC-PACS-001-STAGE-001 stages the exact authorized WADO bytes that produced the source digest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mediq-authorized-source-spool-"));
+    try {
+      const storageRoot = join(root, "private-spool");
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      const harness = makeHarness({ temporaryImagingStore: store });
+      const result = await harness.service.captureForCoordinator(command());
+
+      expect(result.kind).toBe("CAPTURED_FOR_COORDINATOR");
+      if (result.kind !== "CAPTURED_FOR_COORDINATOR") return;
+      const { handoff } = result;
+      const temporaryPackage = handoff.temporaryPackage;
+      expect(temporaryPackage).toMatchObject({
+        packageId: ids.package,
+        objectCount: instanceFixture.length,
+        totalBytes: instanceFixture.reduce((sum, instance) => sum + instance.bytes.byteLength, 0),
+      });
+      expect(Date.parse(temporaryPackage?.expiresAt ?? "")).not.toBeNaN();
+      expect(temporaryPackage?.instances).toHaveLength(instanceFixture.length);
+
+      const binding = {
+        tenantId: ids.tenant,
+        exchangeSessionId: ids.session,
+        packageId: ids.package,
+        purpose: "PACS_IMPORT",
+      };
+      for (const expected of handoff.expectedInstances) {
+        const stored = temporaryPackage?.instances.find(
+          (instance) => instance.sopInstanceUid === expected.sopInstanceUid,
+        );
+        const source = instanceFixture.find(
+          (instance) => instance.sopInstanceUid === expected.sopInstanceUid,
+        );
+        expect(stored).toMatchObject({
+          seriesInstanceUid: expected.seriesInstanceUid,
+          sopInstanceUid: expected.sopInstanceUid,
+          byteLength: expected.byteLength,
+          sha256: expected.sha256,
+        });
+        expect(stored).toBeDefined();
+        expect(source).toBeDefined();
+        const bytes = await store.readInstance({
+          storageRef: temporaryPackage.storageRef,
+          objectRef: stored.objectRef,
+          packageBinding: binding,
+          instanceBinding: {
+            studyRefId: ids.studyRef,
+            seriesInstanceUid: expected.seriesInstanceUid,
+            sopInstanceUid: expected.sopInstanceUid,
+          },
+          expectedByteLength: expected.byteLength,
+          expectedSha256: expected.sha256,
+        });
+        expect(bytes).toEqual(Buffer.from(source.bytes));
+      }
+
+      expect(handoff.sourceEvidence.totalBytes).toBe(temporaryPackage.totalBytes);
+      expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
+      expect(harness.operationState).toBe("CREATED");
+      expect(JSON.stringify(handoff)).not.toMatch(/TEST-PATIENT|LOCAL-PATIENT|patientId|localPatientId/i);
+      const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, PacsImportModule) ?? [];
+      expect(providers.some((provider) =>
+        provider === EphemeralEncryptedTemporaryImagingStore ||
+        provider?.provide === EphemeralEncryptedTemporaryImagingStore,
+      )).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("purges staged ciphertext when operation-time Authorization is revoked after source reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mediq-authorized-source-spool-deny-"));
+    try {
+      const storageRoot = join(root, "private-spool");
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      const harness = makeHarness({ temporaryImagingStore: store, revokeAfterStreams: true });
+
+      const result = await harness.service.captureForCoordinator(command());
+      expect(result).toEqual({ kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+      expect(await readdir(storageRoot)).toEqual([]);
+      expect(harness.committedEvidence).toHaveLength(0);
+      expect(harness.operationState).toBe("CREATED");
+      expect(harness.dicomCalls.destinationWrites).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("TC-PACS-001-HANDOFF-002 and DIGEST-004/006 reject caller-provided inventory or authority bindings before I/O", async () => {

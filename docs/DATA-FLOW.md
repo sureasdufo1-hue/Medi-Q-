@@ -1494,7 +1494,7 @@ Tenant/Session/Package/StudyReference/PACS_IMPORT binding
 Immediate expiry denial; Tenant-RLS purge Audit and idempotent cleanup
 ```
 
-Normative recommendation: `PACS-001-DEC-007`. The storage adapter, key protection, quota, metadata persistence and purge lifecycle are NOT IMPLEMENTED / NOT RUN. Do not activate a persistent DICOM staging path before `TC-PACS-001-STAGE-001~012` passes. PostgreSQL stores metadata references only, never DICOM payload or raw key material.
+Normative recommendation: `PACS-001-DEC-007`. The API source-capture service contains an optional, unregistered same-WADO-chunk encrypted staging seam; only `STAGE-001` passes in a synthetic unit harness. The Nest module/Compose runtime does not inject a store. Metadata/RLS lifecycle, shared quota, SERVICE cleanup/purge Audit and `STAGE-002~012` remain NOT RUN. Do not activate a persistent DICOM staging path before the full lifecycle and isolated Orthanc no-STOW gates pass. PostgreSQL stores metadata references only, never DICOM payload or raw key material.
 
 ---
 

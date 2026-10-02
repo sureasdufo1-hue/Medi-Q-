@@ -46,6 +46,14 @@ export interface SourceIntegrityDicomStream {
   readonly mediaType: string;
   readonly contentLength?: number;
   readonly body: ReadableStream<Uint8Array>;
+  /** Optional internal sink; every awaited write completes before the next read. */
+  readonly observer?: SourceIntegrityStreamObserver;
+}
+
+export interface SourceIntegrityStreamObserver {
+  writeChunk(chunk: Uint8Array): Promise<void>;
+  complete(expected: SourceIntegrityInstanceEvidence): Promise<void>;
+  abort(): Promise<void>;
 }
 
 export interface SourceIntegrityInstanceDescriptor {
@@ -213,6 +221,7 @@ async function hashInstance(
   let stream: SourceIntegrityDicomStream | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let completed = false;
+  let observerCompleted = false;
   let instanceBytes = 0;
   const instanceHash = createHash("sha256");
   const abortCurrentRead = () => {
@@ -258,9 +267,9 @@ async function hashInstance(
       }
       instanceBytes += chunkBytes;
       instanceHash.update(next.value);
+      if (stream.observer) await stream.observer.writeChunk(next.value);
     }
 
-    completed = true;
     if (signal?.aborted) reject("ABORTED");
     if (instanceBytes === 0) reject("EMPTY_INSTANCE");
     if (
@@ -270,11 +279,23 @@ async function hashInstance(
       reject("CONTENT_LENGTH_MISMATCH");
     }
 
+    const digest = instanceHash.digest();
+    const evidence = Object.freeze({
+      sopInstanceUid: descriptor.sopInstanceUid,
+      byteLength: instanceBytes,
+      sha256: `sha256:${digest.toString("hex")}` as const,
+    });
+    if (stream.observer) {
+      await stream.observer.complete(evidence);
+      observerCompleted = true;
+    }
+    completed = true;
+
     return Object.freeze({
       sopInstanceUid: descriptor.sopInstanceUid,
       uidBytes: Buffer.from(descriptor.sopInstanceUid, "ascii"),
       byteLength: instanceBytes,
-      digest: instanceHash.digest(),
+      digest,
     });
   } catch (error) {
     if (error instanceof SourceIntegrityInputError) throw error;
@@ -284,6 +305,13 @@ async function hashInstance(
   } finally {
     signal?.removeEventListener("abort", abortCurrentRead);
     if (stream && !completed) await cancelStream(stream.body, reader);
+    if (stream?.observer && !observerCompleted) {
+      try {
+        await stream.observer.abort();
+      } catch {
+        // Preserve the sanitized primary capture failure.
+      }
+    }
     reader?.releaseLock();
   }
 }

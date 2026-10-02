@@ -1238,7 +1238,7 @@ Temporary Imaging Payload가 저장되는 경우 개발환경에서 적용 가�
 
 `PACS-001-DEC-007`에 따라 각 instance는 AES-256-GCM으로 암호화하고, 단일 프로세스 P0에서 random DEK는 memory-only이며 파일·DB에 저장하지 않는다. Tenant/Session/Package/StudyReference/Purpose binding, 64 MiB/object, 2 GiB/package, 10 GiB/environment, TTL 및 purge evidence를 강제한다. Process restart/다른 replica에서는 해당 객체를 복호화할 수 없고 fail closed 및 purge 대상으로 처리한다. Enterprise HSM/KMS는 P0 필수가 아니며 생산용 multi-replica Managed KMS/HSM 통합은 별도 Gate다. 구현·검증 전에는 지속성 임시 DICOM 저장 경로를 활성화하지 않는다.
 
-**Acceptance:** `TC-PACS-001-STAGE-001~003/009` (`ACCEPTANCE-TESTS.md`; NOT RUN)
+**Acceptance:** `TC-PACS-001-STAGE-001~003/009` (`ACCEPTANCE-TESTS.md`; `STAGE-001` PASS only in synthetic unit harness, `STAGE-002/003/009` NOT RUN)
 
 ---
 
@@ -2165,7 +2165,7 @@ Viewer access는 short-lived여야 하며 Consent 철회, Grant revoke/expiry �
 
 ## SEC-CACHE-001 — Ephemeral Cache Protection
 
-임시 DICOM 객체는 전송 중·저장 중 암호화, Tenant/Session/Package/Study/Purpose binding, 승인된 크기 제한, TTL 및 Tenant-RLS 감사 가능한 purge evidence를 가져야 한다. P0 설계와 가드레일은 `PACS-001-DEC-007`이며 Acceptance `TC-PACS-001-STAGE-001~012`는 현재 NOT RUN이다. 제품 경로는 Acceptance 통과 전 활성화할 수 없다.
+임시 DICOM 객체는 전송 중·저장 중 암호화, Tenant/Session/Package/Study/Purpose binding, 승인된 크기 제한, TTL 및 Tenant-RLS 감사 가능한 purge evidence를 가져야 한다. P0 설계는 `PACS-001-DEC-007`이다. Optional same-WADO-chunk seam의 `STAGE-001`만 synthetic unit scope PASS이며 `STAGE-002~012`는 NOT RUN이다. 제품 경로는 전체 lifecycle 및 no-STOW 검증 전 활성화할 수 없다.
 
 ## SEC-CACHE-002 — Client and Intermediary Cache Control
 

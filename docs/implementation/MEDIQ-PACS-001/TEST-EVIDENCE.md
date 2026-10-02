@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity binding and operation-time authorization fence sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 결과 | `PARTIAL` — identity/fence, source handoffs and six crypto-spool primitive unit cases PASS only in their scoped boundaries; source-storage lifecycle and full coordinator absent |
+| 결과 | `PARTIAL` — identity/fence and source handoffs PASS in their scoped boundaries; seven spool-core cases and exact-source `STAGE-001` pass only in isolated synthetic unit harnesses; storage lifecycle and full coordinator absent |
 
 ## 1. 검증 환경
 
@@ -223,11 +223,14 @@ git diff --check
 | `TC-PACS-001-STORE-CORE-004` | TTL equality denied read; repeated in-process purge returned the same receipt and removed the test package directory. PASS — no durable metadata or Audit claim. |
 | `TC-PACS-001-STORE-CORE-005` | A narrowed 4-byte unit cap rejected 5 bytes and removed the partial object. Constructor rejects injected ceilings above policy maxima. PASS — no concurrent/global quota claim. |
 | `TC-PACS-001-STORE-CORE-006` | A new store instance over a non-empty prior package directory returned `RECOVERY_REQUIRED` before creating or reading objects. PASS — fail-closed initialization only; cleanup/Audit recovery absent. |
+| `TC-PACS-001-STAGE-001` | Authorized source-capture unit harness injected an unregistered local encrypted store. Three exact synthetic WADO-stream byte sequences were hashed and staged through awaited per-chunk writes; each receipt's SOP/Series/Study binding, SHA-256 and length matched the same capture handoff, and authenticated reads returned byte-for-byte identical source bytes. A second case revoked Authorization after reads and confirmed ciphertext was purged, no evidence committed and operation remained `CREATED`. PASS — no Orthanc, PostgreSQL/RLS, runtime mount, public module injection or downstream consumer claim. |
+| `TC-PACS-001-STORE-CORE-007` | Three simultaneous writers with a narrowed 8-byte in-process environment cap reserved quota before async file writes; exactly two 4-byte writes succeeded, the third failed closed, and retry after abort proved reservations were released. PASS — single-process primitive only; no cross-process/shared-volume quota claim. |
 
 ### Commands and results
 
 ```powershell
 npm run build:api
+npx vitest run tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs tests/api/source-integrity-manifest.test.mjs tests/api/authorized-source-capture.test.mjs --reporter=dot
 npm run typecheck:api
 npm run test:api -- --reporter=dot
 npm run test:dicom-port-contract
@@ -235,8 +238,9 @@ git diff --check
 ```
 
 - API build and strict API typecheck exited `0`.
-- Full API suite: 36 files / 674 tests passed, including the six new store-primitive tests.
+- Focused source builder/authorized capture/store suites: 3 files / 78 tests passed, including an awaited write/no-prefetch assertion.
+- Full API suite: 36 files / 678 tests passed, including seven store-primitive, two exact-source staging/revocation and one stream backpressure property case.
 - DICOM Port contract TypeScript check exited `0`; `git diff --check` exited `0` (Git emitted only the configured LF→CRLF working-copy warnings).
-- Test inputs were synthetic byte markers only; tests used isolated OS temporary directories. No Orthanc, PostgreSQL, runtime `.env`, configured API container, mounted imaging volume, real PHI, DICOM payload or PACS endpoint was used by these six tests.
+- Test inputs were synthetic byte markers only; tests used isolated OS temporary directories. No Orthanc, PostgreSQL, runtime `.env`, configured API container, mounted imaging volume, real PHI, DICOM payload or PACS endpoint was used by these new tests.
 
-**Scope judgment:** `STORE-CORE-001~006` PASS only for the unregistered local cryptographic primitive. They do not PASS `STAGE-001~012`: the store is not wired into the same WADO stream that produced `DIGEST` evidence; package metadata persistence, tenant-safe global quota, per-Tenant SERVICE cleanup, restart orphan recovery, purge Audit, runtime volume/secret setup and end-to-end cleanup are absent. No DICOM bytes were captured or sent to Hospital B by this new primitive, and no route, worker, `PREFLIGHT_PASSED`, `STOW_STARTED` or STOW path was added. `MEDIQ-PACS-001` remains PARTIAL.
+**Scope judgment:** `STORE-CORE-001~007` and `STAGE-001` PASS only within the local in-process synthetic unit harness. A separate assertion proves the builder waits for a chunk sink before pulling another, but this is only one primitive property and does not PASS `STAGE-009`. Source capture now has an optional internal storage seam, but the Nest module/Compose/runtime does not supply or register a store; tests do not prove Test Orthanc or DB/RLS behavior. `STAGE-002~012` remain NOT RUN: durable package metadata, cross-process/shared quota, per-Tenant SERVICE cleanup, restart orphan recovery, purge Audit/saga, runtime volume/secret setup, maximum-study/performance bounds and isolated Orthanc A/B no-STOW are absent. No public route, worker, `PREFLIGHT_PASSED`, `STOW_STARTED`, destination call or STOW path was added. `MEDIQ-PACS-001` remains PARTIAL.

@@ -2391,7 +2391,7 @@ ViewerSession (runtime / short-lived)
 
 ViewerSession ID, Study UID 또는 Temporary storage reference는 단독으로 권한을 부여하지 않는다. P1 `MobileVault`와 `SecureMedicalCapsule`은 별도 extension model이며 현재 P0 18-table ERD에 추가하지 않는다.
 
-`PACS-001-DEC-007`은 새 P0 entity/table을 추가하지 않는다. 구현 시 temporary package metadata는 기존 `ImagingPackage.storage_ref`, `retention_expires_at`, `deleted_at`과 `StudyReference`/`ExchangeSession` 관계를 재사용하며, `PACS_IMPORT` purpose는 transfer operation과 authenticated storage metadata에 결속한다. Encrypted DICOM bytes는 ERD 밖 private temporary storage에, volatile per-instance DEK는 단일 API process memory에만 존재한다. 해당 storage/lifecycle은 현재 미구현이며 관련 Acceptance도 NOT RUN이다.
+`PACS-001-DEC-007`은 새 P0 entity/table을 추가하지 않는다. 구현 시 temporary package metadata는 기존 `ImagingPackage.storage_ref`, `retention_expires_at`, `deleted_at`과 `StudyReference`/`ExchangeSession` 관계를 재사용하며, `PACS_IMPORT` purpose는 transfer operation과 authenticated storage metadata에 결속한다. An optional unregistered same-stream AES-GCM seam now passes `STAGE-001` only in a synthetic unit harness; persistent metadata/RLS lifecycle, SERVICE purge and remaining Acceptance are not implemented. Encrypted DICOM bytes stay outside the ERD/private temporary filesystem; volatile per-instance DEK exists only in one API process.
 
 **공통 기준:** Hospital PACS가 Source of Record이고 MediQ Cloud는 Permanent PACS/장기 Archive가 아니다. P0 Viewer 데이터는 Source PACS에서 온디맨드로 조회한다.
 

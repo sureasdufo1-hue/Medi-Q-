@@ -1641,7 +1641,7 @@ RETENTION_PENDING
 DELETED state
 PACS-001-DEC-007: AES-256-GCM per-instance staging recommendation
 30-minute P0 TTL / immediate expiry denial / Tenant-RLS purge Audit
-STAGE-001~012 are NOT RUN; no persistent staging path may be enabled
+`STAGE-001` PASS only in a synthetic unit harness; `STAGE-002~012` are NOT RUN; no persistent runtime staging path may be enabled
 ```
 
 ### Requirements
@@ -1654,11 +1654,11 @@ SEC-CACHE-001
 
 ### Residual Risk
 
-MEDIUM — P0 design recorded; implementation and lifecycle Acceptance remain NOT RUN.
+MEDIUM — Optional exact-source staging seam tested only with synthetic unit data; persistent implementation and lifecycle Acceptance remain incomplete.
 
 이유:
 
-The 30-minute retention rule applies only to the synthetic P0 proposal; the production retention period remains unset. No storage adapter, Tenant cleanup worker, durable purge Audit, restart recovery or filesystem/DB failure saga is implemented. A non-empty spool directory after process restart fails closed, but cleanup recovery is a remaining gate. Do not activate persistent imaging storage before `STAGE-001~012` passes.
+The 30-minute retention rule applies only to the synthetic P0 proposal; the production retention period remains unset. An optional unregistered same-stream encrypted staging seam exists, but no runtime store injection, Tenant cleanup worker, durable purge Audit, restart recovery or filesystem/DB failure saga is implemented. A non-empty spool directory after process restart fails closed, but cleanup recovery is a remaining gate. Do not activate persistent imaging storage before `STAGE-002~012` and the full runtime/lifecycle gates pass.
 
 ---
 

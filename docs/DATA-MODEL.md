@@ -2698,6 +2698,7 @@ Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pai
 - Viewer open, retrieval, deny, expiry, close는 기존 Audit 구조에 event로 기록한다.
 - 임시 DICOM Payload는 PostgreSQL에 저장하지 않는다.
 - Temporary Cache가 필요하면 Object metadata의 `storage_ref`, `purpose`, `expires_at`, `purged_at`만 기존 Imaging metadata 경계에서 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다.
+- 현재 implementation status: optional unregistered same-WADO-stream AES-GCM seam의 `STAGE-001`만 synthetic unit PASS. 기존 metadata writer/RLS grants, purge lifecycle, SERVICE Actor, runtime volume 및 나머지 storage Acceptance는 아직 구현·검증되지 않았으며 DB schema는 변경하지 않았다.
 
 ## Schema Change Gate
 

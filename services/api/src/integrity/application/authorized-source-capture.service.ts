@@ -45,6 +45,13 @@ import { validateDestinationPatientMapping } from "../../patient/domain/patient-
 import { validatePacsPatientIdBinding } from "../../pacs/domain/pacs-patient-id-binding.js";
 import { AuditEvent } from "../../audit/domain/audit-event.js";
 import { PostgresAuditEventWriter } from "../../audit/persistence/postgres-audit-event-writer.js";
+import type {
+  EphemeralEncryptedTemporaryImagingStore,
+  TemporaryImagingInstanceBinding,
+  TemporaryImagingInstanceReceipt,
+  TemporaryImagingPackageBinding,
+  TemporaryImagingPackageReceipt,
+} from "../../imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -123,7 +130,26 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
     byteLength: number;
     sha256: `sha256:${string}`;
   }>[];
+  readonly temporaryPackage?: Readonly<{
+    storageRef: string;
+    packageId: string;
+    expiresAt: string;
+    objectCount: number;
+    totalBytes: number;
+    instances: readonly Readonly<{
+      objectRef: string;
+      seriesInstanceUid: string;
+      sopInstanceUid: string;
+      byteLength: number;
+      sha256: `sha256:${string}`;
+    }>[];
+  }>;
 }
+
+type TemporaryImagingCaptureStore = Pick<
+  EphemeralEncryptedTemporaryImagingStore,
+  "beginPackage" | "beginInstance" | "sealPackage" | "purgePackage"
+>;
 
 export type AuthorizedSourceCaptureCoordinatorResult =
   | Readonly<{
@@ -384,6 +410,7 @@ function createCoordinatorHandoff(input: {
   readonly evidence: SourceIntegrityEvidenceRecord;
   readonly capture: SourceIntegrityCapture;
   readonly descriptors: readonly ValidatedSourceInstance[];
+  readonly temporaryPackage?: AuthorizedSourceCaptureCoordinatorHandoff["temporaryPackage"];
 }): AuthorizedSourceCaptureCoordinatorHandoff {
   const { identity, scope, evidence, capture, descriptors } = input;
   const { manifest } = capture;
@@ -475,6 +502,9 @@ function createCoordinatorHandoff(input: {
       totalBytes: manifest.totalBytes,
     }),
     expectedInstances,
+    ...(input.temporaryPackage
+      ? { temporaryPackage: input.temporaryPackage }
+      : {}),
   });
 }
 
@@ -526,6 +556,7 @@ export class AuthorizedSourceCaptureService {
     private readonly dicomGateway: SourceCaptureDicomPort,
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = randomUUID,
+    private readonly temporaryImagingStore?: TemporaryImagingCaptureStore,
   ) {}
 
   capture(input: unknown): Promise<AuthorizedSourceCaptureResult> {
@@ -553,6 +584,14 @@ export class AuthorizedSourceCaptureService {
     let started = false;
     let initialScope: SourceCaptureScope | undefined;
     let initialMapping: DestinationMappingBinding | undefined;
+    let temporaryPackageBinding: TemporaryImagingPackageBinding | undefined;
+    let temporaryPackageHandle: Awaited<
+      ReturnType<TemporaryImagingCaptureStore["beginPackage"]>
+    > | undefined;
+    let temporaryPackageReceipt: TemporaryImagingPackageReceipt | undefined;
+    let temporaryPackageHandoff: AuthorizedSourceCaptureCoordinatorHandoff["temporaryPackage"];
+    let keepTemporaryPackage = false;
+    const stagedInstances = new Map<string, TemporaryImagingInstanceReceipt>();
 
     try {
       assertNotAborted(deadline);
@@ -716,16 +755,83 @@ export class AuthorizedSourceCaptureService {
         return Object.freeze({ kind: "DENIED", reason: "SOURCE_PATIENT_ID_MISMATCH" });
       }
 
+      if (coordinatorHandoff && this.temporaryImagingStore) {
+        temporaryPackageBinding = Object.freeze({
+          tenantId: start.scope.tenantId,
+          exchangeSessionId: start.scope.exchangeSessionId,
+          packageId: start.scope.packageId,
+          purpose: "PACS_IMPORT",
+        });
+        temporaryPackageHandle = await this.temporaryImagingStore.beginPackage(
+          temporaryPackageBinding,
+        );
+      }
+
       const instanceDescriptors = descriptors.map((descriptor) => {
         return Object.freeze({
           sopInstanceUid: descriptor.sopInstanceUid,
           openStream: async (signal?: AbortSignal) => {
             if (!signal) throw new Error("SOURCE_CAPTURE_ABORTED");
-            return this.dicomGateway.retrieveInstanceStream({
+            const sourceStream = await this.dicomGateway.retrieveInstanceStream({
               context: Object.freeze({ ...context, signal }),
               studyInstanceUid: start.scope.studyInstanceUid,
               seriesInstanceUid: descriptor.seriesInstanceUid,
               sopInstanceUid: descriptor.sopInstanceUid,
+            });
+            if (
+              !temporaryPackageBinding ||
+              !temporaryPackageHandle ||
+              !this.temporaryImagingStore
+            ) {
+              return sourceStream;
+            }
+
+            const instanceBinding: TemporaryImagingInstanceBinding = Object.freeze({
+              studyRefId: start.scope.studyRefId,
+              seriesInstanceUid: descriptor.seriesInstanceUid,
+              sopInstanceUid: descriptor.sopInstanceUid,
+            });
+            let writer: Awaited<
+              ReturnType<TemporaryImagingCaptureStore["beginInstance"]>
+            >;
+            try {
+              writer = await this.temporaryImagingStore.beginInstance({
+                storageRef: temporaryPackageHandle.storageRef,
+                packageBinding: temporaryPackageBinding,
+                instanceBinding,
+              });
+            } catch (error) {
+              try {
+                await sourceStream.body.cancel();
+              } catch {
+                // Preserve the sanitized source-capture failure.
+              }
+              throw error;
+            }
+            return Object.freeze({
+              ...sourceStream,
+              observer: Object.freeze({
+                writeChunk: (chunk: Uint8Array) => writer.write(chunk),
+                complete: async (expected: {
+                  readonly sopInstanceUid: string;
+                  readonly byteLength: number;
+                  readonly sha256: `sha256:${string}`;
+                }) => {
+                  const receipt = await writer.complete(expected);
+                  if (
+                    receipt.studyRefId !== instanceBinding.studyRefId ||
+                    receipt.seriesInstanceUid !== instanceBinding.seriesInstanceUid ||
+                    receipt.sopInstanceUid !== expected.sopInstanceUid ||
+                    receipt.byteLength !== expected.byteLength ||
+                    receipt.sha256 !== expected.sha256 ||
+                    stagedInstances.has(receipt.sopInstanceUid)
+                  ) {
+                    throw new Error("TEMPORARY_SOURCE_BINDING_MISMATCH");
+                  }
+                  stagedInstances.set(receipt.sopInstanceUid, receipt);
+                },
+                abort: () => writer.abort(),
+              }),
             });
           },
         });
@@ -738,6 +844,58 @@ export class AuthorizedSourceCaptureService {
           instances: instanceDescriptors,
           signal: deadline.signal,
         });
+        if (
+          temporaryPackageBinding &&
+          temporaryPackageHandle &&
+          this.temporaryImagingStore
+        ) {
+          const descriptorsBySop = new Map(
+            descriptors.map((descriptor) => [descriptor.sopInstanceUid, descriptor]),
+          );
+          const temporaryInstances = capture.instances.map((expected) => {
+            const descriptor = descriptorsBySop.get(expected.sopInstanceUid);
+            const receipt = stagedInstances.get(expected.sopInstanceUid);
+            if (
+              !descriptor ||
+              !receipt ||
+              receipt.seriesInstanceUid !== descriptor.seriesInstanceUid ||
+              receipt.byteLength !== expected.byteLength ||
+              receipt.sha256 !== expected.sha256
+            ) {
+              throw new AuthorizedSourceCaptureUnavailableError();
+            }
+            return Object.freeze({
+              objectRef: receipt.objectRef,
+              seriesInstanceUid: receipt.seriesInstanceUid,
+              sopInstanceUid: receipt.sopInstanceUid,
+              byteLength: receipt.byteLength,
+              sha256: receipt.sha256,
+            });
+          });
+          if (temporaryInstances.length !== capture.manifest.objectCount) {
+            throw new AuthorizedSourceCaptureUnavailableError();
+          }
+          temporaryPackageReceipt = await this.temporaryImagingStore.sealPackage({
+            storageRef: temporaryPackageHandle.storageRef,
+            binding: temporaryPackageBinding,
+          });
+          if (
+            temporaryPackageReceipt.objectCount !== capture.manifest.objectCount ||
+            temporaryPackageReceipt.totalBytes !== capture.manifest.totalBytes ||
+            temporaryPackageReceipt.packageId !== start.scope.packageId ||
+            temporaryPackageReceipt.storageRef !== temporaryPackageHandle.storageRef
+          ) {
+            throw new AuthorizedSourceCaptureUnavailableError();
+          }
+          temporaryPackageHandoff = Object.freeze({
+            storageRef: temporaryPackageReceipt.storageRef,
+            packageId: temporaryPackageReceipt.packageId,
+            expiresAt: temporaryPackageReceipt.expiresAt.toISOString(),
+            objectCount: temporaryPackageReceipt.objectCount,
+            totalBytes: temporaryPackageReceipt.totalBytes,
+            instances: Object.freeze(temporaryInstances),
+          });
+        }
       } catch (error) {
         const reasonCode = deadline.timedOut()
           ? "SOURCE_CAPTURE_DEADLINE"
@@ -859,6 +1017,7 @@ export class AuthorizedSourceCaptureService {
                   evidence: evidence.record,
                   capture,
                   descriptors,
+                  temporaryPackage: temporaryPackageHandoff,
                 }),
               } as const);
             }
@@ -897,6 +1056,12 @@ export class AuthorizedSourceCaptureService {
       }
 
       if (completion.kind === "DENIED") return completion;
+      if (
+        completion.kind === "CAPTURED_FOR_COORDINATOR" &&
+        temporaryPackageReceipt
+      ) {
+        keepTemporaryPackage = true;
+      }
       return completion;
     } catch (error) {
       if (
@@ -921,7 +1086,23 @@ export class AuthorizedSourceCaptureService {
       }
       throw new AuthorizedSourceCaptureUnavailableError();
     } finally {
-      deadline.dispose();
+      try {
+        if (
+          temporaryPackageBinding &&
+          temporaryPackageHandle &&
+          this.temporaryImagingStore &&
+          !keepTemporaryPackage
+        ) {
+          await this.temporaryImagingStore.purgePackage({
+            storageRef: temporaryPackageHandle.storageRef,
+            binding: temporaryPackageBinding,
+          });
+        }
+      } catch {
+        throw new AuthorizedSourceCaptureUnavailableError();
+      } finally {
+        deadline.dispose();
+      }
     }
   }
 

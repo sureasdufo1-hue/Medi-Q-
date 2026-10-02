@@ -2479,7 +2479,7 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 ## Temporary Processing
 
 - 기본은 memory/streaming pipeline이다.
-- PACS transfer를 위한 bounded package staging의 P0 설계는 `PACS-001-DEC-007`이며, Acceptance `TC-PACS-001-STAGE-001~012`는 미실행이다. 이 설계 상태만으로 임시 저장 경로를 활성화하지 않는다.
+- PACS transfer bounded package staging의 P0 설계는 `PACS-001-DEC-007`이다. `AuthorizedSourceCaptureService`에는 optional same-stream encrypted staging seam이 있으나 Nest provider/Compose/runtime에는 주입되지 않는다. Synthetic unit harness의 `STAGE-001`만 scoped PASS이며 `STAGE-002~012`와 product storage lifecycle은 NOT RUN이다. 이 seam은 dispatch capability가 아니며 persistent runtime path를 활성화하지 않는다.
 - 구현 시 instance 단위 AES-256-GCM + process-memory-only random DEK, backpressure, Tenant/Session/Package/StudyReference/Purpose binding, 64 MiB/object·2 GiB/package·10 GiB/environment limits, 30분 post-capture TTL, 즉시 만료 차단 및 Tenant-RLS purge Audit를 강제한다. Process restart/다른 replica는 복호화 불가로 fail closed한다.
 - 기존 `storage_ref`, `retention_expires_at`, `deleted_at`만 사용하며 Tenant/Session/Patient/Study는 persisted relation/RLS로 확인한다. PostgreSQL에는 payload나 raw key를 저장하지 않는다. 별도 table/column은 근거와 Schema Change Gate 없이 추가하지 않는다.
 - Cloud temporary copy는 의료영상 Source of Record나 장기 Archive가 아니다.
