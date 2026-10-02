@@ -317,8 +317,8 @@ git diff --check
 - Final local API build and strict typecheck exited `0`. Full API regression passed **37 files / 686 tests**.
 - The ticket-specific integration emitted `pacs001_temporary_payload_runtime=PASS exact_grants=PASS forced_rls=PASS sibling_study_isolation=PASS same_operation_race=PASS metadata_binding=PASS physical_purge=PASS restart_purge_only=PASS audit_retry=PASS retry_before_stow=PASS deny_after_stow=PASS package_unchanged=PASS`.
 - This integration verifies the DEK-bearing writer process and a fresh process boundary, that the new process cannot decrypt, that only the DB-bound opaque reference can be used for purge-only recovery, physical ciphertext path removal before `PURGED`/success Audit, retry after purge/final transaction/Audit failures, concurrent/repeated purge converging to one Audit, wrong-Tenant and sibling Study isolation, and blocking ordinary reads/new staging while startup orphans remain unresolved. Safe path handling rejects symlinks/unexpected entries. Tests used only synthetic bytes.
-- The enclosing `-ScratchOnly` script then stalled in its final `mediq_runtime` migration-ledger denial probe (`docker run ... psql -f -`); no database session/query was active. It was interrupted rather than reported as a successful full DB-008 run. Therefore this execution does **not** claim final clean/repeat/reset/reapply/catalog completion or DB-002~007 regression. The DEC-009 integration marker above had already passed before the stall.
-- The uniquely named scratch Compose project was explicitly removed and verified to have no remaining containers, volumes or networks. Existing `mediq-api`, `mediq-postgres`, and Orthanc A/B were observed healthy and unchanged. `persistent_mediq_database=NOT_ACCESSED`.
+- The first enclosing `-ScratchOnly` attempt stalled while Docker was starting a one-off psql client and was interrupted; its final wrapper result was therefore incomplete. A minimal disposable-PostgreSQL probe subsequently verified that the exact restricted migration-ledger query returns SQLSTATE `42501`; see the complete rerun below.
+- The first attempt's uniquely named scratch Compose project was removed and verified to have no remaining containers, volumes or networks. Existing `mediq-api`, `mediq-postgres`, and Orthanc A/B remained healthy and unchanged. `persistent_mediq_database=NOT_ACCESSED`.
 - `node --check` for the integration test and child-process helper, PowerShell parser, and `git diff --check` passed. No DICOM payload was sent to Orthanc; no STOW, route, module, worker or runtime volume was added.
 
 ### Acceptance and remaining boundary
@@ -329,7 +329,22 @@ git diff --check
 | `STAGE-008` failure/retry | Inject physical/path and final metadata/Audit failure paths; retain retry reference; idempotent retry produces one success Audit | PASS — tested injected failures; not a host power-loss/disk-failure certification |
 | `STAGE-013` sibling Study isolation | Purge one Study payload while shared ImagingPackage/sibling payload remain unchanged | PASS — scoped internal storage/metadata test |
 | `STAGE-014` process restart | New process has no DEK and cannot read; DB-bound opaque ref enables purge-only cleanup; unresolved orphan blocks reads/new writes | PASS — scoped scratch integration |
-| Scratch DB-008 whole wrapper | DEC-009 test passed, but final migration-ledger denial probe stalled; owned scratch resources subsequently removed | PARTIAL — no whole-wrapper PASS claim |
+| Scratch DB-008 whole wrapper (first attempt) | DEC-009 test passed, but the final client startup did not return; owned scratch resources were removed | PARTIAL — superseded by successful full rerun in §13 |
 | Runtime cleanup/service/quota and Orthanc no-side-effect | `STAGE-005/009/010/011/012`, runtime storage registration and full transfer were not exercised | NOT RUN |
 
 `MEDIQ-PACS-001` remains `PARTIAL`. This slice proves a local purge saga only under the recorded test harness; it does not prove scheduled verified-Tenant `SERVICE` cleanup, shared/multi-process quota, runtime-volume durability/fsync behavior, forensic erasure, privacy gate `STAGE-011`, isolated Orthanc A/B no-STOW `STAGE-012`, full Mandatory Preflight, STOW, destination verification or A→B product transfer.
+
+## 13. Final DB-008 `-ScratchOnly` rerun — complete wrapper evidence
+
+**Execution date/environment:** 2026-10-03 Asia/Seoul; local Docker Desktop; uniquely named disposable Compose project `mediq-db008-ab18eb06a978`; PostgreSQL 18.6; synthetic fixtures. The project was isolated from the persistent `mediq` Compose project.
+
+```powershell
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+```
+
+- Exit code `0`. The wrapper reported `db008_clean_up=PASS product_tables=18 ledger=24 catalog=18|50|17|42`, `db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true`, and final `db008_reset_reapply=PASS product_tables=18 ledger=24`.
+- DB-009 exact runtime grants/forced-RLS access boundary, PACS-007 operation ledger, PACS-001 physical purge/restart/Audit retry, EXC-002/003, Consent request/approval/withdrawal, Grant issue/revocation, PACS Session Fence, Provenance, Integrity, policy conformance and the final runtime-role migration-ledger denial probe all passed across the clean/repeat/reset/reapply runs.
+- Final output explicitly reported `db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED` and `db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED`. DB-002~007 were intentionally skipped; this is not a non-scratch full-regression claim.
+- Final output reported `db008_ephemeral_cleanup=PASS`; independent inventory confirmed no containers, volumes or networks remained under the unique project label. The persistent API, PostgreSQL and Orthanc A/B containers remained healthy.
+
+**Judgment:** DB-008 `-ScratchOnly` whole-wrapper Acceptance is PASS for scratch schema lifecycle/runtime acceptance. DB-002~007 persistent regressions and all PACS lifecycle gates not listed above remain outside this result. `MEDIQ-PACS-001` remains PARTIAL.
