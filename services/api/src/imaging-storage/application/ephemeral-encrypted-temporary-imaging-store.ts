@@ -13,6 +13,10 @@ import { createReadStream } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import {
+  TEMPORARY_PAYLOAD_QUOTA_RESERVATION_BYTES,
+  type TemporaryPayloadQuotaReservationPort,
+} from "./temporary-payload-quota.port.js";
 
 export const TEMPORARY_IMAGING_LIMITS = Object.freeze({
   maximumInstanceBytes: 64 * 1024 * 1024,
@@ -38,6 +42,7 @@ export interface TemporaryImagingInstanceBinding {
 export interface TemporaryImagingStorageOptions {
   readonly rootDirectory: string;
   readonly now?: () => number;
+  readonly sharedQuota?: TemporaryPayloadQuotaReservationPort;
   /** Test-only narrowing is allowed; production ceilings cannot be raised. */
   readonly limits?: Partial<typeof TEMPORARY_IMAGING_LIMITS>;
 }
@@ -92,6 +97,7 @@ export type TemporaryImagingStorageErrorCode =
   | "EXPIRED"
   | "LIMIT_EXCEEDED"
   | "INTEGRITY_FAILED"
+  | "QUOTA_UNAVAILABLE"
   | "RECOVERY_REQUIRED"
   | "STORAGE_UNAVAILABLE";
 
@@ -120,6 +126,11 @@ interface StoredPackage {
   readonly activeSopInstanceUids: Set<string>;
   readonly abortController: AbortController;
   readonly idleWaiters: Array<() => void>;
+  readonly quotaWriterId: string;
+  readonly quotaRequired: boolean;
+  quotaStudyRefId: string | null;
+  sharedQuotaReservedBytes: number;
+  quotaReservationTail: Promise<void>;
   byteLength: number;
   activeStages: number;
   sealed: boolean;
@@ -250,6 +261,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
   private readonly rootDirectory: string;
   private readonly now: () => number;
   private readonly limits: typeof TEMPORARY_IMAGING_LIMITS;
+  private readonly sharedQuota: TemporaryPayloadQuotaReservationPort | undefined;
   private readonly packages = new Map<string, StoredPackage>();
   private readonly ready: Promise<void>;
   private environmentBytes = 0;
@@ -267,6 +279,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
     this.rootDirectory = resolve(options.rootDirectory);
     this.now = options.now ?? Date.now;
     this.limits = resolveLimits(options.limits);
+    this.sharedQuota = options.sharedQuota;
     this.ready = this.initialize();
   }
 
@@ -330,6 +343,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
       activeSopInstanceUids: new Set(),
       abortController: new AbortController(),
       idleWaiters: [],
+      quotaWriterId: randomUUID(),
+      quotaRequired: false,
+      quotaStudyRefId: null,
+      sharedQuotaReservedBytes: 0,
+      quotaReservationTail: Promise.resolve(),
       byteLength: 0,
       activeStages: 0,
       sealed: false,

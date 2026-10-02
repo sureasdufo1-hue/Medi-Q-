@@ -169,6 +169,13 @@
       "when": 1790954067199,
       "tag": "0023_illegal_marvel_zombies",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790972729514,
+      "tag": "0024_silky_korath",
+      "breakpoints": true
     }
   ]
 }

@@ -2580,3 +2580,40 @@ erDiagram
 ```
 
 `operation_id` is uniquely indexed when non-null. A PACS_IMPORT row requires both operation and destination; exact tenant-scoped writer privileges are limited to SELECT/INSERT. Initial status is `PENDING` only; no transfer outcome or Integrity verification is implied.
+
+## P0 Temporary Payload Quota Control — PACS-001-DEC-010
+
+These are operational quota ledgers, not medical-image or patient-domain entities. The aggregate is global only to the PostgreSQL database/environment; reservations carry opaque identity references and no DICOM UID, PatientID, payload, filesystem path, or key.
+
+```mermaid
+erDiagram
+    TENANTS ||--o{ TEMPORARY_PAYLOAD_RESERVATIONS : scopes
+    STUDY_REFERENCES ||--o{ TEMPORARY_PAYLOAD_RESERVATIONS : binds
+    IMAGING_PACKAGES ||--o{ TEMPORARY_PAYLOAD_RESERVATIONS : aggregates
+    IMAGING_PACKAGES ||--o| TEMPORARY_PAYLOAD_PACKAGE_QUOTAS : limits
+    TEMPORARY_PAYLOAD_QUOTA_STATE ||--o{ TEMPORARY_PAYLOAD_RESERVATIONS : budgets
+
+    TEMPORARY_PAYLOAD_QUOTA_STATE {
+        boolean singleton_id PK
+        bigint max_reserved_bytes
+        bigint reserved_bytes
+        timestamptz updated_at
+    }
+    TEMPORARY_PAYLOAD_RESERVATIONS {
+        uuid storage_ref PK
+        uuid tenant_id FK
+        uuid study_ref_id FK
+        uuid package_id FK
+        uuid writer_id
+        bigint reserved_bytes
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    TEMPORARY_PAYLOAD_PACKAGE_QUOTAS {
+        uuid package_id PK, FK
+        bigint reserved_bytes
+        timestamptz updated_at
+    }
+```
+
+`storage_ref` is an opaque metadata binding, not a bearer capability. `writer_id` prevents a second process from resuming or joining a live ephemeral-key writer. The tables have no direct `mediq_runtime` grants; a dedicated `NOLOGIN/NOBYPASSRLS` owner exposes only fixed reserve/settle/release functions with Tenant RLS and package-binding checks.

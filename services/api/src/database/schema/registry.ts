@@ -115,6 +115,7 @@ export const hospitals = pgTable(
     ...tenantRlsPolicies(
       "hospitals",
       sql`${table.tenantId} = ${currentTenantContext}`,
+      ["mediq_quota_owner"],
     ),
   ],
 ).enableRLS();

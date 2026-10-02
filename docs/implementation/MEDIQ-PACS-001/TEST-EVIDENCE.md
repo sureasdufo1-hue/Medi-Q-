@@ -348,3 +348,34 @@ git diff --check
 - Final output reported `db008_ephemeral_cleanup=PASS`; independent inventory confirmed no containers, volumes or networks remained under the unique project label. The persistent API, PostgreSQL and Orthanc A/B containers remained healthy.
 
 **Judgment:** DB-008 `-ScratchOnly` whole-wrapper Acceptance is PASS for scratch schema lifecycle/runtime acceptance. DB-002~007 persistent regressions and all PACS lifecycle gates not listed above remain outside this result. `MEDIQ-PACS-001` remains PARTIAL.
+
+## 14. PACS-001-DEC-010 recommendation and Acceptance — pre-implementation checkpoint
+
+**Decision date:** 2026-10-03. The standing user instruction authorizes recommendation-first decisions within approved scope; no new external approval was required. The adopted recommendation and complete Acceptance are recorded in [PACS-001-DEC-010](../../POLICY-DECISION-LOG.md#pacs-001-dec-010--shared-temporary-payload-quota-reservation) and [`TC-PACS-001-STAGE-005`](../../ACCEPTANCE-TESTS.md#p0-pacs-import-coordinator-preconditions--mediq-pacs-001).
+
+- Finding: the existing in-memory `environmentBytes` counter is synchronous only inside one Node process and cannot enforce the existing 10 GiB environment ceiling across replicas.
+- Chosen boundary: PostgreSQL singleton environment aggregate, shared ImagingPackage aggregate, and Tenant-RLS opaque reservation rows; dedicated `NOLOGIN/NOBYPASSRLS` owner and fixed safe-path functions; runtime has EXECUTE only, no direct ledger grants. 16 MiB reserve blocks precede writes; seal refunds unused slack; release is transactionally coupled to post-unlink `PURGED`+success Audit.
+- Scope: three quota-control tables, migration/Drizzle/RLS/grant setup, quota repository and internal store wiring/tests. Package aggregate is shared across source/recipient Tenant contexts without exposing reservation rows. No route, provider, worker, volume, PACS write, STOW, or runtime storage activation.
+- Alternatives considered: process-only counter, direct runtime counter grants, filesystem quota and Redis; reasons are recorded in DEC-010.
+- Acceptance includes size/object/package/environment limits, multi-session race, exact runtime/owner privilege boundaries, Tenant/ref/state/expiry/writer binding, settle/release ordering, failures and retryable no-false-success behavior.
+- At the subsequent code checkpoint, Drizzle schema/migration/functions and the quota repository adapter have been drafted; the storage primitive has only partial scaffolding. The store does not yet invoke shared reserve/settle/release, so it is not safe to activate.
+- **Evidence status at this checkpoint:** design and Acceptance recorded; quota-specific implementation and database integration evidence are pending. No PASS is claimed for `STAGE-005`.
+
+## 15. Current code checkpoint — verification before commit
+
+**Execution date/environment:** 2026-10-03; local workspace; no database migration or persistent environment was touched.
+
+```powershell
+npm run build:api
+npm run test:api
+npm run db:migrations:check
+git diff --check
+```
+
+- The first `npm run build:api` attempt exposed missing initialization for the new in-memory quota scaffolding. Initialization was added; the subsequent build passed as part of `npm run test:api`.
+- `npm run test:api`: exit code `0`; 37 files and 686 tests passed. These are existing API regressions, not dedicated DEC-010 quota Acceptance.
+- `npm run db:migrations:check`: exit code `0` (`Everything's fine`). This validates Drizzle migration metadata consistency only; migration `0024` was not applied to a database.
+- `git diff --check`: exit code `0`.
+- **Not executed:** fresh scratch-schema apply/reset/reapply, SQL function/RLS/grant probes, cross-process quota contention, store reserve-before-write/settle/release wiring tests. No `STAGE-005` PASS is claimed; no persistent DB was accessed.
+
+**Judgment:** source compiles and the pre-existing API regression suite passes, but shared quota behavior remains unverified and incomplete. `MEDIQ-PACS-001` stays `PARTIAL`; keep the new storage path unregistered.

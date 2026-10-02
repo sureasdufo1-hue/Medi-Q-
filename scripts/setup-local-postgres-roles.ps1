@@ -167,6 +167,11 @@ BEGIN
   ELSE
     EXECUTE format('CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD %L', '$migrationUser', '$migrationPassword');
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mediq_quota_owner') THEN
+    ALTER ROLE mediq_quota_owner WITH NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  ELSE
+    CREATE ROLE mediq_quota_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
 END
 `$env008_role_setup`$;
 REVOKE CONNECT ON DATABASE "$databaseName" FROM PUBLIC;
@@ -176,6 +181,8 @@ REVOKE ALL PRIVILEGES ON SCHEMA public FROM "$runtimeUser", "$migrationUser";
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO "$runtimeUser";
 GRANT USAGE, CREATE ON SCHEMA public TO "$migrationUser";
+GRANT USAGE, CREATE ON SCHEMA public TO mediq_quota_owner;
+GRANT mediq_quota_owner TO "$migrationUser";
 "@
 
     $bootstrap = Invoke-ContainerPsql -Network $databaseNetwork -User $values["MEDIQ_POSTGRES_USER"] -Database $databaseName -Password $values["MEDIQ_POSTGRES_PASSWORD"] -Sql $roleSql

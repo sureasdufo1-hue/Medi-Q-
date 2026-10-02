@@ -2709,16 +2709,28 @@ Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pai
 - ViewerSession의 Actor, Tenant, PatientReference, Source Hospital, Study, Grant 및 expiry binding은 Application Layer에서 강제한다.
 - Viewer open, retrieval, deny, expiry, close는 기존 Audit 구조에 event로 기록한다.
 - 임시 DICOM Payload는 PostgreSQL에 저장하지 않는다.
-- Temporary Cache가 필요하면 object metadata의 opaque storage reference, operation-scoped state, expiry와 purge timestamp만 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다. `PACS-001-DEC-008`은 이 metadata를 기존 `StudyReference` 행에 두도록 Schema Change Gate를 통과시켰다.
-- 현재 implementation status: optional unregistered same-WADO-stream AES-GCM seam의 `STAGE-001`만 synthetic unit PASS. DEC-008의 migration/repository, exact runtime grants/RLS, purge lifecycle, SERVICE Actor, runtime volume 및 나머지 storage Acceptance는 아직 구현·검증되지 않았다.
+- Temporary Cache가 필요하면 object metadata의 opaque storage reference, operation-scoped state, expiry와 purge timestamp만 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다. `PACS-001-DEC-008`은 payload lifecycle metadata를 기존 `StudyReference` 행에 둔다. `PACS-001-DEC-010`은 새 운영 제어 테이블 2개에 비식별 예약량 집계/opaque reservation만 저장하며 영상 Binary·DICOM UID·raw key는 DB에 두지 않는다.
+- 현재 implementation status at the DEC-010 recommendation checkpoint: DEC-008 metadata and DEC-009 purge/restart gates are scoped PASS; shared multi-process quota is pending implementation and DB-008 table/catalog counts will change additively. Runtime registration remains prohibited.
 
 ## Schema Change Gate
 
-별도의 `viewer_sessions` 또는 `temporary_imaging_objects` Table은 다음 조건을 모두 만족할 때만 후속 Migration으로 제안한다. P0 `PACS-001-DEC-008`은 새 Table을 추가하지 않고, per-Study operation 경계가 package-level metadata로 표현되지 않는다는 근거에 따라 기존 `study_references`에만 네 개의 승인된 lifecycle column을 추가한다.
+별도의 `viewer_sessions` 또는 payload table은 다음 조건을 모두 만족할 때만 후속 Migration으로 제안한다. Quota Control metadata는 DICOM payload entity가 아니며, 전역 합계와 Tenant-scoped reservation identity를 기존 per-Study lifecycle columns만으로 원자적·최소권한으로 표현할 수 없어 `PACS-001-DEC-010` Schema Change Gate를 통과한다. 이 amendment는 기존 `study_references` lifecycle columns를 대체하거나 넓히지 않는다.
 
-1. 기존 18개 Table과 runtime session store로 Acceptance Criteria를 충족할 수 없다.
-2. Tenant/Grant/Study binding과 purge evidence를 DB constraint로 강화할 명확한 필요가 있다.
-3. `DATA-MODEL.md`, `ERD.md`, Migration, OpenAPI, Acceptance Test가 함께 갱신된다.
+1. 기존 schema와 runtime session store로 shared cross-process reservation Acceptance를 충족할 수 없다.
+2. 전역 원자 quota 및 Study/Package/Tenant-scoped release binding을 DB constraint와 좁은 함수 경계로 강제할 명확한 필요가 있다.
+3. `DATA-MODEL.md`, `ERD.md`, Migration/Drizzle schema, Security/Threat, Acceptance 및 implementation evidence가 함께 갱신된다.
+
+### P0 Temporary Payload Quota Control — PACS-001-DEC-010
+
+The three operational tables below are quota-control metadata, not medical-image entities. Their runtime-readable/writable surface is only the fixed quota-function API; `mediq_runtime` receives no direct table privilege.
+
+| Table | Purpose | Minimum fields | Access boundary |
+|---|---|---|---|
+| `temporary_payload_quota_state` | One row per database/environment, holding the fixed 10 GiB cap and current reserved byte total | singleton key, `max_reserved_bytes`, `reserved_bytes`, update timestamp | Owned by `mediq_quota_owner`; no direct runtime access; only fixed definer functions update it |
+| `temporary_payload_package_quotas` | Shared 2 GiB aggregate by ImagingPackage across source/recipient Tenant contexts | `package_id`, `reserved_bytes`, update timestamp | RLS follows the existing Tenant-visible ImagingPackage; aggregate metadata only; direct runtime access denied |
+| `temporary_payload_reservations` | One active reservation per opaque storage ref, with writer ownership and package aggregate accounting | `tenant_id`, `storage_ref`, `study_ref_id`, `package_id`, random `writer_id`, `reserved_bytes`, timestamps | Forced RLS by transaction Tenant context; direct runtime access denied; quota owner functions enforce exact StudyReference/ref/state/expiry binding |
+
+Reservation uses 16 MiB blocks before ciphertext writes. Function-level row locking serializes the singleton environment counter and enforces 10 GiB environment capacity; the package aggregate row enforces the shared 2 GiB cap even when source and recipient Tenants have separate reservation rows. Sealing settles the reservation to exact actual bytes; physical purge release deletes the reservation and decrements both aggregates in the same verified Tenant transaction as `PURGED` and success Audit. A process restart cannot resume writes with the old `writer_id`; it can only enter the already-approved purge-only recovery path.
 
 P1 Mobile Vault의 DICOM Binary는 모바일 기기의 암호화 Local Storage에 위치하며 MediQ PostgreSQL의 장기 Payload Entity가 아니다.
 

@@ -82,6 +82,7 @@ export const exchangeSessions = pgTable(
          )
            AND h.tenant_id = ${currentTenantContext}
       )`,
+      ["mediq_quota_owner"],
     ),
   ],
 ).enableRLS();

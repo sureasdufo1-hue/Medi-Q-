@@ -8,6 +8,7 @@ export const currentTenantContext = sql`
 export function tenantRlsPolicies(
   tableName: string,
   tenantPredicate: SQL,
+  additionalTenantRoles: readonly string[] = [],
 ) {
   return [
     pgPolicy(`${tableName}_tenant_scope`, {
@@ -22,5 +23,13 @@ export function tenantRlsPolicies(
       using: sql`true`,
       withCheck: sql`true`,
     }),
+    ...additionalTenantRoles.map((role) =>
+      pgPolicy(`${tableName}_${role}_tenant_scope`, {
+        to: role,
+        for: "all",
+        using: tenantPredicate,
+        withCheck: tenantPredicate,
+      }),
+    ),
   ];
 }

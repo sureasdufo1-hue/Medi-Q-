@@ -71,6 +71,7 @@ export const imagingPackages = pgTable(
         SELECT 1 FROM exchange_sessions e
          WHERE e.session_id = ${table.exchangeSessionId}
       )`,
+      ["mediq_quota_owner"],
     ),
   ],
 ).enableRLS();
@@ -158,6 +159,7 @@ export const studyReferences = pgTable(
         SELECT 1 FROM imaging_packages p
          WHERE p.package_id = ${table.packageId}
       )`,
+      ["mediq_quota_owner"],
     ),
   ],
 ).enableRLS();

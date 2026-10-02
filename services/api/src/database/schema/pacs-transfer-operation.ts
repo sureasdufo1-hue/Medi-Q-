@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  pgPolicy,
   pgTable,
   timestamp,
   unique,
@@ -112,5 +113,10 @@ export const pacsTransferOperations = pgTable(
            WHERE e.session_id = ${table.exchangeSessionId}
         )`,
     ),
+    pgPolicy("pacs_transfer_operations_mediq_quota_owner_tenant_scope", {
+      to: "mediq_quota_owner",
+      for: "select",
+      using: sql`${table.tenantId} = ${currentTenantContext}`,
+    }),
   ],
 ).enableRLS();

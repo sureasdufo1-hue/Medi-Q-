@@ -173,11 +173,12 @@ $roleSql = @"
 BEGIN;
 DO `$db008_roles`$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname IN ('$runtimeUser', '$migrationUser')) THEN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname IN ('$runtimeUser', '$migrationUser', 'mediq_quota_owner')) THEN
     RAISE EXCEPTION 'DB008_ROLE_PREEXISTS';
   END IF;
   EXECUTE format('CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD %L', '$runtimeUser', $runtimePassword);
   EXECUTE format('CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD %L', '$migrationUser', $migrationPassword);
+  CREATE ROLE mediq_quota_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 END
 `$db008_roles`$;
 REVOKE CONNECT ON DATABASE "$database" FROM PUBLIC;
@@ -185,6 +186,8 @@ GRANT CONNECT ON DATABASE "$database" TO "$runtimeUser", "$migrationUser";
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO "$runtimeUser";
 GRANT USAGE, CREATE ON SCHEMA public TO "$migrationUser";
+GRANT USAGE, CREATE ON SCHEMA public TO mediq_quota_owner;
+GRANT mediq_quota_owner TO "$migrationUser";
 COMMIT;
 "@
     $bootstrap = $null
