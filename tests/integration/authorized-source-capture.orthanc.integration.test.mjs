@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import {
+  safeDatabaseErrorClass,
+  safeQueryDurationBucket,
+} from "./safe-database-diagnostics.mjs";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
 import {
   AuthorizationGatedOperationExecutor,
@@ -191,10 +195,7 @@ function createHarness({
       try {
         client = await database.connect();
       } catch (error) {
-        const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
-          ? error.code
-          : "ERROR";
-        databaseFailures.push(`CONNECT_${sqlState}`);
+        databaseFailures.push(`CONNECT_${safeDatabaseErrorClass(error)}`);
         throw error;
       }
       return new Proxy(client, {
@@ -223,13 +224,11 @@ function createHarness({
                             : statement.includes("set_config('mediq.tenant_id'")
                               ? "TENANT_SETUP"
                               : "OTHER_QUERY";
+              const queryStartedAt = performance.now();
               return Reflect.apply(target.query, target, args).catch((error) => {
-                const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
-                  ? error.code
-                  : error instanceof Error && /^[A-Za-z]+$/.test(error.name)
-                    ? error.name.toUpperCase()
-                    : "ERROR";
-                databaseFailures.push(`${queryLabel}_${sqlState}`);
+                const failureClass = safeDatabaseErrorClass(error);
+                const durationBucket = safeQueryDurationBucket(performance.now() - queryStartedAt);
+                databaseFailures.push(`${queryLabel}_${failureClass}_${durationBucket}`);
                 throw error;
               });
             };
