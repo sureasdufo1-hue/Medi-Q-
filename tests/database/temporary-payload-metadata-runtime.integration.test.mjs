@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import test from "node:test";
 import { PacsTransferOperation } from "../../services/api/dist/pacs/domain/pacs-transfer-operation.js";
@@ -8,6 +13,13 @@ import {
   PostgresTemporaryPayloadMetadataRepository,
   TemporaryPayloadMetadataPersistenceError,
 } from "../../services/api/dist/imaging-storage/persistence/postgres-temporary-payload-metadata.repository.js";
+import {
+  EphemeralEncryptedTemporaryImagingStore,
+} from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
+import {
+  TemporaryPayloadPurgeCoordinator,
+  TemporaryPayloadPurgeUnavailableError,
+} from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
 
 function fixture() {
   const raw = process.env.MEDIQ_TEMP_PAYLOAD_TEST_FIXTURE;
@@ -94,9 +106,10 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
   const inspectConnectionString = process.env.MEDIQ_TEST_INSPECT_DATABASE_URL;
   assert.ok(inspectConnectionString, "TEMP_PAYLOAD_INSPECT_DATABASE_URL_MISSING");
   const ids = fixture();
-  const pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 5_000 });
+  const pool = new Pool({ connectionString, max: 10, connectionTimeoutMillis: 5_000 });
   const inspector = new Pool({ connectionString: inspectConnectionString, max: 2, connectionTimeoutMillis: 5_000 });
   const clients = [];
+  let temporaryRoot;
   let currentStage = "PRIVILEGE_CATALOG";
   try {
     const privilegesClient = await pool.connect();
@@ -300,6 +313,174 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     );
     await privilegesClient.query("COMMIT");
 
+    currentStage = "PHYSICAL_PURGE_RESTART_AND_AUDIT_RETRY";
+    temporaryRoot = await mkdtemp(join(tmpdir(), "mediq-pacs-purge-"));
+    const storageRoot = join(temporaryRoot, "ciphertext");
+    const restartRef = siblingRef;
+    const restartBinding = operationBinding(ids, opB, ids.siblingStudyRefId);
+
+    const childFixture = JSON.stringify({
+      rootDirectory: storageRoot,
+      storageRef: restartRef,
+      packageBinding: {
+        tenantId: ids.tenantId,
+        exchangeSessionId: ids.sessionId,
+        packageId: ids.packageId,
+        purpose: "PACS_IMPORT",
+      },
+      instanceBinding: {
+        studyRefId: ids.siblingStudyRefId,
+        seriesInstanceUid: "2.25.910001",
+        sopInstanceUid: "2.25.910002",
+      },
+    });
+    currentStage = "PHYSICAL_PURGE_CHILD_PROCESS";
+    const childPath = fileURLToPath(new URL("../helpers/stage-temporary-payload-child.mjs", import.meta.url));
+    const child = spawnSync(process.execPath, [childPath], {
+      encoding: "utf8",
+      env: { MEDIQ_TEMP_PAYLOAD_CHILD_FIXTURE: childFixture },
+      maxBuffer: 1_000_000,
+    });
+    assert.equal(child.error, undefined, "synthetic payload child must start");
+    assert.equal(child.status, 0, "synthetic payload child must stage successfully");
+    const payloadDirectory = join(storageRoot, restartRef);
+    const stagedFiles = await readdir(payloadDirectory);
+    assert.equal(stagedFiles.length, 1);
+    const ciphertext = await readFile(join(payloadDirectory, stagedFiles[0]));
+    assert.equal(ciphertext.includes(Buffer.from("SYNTHETIC-PURGE-FIXTURE")), false);
+
+    const restartedStore = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+    currentStage = "PHYSICAL_PURGE_RESTART_BOUNDARY";
+    await assert.rejects(
+      restartedStore.beginPackage({
+        tenantId: ids.tenantId,
+        exchangeSessionId: ids.sessionId,
+        packageId: ids.packageId,
+        purpose: "PACS_IMPORT",
+      }),
+      (error) => error?.code === "RECOVERY_REQUIRED",
+    );
+    const tenantRunner = {
+      async run(_principal, tenantId, work) {
+        const client = await pool.connect();
+        try {
+          await beginTenant(client, tenantId);
+          const result = await work({
+            issuer: "https://synthetic.test",
+            subject: "synthetic-service",
+            actorId: ids.actorId,
+            tenantId,
+            hospitalId: null,
+            actorType: "SERVICE",
+          }, client);
+          await client.query("COMMIT");
+          return result;
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+      },
+    };
+    const purgeCommand = {
+      principal: { issuer: "https://synthetic.test", subject: "synthetic-service" },
+      tenantCandidate: ids.tenantId,
+      binding: restartBinding,
+      storageRef: restartRef,
+      correlationId: randomUUID(),
+      reason: "PROCESS_RESTART",
+    };
+
+    const failedStorageCoordinator = new TemporaryPayloadPurgeCoordinator(
+      tenantRunner,
+      { purgeByReference: async () => { throw new Error("injected unlink failure"); } },
+    );
+    currentStage = "PHYSICAL_PURGE_STORAGE_FAILURE_CALL";
+    await assert.rejects(
+      failedStorageCoordinator.purge(purgeCommand),
+      TemporaryPayloadPurgeUnavailableError,
+    );
+    currentStage = "PHYSICAL_PURGE_STORAGE_FAILURE_STATE";
+    let recoveredState = await readStudyState(privilegesClient, ids.tenantId, ids.siblingStudyRefId);
+    assert.equal(recoveredState.temporary_payload_state, "PURGE_PENDING");
+    assert.equal(recoveredState.temporary_storage_ref, restartRef);
+    currentStage = "PHYSICAL_PURGE_STORAGE_FAILURE_FILE";
+    assert.equal((await stat(join(payloadDirectory, stagedFiles[0]))).isFile(), true);
+
+    const collisionCoordinator = new TemporaryPayloadPurgeCoordinator(
+      tenantRunner,
+      restartedStore,
+      () => new Date(),
+      () => collisionAuditId,
+    );
+    currentStage = "PHYSICAL_PURGE_AUDIT_FAILURE_RETRY";
+    const failedConcurrentPurges = await Promise.allSettled([
+      collisionCoordinator.purge(purgeCommand),
+      collisionCoordinator.purge(purgeCommand),
+    ]);
+    assert.equal(failedConcurrentPurges.length, 2);
+    assert.ok(failedConcurrentPurges.every(
+      (result) => result.status === "rejected" && result.reason instanceof TemporaryPayloadPurgeUnavailableError,
+    ));
+    recoveredState = await readStudyState(privilegesClient, ids.tenantId, ids.siblingStudyRefId);
+    assert.equal(recoveredState.temporary_payload_state, "PURGE_PENDING");
+    assert.equal(recoveredState.temporary_storage_ref, restartRef);
+    await assert.rejects(stat(payloadDirectory), (error) => error?.code === "ENOENT");
+
+    const purgeAuditId = randomUUID();
+    const successfulCoordinator = new TemporaryPayloadPurgeCoordinator(
+      tenantRunner,
+      restartedStore,
+      () => new Date(),
+      () => purgeAuditId,
+    );
+    currentStage = "PHYSICAL_PURGE_CONCURRENT_SUCCESS";
+    const successfulConcurrentPurges = await Promise.all([
+      successfulCoordinator.purge(purgeCommand),
+      successfulCoordinator.purge(purgeCommand),
+    ]);
+    assert.deepEqual(successfulConcurrentPurges.map((result) => result.kind).sort(), [
+      "ALREADY_PURGED",
+      "PURGED",
+    ]);
+    assert.deepEqual(await successfulCoordinator.purge(purgeCommand), { kind: "ALREADY_PURGED" });
+    recoveredState = await readStudyState(privilegesClient, ids.tenantId, ids.siblingStudyRefId);
+    assert.equal(recoveredState.temporary_payload_state, "PURGED");
+    assert.equal(recoveredState.temporary_storage_ref, restartRef);
+
+    const purgeAuditObserver = await inspector.connect();
+    let purgeAuditRows;
+    try {
+      await beginTenant(purgeAuditObserver, ids.tenantId);
+      purgeAuditRows = await purgeAuditObserver.query(
+        `SELECT action, result, reason_code
+           FROM audit_events
+          WHERE audit_event_id=$1 AND correlation_id=$2`,
+        [purgeAuditId, purgeCommand.correlationId],
+      );
+      await purgeAuditObserver.query("COMMIT");
+    } finally {
+      if (purgeAuditObserver.getTransactionStatus?.() !== 0) {
+        await purgeAuditObserver.query("ROLLBACK").catch(() => undefined);
+      }
+      purgeAuditObserver.release();
+    }
+    assert.deepEqual(purgeAuditRows.rows, [{
+      action: "PACS_TEMPORARY_OBJECT_PURGED",
+      result: "SUCCESS",
+      reason_code: "PROCESS_RESTART",
+    }]);
+    assert.deepEqual(await readdir(storageRoot), []);
+
+    const otherStudyStateBeforePurge = await readStudyState(
+      privilegesClient,
+      ids.tenantId,
+      ids.studyRefId,
+    );
+    assert.equal(otherStudyStateBeforePurge.temporary_payload_state, "AVAILABLE");
+    assert.equal(otherStudyStateBeforePurge.temporary_storage_ref, firstRef);
+
     await beginTenant(privilegesClient, ids.tenantId);
     await metadataRepository.markPurgePending({ binding: bindingA, storageRef: firstRef });
     await privilegesClient.query("COMMIT");
@@ -381,8 +562,8 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
       ids.tenantId,
       ids.siblingStudyRefId,
     );
-    assert.equal(siblingAfterPurge.temporary_payload_state, "AVAILABLE");
-    assert.equal(siblingAfterPurge.temporary_storage_ref, siblingRef);
+    assert.equal(siblingAfterPurge.temporary_payload_state, "PURGED");
+    assert.equal(siblingAfterPurge.temporary_storage_ref, restartRef);
 
     currentStage = "RETRY_AND_POST_STOW_FENCE";
     const retryRef = randomUUID();
@@ -443,11 +624,14 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     const code =
       typeof error === "object" && error !== null && "code" in error
         ? String(error.code)
+        : error instanceof TemporaryPayloadPurgeUnavailableError
+          ? `PURGE_${error.phase}`
         : error instanceof Error
           ? error.name
           : "UNKNOWN";
     throw new Error(`TEMP_PAYLOAD_STAGE=${currentStage} code=${code}`);
   } finally {
+    if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
     for (const client of clients.reverse()) {
       if (client.getTransactionStatus?.() !== 0) {
         await client.query("ROLLBACK").catch(() => undefined);

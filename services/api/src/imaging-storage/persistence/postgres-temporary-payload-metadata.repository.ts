@@ -206,12 +206,20 @@ export class PostgresTemporaryPayloadMetadataRepository {
     try {
       const result = await this.transaction.query(
         `UPDATE study_references AS sr
-            SET temporary_payload_state = 'PURGE_PENDING'
+            SET temporary_payload_state = CASE
+                  WHEN sr.temporary_payload_state = 'PURGED' THEN 'PURGED'
+                  ELSE 'PURGE_PENDING'
+                END,
+                temporary_payload_purged_at = CASE
+                  WHEN sr.temporary_payload_state = 'PURGED'
+                    THEN sr.temporary_payload_purged_at
+                  ELSE NULL
+                END
           WHERE sr.study_ref_id = $1::uuid
             AND sr.package_id = $2::uuid
             AND sr.source_hospital_id = $3::uuid
             AND sr.temporary_storage_ref = $4::uuid
-            AND sr.temporary_payload_state IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')
+            AND sr.temporary_payload_state IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING', 'PURGED')
             AND NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = $5::uuid
             AND EXISTS (
               SELECT 1

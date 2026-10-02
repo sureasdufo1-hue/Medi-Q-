@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, encrypted spool and temporary-payload lifecycle sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 결과 | `PARTIAL` — identity/fence and source handoffs PASS in their scoped boundaries; seven spool-core cases and exact-source `STAGE-001` pass only in isolated synthetic unit harnesses; storage lifecycle and full coordinator absent |
+| 결과 | `PARTIAL` — identity/fence and source handoffs PASS in scoped boundaries; `DEC-009` physical purge/restart Acceptance PASS in isolated synthetic + scratch PostgreSQL/RLS scope; remaining lifecycle gates and full coordinator are open |
 
 ## 1. 검증 환경
 
@@ -247,6 +247,8 @@ git diff --check
 
 ## 11. PACS-001-DEC-008 — StudyReference temporary payload metadata checkpoint
 
+**Point-in-time record:** The statements and verdict below capture the DEC-008 checkpoint before DEC-009 implementation. The current physical purge/restart result is recorded in §12.
+
 **Execution date/environment:** 2026-10-03 Asia/Seoul; local Docker Desktop, uniquely named disposable Compose project, PostgreSQL 18.6. Synthetic IDs/rows only. The persistent `mediq` Compose project remained running and was not accessed by this command.
 
 ### Commands and results
@@ -291,6 +293,43 @@ git diff --check
 | Binding/state/constraint boundary | Invalid `PURGED` shape and duplicate storage reference rejected; wrong Tenant and wrong Package binding denied; re-fetch rejected after `STOW_STARTED`; package state/deleted_at unchanged | PASS — metadata scope |
 | Purge Audit transaction behavior | Injected duplicate Audit ID caused transaction rollback and preserved `PURGE_PENDING` plus storage reference; subsequent valid Audit finalized metadata; replay was idempotent and sibling remained `AVAILABLE` | PASS — DB metadata/Audit transaction only |
 | DB-008 scratch schema lifecycle | Clean/repeat/reset/re-UP, exact catalog and owned scratch cleanup | PASS — `-ScratchOnly`; DB-002~007 persistent regressions skipped intentionally |
-| Physical temporary-storage lifecycle | Ciphertext deletion-before-success-Audit, DEK destruction, filesystem/DB saga/restart recovery, SERVICE cleanup, shared quota | NOT RUN — no physical purge orchestrator or runtime registration exists |
+| Physical temporary-storage lifecycle | Ciphertext deletion-before-success-Audit, DEK destruction, filesystem/DB saga/restart recovery, SERVICE cleanup, shared quota | At DEC-008 checkpoint: NOT RUN; see current DEC-009 scoped result in §12 |
 
-The repository primitive is verified against real PostgreSQL/RLS but remains unwired to the encrypted store, source capture, Nest module, worker, or runtime volume. No filesystem/payload, Orthanc endpoint, DICOM transfer, STOW, real patient information, or production credential was used. `STAGE-006` passes for the metadata persistence scope and `STAGE-013` passes only for its metadata isolation/race/state-fence slice; `STAGE-007/008/010` and the physical lifecycle remain NOT RUN. `MEDIQ-PACS-001` remains `PARTIAL`; runtime activation, public route, Mandatory Preflight, `STOW_STARTED` dispatch, destination call, STOW, and product A→B E2E remain unauthorized/unproven.
+At the DEC-008 checkpoint, the repository primitive was verified against real PostgreSQL/RLS but remained unwired to the encrypted store, source capture, Nest module, worker, or runtime volume; physical purge was then NOT RUN. The current DEC-009 physical lifecycle sub-gate is in §12. No Orthanc endpoint, DICOM transfer, STOW, real patient information, or production credential was used in either slice. `MEDIQ-PACS-001` remains `PARTIAL`; runtime activation, public route, Mandatory Preflight, `STOW_STARTED` dispatch, destination call, STOW, and product A→B E2E remain unauthorized/unproven.
+
+## 12. PACS-001-DEC-009 — Physical purge saga and restart recovery
+
+**Execution date/environment:** 2026-10-03 Asia/Seoul; Windows/PowerShell host, disposable uniquely named PostgreSQL 18.6 scratch Compose project, Node integration-test container, synthetic ciphertext only, OS temporary directory. Persistent `mediq` database and Orthanc A/B payloads were not used.
+
+### Commands and results
+
+```powershell
+npm run build:api
+npm run typecheck:api
+npm run test:api -- --reporter=dot
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+node --check tests/helpers/stage-temporary-payload-child.mjs
+# PowerShell parser check for scripts/test-db-008-full-schema.ps1
+git diff --check
+```
+
+- Final local API build and strict typecheck exited `0`. Full API regression passed **37 files / 686 tests**.
+- The ticket-specific integration emitted `pacs001_temporary_payload_runtime=PASS exact_grants=PASS forced_rls=PASS sibling_study_isolation=PASS same_operation_race=PASS metadata_binding=PASS physical_purge=PASS restart_purge_only=PASS audit_retry=PASS retry_before_stow=PASS deny_after_stow=PASS package_unchanged=PASS`.
+- This integration verifies the DEK-bearing writer process and a fresh process boundary, that the new process cannot decrypt, that only the DB-bound opaque reference can be used for purge-only recovery, physical ciphertext path removal before `PURGED`/success Audit, retry after purge/final transaction/Audit failures, concurrent/repeated purge converging to one Audit, wrong-Tenant and sibling Study isolation, and blocking ordinary reads/new staging while startup orphans remain unresolved. Safe path handling rejects symlinks/unexpected entries. Tests used only synthetic bytes.
+- The enclosing `-ScratchOnly` script then stalled in its final `mediq_runtime` migration-ledger denial probe (`docker run ... psql -f -`); no database session/query was active. It was interrupted rather than reported as a successful full DB-008 run. Therefore this execution does **not** claim final clean/repeat/reset/reapply/catalog completion or DB-002~007 regression. The DEC-009 integration marker above had already passed before the stall.
+- The uniquely named scratch Compose project was explicitly removed and verified to have no remaining containers, volumes or networks. Existing `mediq-api`, `mediq-postgres`, and Orthanc A/B were observed healthy and unchanged. `persistent_mediq_database=NOT_ACCESSED`.
+- `node --check` for the integration test and child-process helper, PowerShell parser, and `git diff --check` passed. No DICOM payload was sent to Orthanc; no STOW, route, module, worker or runtime volume was added.
+
+### Acceptance and remaining boundary
+
+| Acceptance | Evidence | Judgment |
+|---|---|---|
+| `STAGE-007` purge ordering and physical removal | Commit `PURGE_PENDING`; zeroize volatile key material; remove exact UUID package path; finalize `PURGED` plus fixed success Audit only after path absence | PASS — scoped synthetic/local filesystem + scratch PostgreSQL/RLS integration |
+| `STAGE-008` failure/retry | Inject physical/path and final metadata/Audit failure paths; retain retry reference; idempotent retry produces one success Audit | PASS — tested injected failures; not a host power-loss/disk-failure certification |
+| `STAGE-013` sibling Study isolation | Purge one Study payload while shared ImagingPackage/sibling payload remain unchanged | PASS — scoped internal storage/metadata test |
+| `STAGE-014` process restart | New process has no DEK and cannot read; DB-bound opaque ref enables purge-only cleanup; unresolved orphan blocks reads/new writes | PASS — scoped scratch integration |
+| Scratch DB-008 whole wrapper | DEC-009 test passed, but final migration-ledger denial probe stalled; owned scratch resources subsequently removed | PARTIAL — no whole-wrapper PASS claim |
+| Runtime cleanup/service/quota and Orthanc no-side-effect | `STAGE-005/009/010/011/012`, runtime storage registration and full transfer were not exercised | NOT RUN |
+
+`MEDIQ-PACS-001` remains `PARTIAL`. This slice proves a local purge saga only under the recorded test harness; it does not prove scheduled verified-Tenant `SERVICE` cleanup, shared/multi-process quota, runtime-volume durability/fsync behavior, forensic erasure, privacy gate `STAGE-011`, isolated Orthanc A/B no-STOW `STAGE-012`, full Mandatory Preflight, STOW, destination verification or A→B product transfer.

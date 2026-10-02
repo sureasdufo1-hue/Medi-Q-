@@ -1221,11 +1221,11 @@ MediQ Temporary Imaging Copy는 Application Authorization을 우회한 직접 �
 **Classification:** CAPSTONE-P0
 **Priority:** MUST
 
-Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry deny, retryable purge, Tenant-RLS SERVICE cleanup 및 metadata-only Audit lifecycle을 가져야 한다. P0 synthetic timing은 `PACS-001-DEC-007`로 권고되며, per-Study metadata binding은 `PACS-001-DEC-008`을 따른다. Production retention은 별도 결정이다.
+Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry deny, retryable purge, Tenant-RLS SERVICE cleanup 및 metadata-only Audit lifecycle을 가져야 한다. P0 synthetic timing은 `PACS-001-DEC-007`, per-Study metadata binding은 `PACS-001-DEC-008`, physical purge ordering/restart purge-only recovery는 `PACS-001-DEC-009`를 따른다. Production retention은 별도 결정이다.
 
 구체적인 Production Retention 기간은 P0에서 고정하지 않는다.
 
-**Acceptance:** `TC-PACS-001-STAGE-007/008/010` (`ACCEPTANCE-TESTS.md`; NOT RUN)
+**Acceptance:** `TC-PACS-001-STAGE-007/008` scoped internal filesystem + PostgreSQL/RLS PASS under `PACS-001-DEC-009`; `STAGE-010` verified per-Tenant SERVICE cleanup remains NOT RUN (`ACCEPTANCE-TESTS.md`). This does not authorize runtime storage activation.
 
 ---
 

@@ -44,6 +44,7 @@ COPY tests/database/transfer-grant-persistence-runtime.integration.test.mjs test
 COPY tests/database/pacs-transfer-operation-runtime.integration.test.mjs tests/database/pacs-transfer-operation-runtime.integration.test.mjs
 COPY tests/database/pacs-import-authorization-fence.integration.test.mjs tests/database/pacs-import-authorization-fence.integration.test.mjs
 COPY tests/database/temporary-payload-metadata-runtime.integration.test.mjs tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+COPY tests/helpers/stage-temporary-payload-child.mjs tests/helpers/stage-temporary-payload-child.mjs
 COPY tests/database/consent-request-api-runtime.integration.test.mjs tests/database/consent-request-api-runtime.integration.test.mjs
 COPY tests/database/consent-approval-api-runtime.integration.test.mjs tests/database/consent-approval-api-runtime.integration.test.mjs
 COPY tests/database/grant-issue-api-runtime.integration.test.mjs tests/database/grant-issue-api-runtime.integration.test.mjs

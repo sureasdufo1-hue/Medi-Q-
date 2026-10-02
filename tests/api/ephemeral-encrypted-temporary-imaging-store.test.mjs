@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -149,6 +149,37 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     expect(JSON.stringify(first)).not.toMatch(/Users|private-store|2\.25\./);
   });
 
+  it("serializes concurrent purge calls and returns one physical purge receipt", async () => {
+    const { storageRoot, store, handle } = await setup();
+    await stage(store, handle, Buffer.from("concurrent-purge"));
+
+    const results = await Promise.all([
+      store.purgePackage({ storageRef: handle.storageRef, binding: packageBinding }),
+      store.purgePackage({ storageRef: handle.storageRef, binding: packageBinding }),
+    ]);
+
+    expect(results[0]).toEqual(results[1]);
+    expect(await readdir(storageRoot)).toEqual([]);
+  });
+
+  it("fails closed on unexpected package entries and permits an idempotent retry after operator cleanup", async () => {
+    const { storageRoot, store, handle } = await setup();
+    await stage(store, handle, Buffer.from("unexpected-entry"));
+    await store.sealPackage({ storageRef: handle.storageRef, binding: packageBinding });
+    const unexpected = join(storageRoot, handle.storageRef, "unexpected");
+    await mkdir(unexpected);
+
+    await expect(
+      store.purgePackage({ storageRef: handle.storageRef, binding: packageBinding }),
+    ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+    await expect(read(store, handle, { objectRef: "00000000-0000-4000-8000-000000000000" }))
+      .rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+
+    await rm(unexpected, { recursive: true });
+    await store.purgePackage({ storageRef: handle.storageRef, binding: packageBinding });
+    expect(await readdir(storageRoot)).toEqual([]);
+  });
+
   it("fails closed on configured byte ceilings and removes the partial object", async () => {
     const { storageRoot, store, handle } = await setup({
       limits: {
@@ -220,7 +251,7 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     await Promise.all(retryWriters.map((writer) => writer.abort()));
   });
 
-  it("does not decrypt old ciphertext after process restart and refuses to initialize over orphan files", async () => {
+  it("does not decrypt after restart and permits only purge-only recovery by opaque ref", async () => {
     const { storageRoot, store, handle } = await setup();
     const receipt = await stage(store, handle, Buffer.from("restart-boundary"));
     await store.sealPackage({ storageRef: handle.storageRef, binding: packageBinding });
@@ -232,5 +263,9 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     await expect(read(restarted, handle, receipt)).rejects.toMatchObject({
       code: "RECOVERY_REQUIRED",
     });
+    await restarted.purgeOrphan(handle.storageRef);
+    expect(await readdir(storageRoot)).toEqual([]);
+    const nextHandle = await restarted.beginPackage(packageBinding);
+    expect(nextHandle.packageId).toBe(packageBinding.packageId);
   });
 });

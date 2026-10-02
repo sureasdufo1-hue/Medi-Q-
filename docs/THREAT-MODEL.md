@@ -1641,9 +1641,10 @@ RETENTION_PENDING
 DELETED state
 PACS-001-DEC-007: AES-256-GCM per-instance staging recommendation
 PACS-001-DEC-008: StudyReference-scoped temporary ref/state/expiry/purge metadata
+PACS-001-DEC-009: internal PURGE_PENDING → physical unlink → PURGED+Audit saga; restart recovery is purge-only
 30-minute P0 TTL / immediate expiry denial / Tenant-RLS purge Audit
 one Study purge cannot mutate a shared ImagingPackage or sibling Study
-`STAGE-001` PASS only in a synthetic unit harness; `STAGE-002~013` remain unverified; no persistent runtime staging path may be enabled
+`STAGE-001` and scoped `STAGE-007/008/013/014` PASS only in synthetic/local filesystem + disposable PostgreSQL/RLS tests; `STAGE-005/009/010/011/012` remain unverified; no runtime staging path may be enabled
 ```
 
 ### Requirements
@@ -1656,11 +1657,11 @@ SEC-CACHE-001
 
 ### Residual Risk
 
-MEDIUM — Optional exact-source staging seam is tested only with synthetic unit data; per-Study schema/lifecycle and full Acceptance remain incomplete.
+MEDIUM — Physical purge/restart sub-gates have scoped synthetic and disposable PostgreSQL/RLS evidence, but runtime lifecycle, cleanup scheduling, shared quota, privacy and no-side-effect Acceptance remain incomplete.
 
 이유:
 
-The 30-minute retention rule applies only to the synthetic P0 proposal; the production retention period remains unset. An optional unregistered same-stream encrypted staging seam exists. `PACS-001-DEC-008` documents the required Study-scoped metadata amendment but does not implement it. No runtime store injection, Tenant cleanup worker, durable purge Audit, restart recovery or filesystem/DB failure saga is verified. A non-empty spool directory after process restart fails closed, but cleanup recovery is a remaining gate. Do not activate persistent imaging storage before `STAGE-002~013` and the full runtime/lifecycle gates pass.
+The 30-minute retention rule applies only to the synthetic P0 proposal; the production retention period remains unset. The same-stream encrypted staging seam and `PACS-001-DEC-009` purge coordinator remain unregistered. Scoped tests verify purge ordering, retry/Audit idempotency, physical path removal and purge-only process-restart recovery; they do not provide forensic erasure, host crash/fsync durability, runtime-volume protection, scheduled verified Tenant `SERVICE` cleanup, or cross-process quota. `STAGE-005/009/010/011/012` and full runtime/lifecycle gates remain open. Do not activate persistent imaging storage before these gates pass.
 
 ---
 

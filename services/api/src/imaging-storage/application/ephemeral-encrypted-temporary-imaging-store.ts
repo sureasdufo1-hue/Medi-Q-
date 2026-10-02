@@ -6,6 +6,8 @@ import {
   open as openFile,
   readdir,
   rm,
+  rmdir,
+  unlink,
 } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -123,6 +125,7 @@ interface StoredPackage {
   sealed: boolean;
   purgePending: boolean;
   expiresAt: number | null;
+  purgePromise?: Promise<TemporaryImagingPurgeReceipt>;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -132,6 +135,7 @@ const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const AAD_VERSION = "MEDIQ-TEMP-IMAGING-V1";
 const MAX_PURGE_TOMBSTONES = 1_024;
+const CIPHERTEXT_FILE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.enc$/i;
 
 function storageError(code: TemporaryImagingStorageErrorCode): never {
   throw new TemporaryImagingStorageError(code);
@@ -253,6 +257,8 @@ export class EphemeralEncryptedTemporaryImagingStore {
     string,
     { readonly bindingFingerprint: string; readonly receipt: TemporaryImagingPurgeReceipt }
   >();
+  private readonly recoveryRequiredRefs = new Set<string>();
+  private hasUnexpectedRecoveryEntries = false;
 
   constructor(options: TemporaryImagingStorageOptions) {
     if (!options || typeof options.rootDirectory !== "string" || !isAbsolute(options.rootDirectory)) {
@@ -267,7 +273,27 @@ export class EphemeralEncryptedTemporaryImagingStore {
   async beginPackage(
     binding: TemporaryImagingPackageBinding,
   ): Promise<TemporaryImagingPackageHandle> {
+    return this.createPackage(binding, randomUUID());
+  }
+
+  /**
+   * Starts storage only after the caller has durably reserved this opaque ref
+   * in its verified Tenant transaction. Product orchestration must use this
+   * entry point; beginPackage() is retained for isolated primitive tests.
+   */
+  async beginReservedPackage(
+    binding: TemporaryImagingPackageBinding,
+    storageRef: string,
+  ): Promise<TemporaryImagingPackageHandle> {
+    return this.createPackage(binding, storageRef);
+  }
+
+  private async createPackage(
+    binding: TemporaryImagingPackageBinding,
+    storageRef: string,
+  ): Promise<TemporaryImagingPackageHandle> {
     await this.ready;
+    this.assertRecoveryComplete();
     this.prunePurgedPackages();
     if (
       !binding ||
@@ -278,7 +304,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
     ) {
       storageError("INVALID_INPUT");
     }
-    const storageRef = randomUUID();
+    if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
+    storageRef = storageRef.toLowerCase();
+    if (this.packages.has(storageRef) || this.purgedPackages.has(storageRef)) {
+      storageError("BINDING_MISMATCH");
+    }
     const handle = Object.freeze({ storageRef, packageId: binding.packageId });
     const directory = this.packageDirectory(storageRef);
     try {
@@ -672,6 +702,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
     this.prunePurgedPackages();
     if (
       !input.binding ||
+      !validateUuid(input.storageRef) ||
       !validateUuid(input.binding.tenantId) ||
       !validateUuid(input.binding.exchangeSessionId) ||
       !validateUuid(input.binding.packageId) ||
@@ -679,9 +710,10 @@ export class EphemeralEncryptedTemporaryImagingStore {
     ) {
       storageError("BINDING_MISMATCH");
     }
-    const storedPackage = this.packages.get(input.storageRef);
+    const storageRef = input.storageRef.toLowerCase();
+    const storedPackage = this.packages.get(storageRef);
     if (!storedPackage) {
-      const priorPurge = this.purgedPackages.get(input.storageRef);
+      const priorPurge = this.purgedPackages.get(storageRef);
       if (!priorPurge) storageError("PACKAGE_NOT_FOUND");
       if (priorPurge.bindingFingerprint !== packageBindingFingerprint(input.binding)) {
         storageError("BINDING_MISMATCH");
@@ -689,19 +721,83 @@ export class EphemeralEncryptedTemporaryImagingStore {
       return priorPurge.receipt;
     }
     this.assertPackageBinding(storedPackage, input.binding);
+    if (storedPackage.purgePromise) return storedPackage.purgePromise;
+
+    const purgePromise = this.purgeStoredPackage(storageRef, storedPackage);
+    storedPackage.purgePromise = purgePromise;
+    try {
+      return await purgePromise;
+    } catch (error) {
+      if (storedPackage.purgePromise === purgePromise) storedPackage.purgePromise = undefined;
+      throw error;
+    }
+  }
+
+  /**
+   * Removes a package after its StudyReference/operation binding has already
+   * been validated in a verified Tenant transaction. This method cannot read
+   * or decrypt data and never accepts a caller-supplied filesystem path.
+   */
+  async purgeByReference(input: {
+    readonly storageRef: string;
+    readonly binding: TemporaryImagingPackageBinding;
+  }): Promise<void> {
+    await this.ready;
+    if (
+      !input?.binding ||
+      !validateUuid(input.binding.tenantId) ||
+      !validateUuid(input.binding.exchangeSessionId) ||
+      !validateUuid(input.binding.packageId) ||
+      input.binding.purpose !== "PACS_IMPORT"
+    ) {
+      storageError("BINDING_MISMATCH");
+    }
+    const storageRef = input.storageRef?.toLowerCase();
+    if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
+    if (this.packages.has(storageRef) || this.purgedPackages.has(storageRef)) {
+      await this.purgePackage({ storageRef, binding: input.binding });
+      return;
+    }
+    await this.purgeOrphan(storageRef);
+  }
+
+  /** Purge-only restart recovery for an opaque ref resolved under Tenant RLS. */
+  async purgeOrphan(storageRefInput: string): Promise<void> {
+    await this.ready;
+    if (!validateUuid(storageRefInput)) storageError("INVALID_INPUT");
+    const storageRef = storageRefInput.toLowerCase();
+    if (!this.recoveryRequiredRefs.has(storageRef)) {
+      const unexpected = await lstat(this.packageDirectory(storageRef)).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          return storageError("STORAGE_UNAVAILABLE");
+        },
+      );
+      if (unexpected) storageError("RECOVERY_REQUIRED");
+    }
+    try {
+      await this.removePackageDirectory(storageRef);
+      this.recoveryRequiredRefs.delete(storageRef);
+      const remaining = await readdir(this.rootDirectory);
+      if (remaining.length === 0) {
+        this.recoveryRequiredRefs.clear();
+        this.hasUnexpectedRecoveryEntries = false;
+      }
+    } catch (error) {
+      if (error instanceof TemporaryImagingStorageError) throw error;
+      storageError("STORAGE_UNAVAILABLE");
+    }
+  }
+
+  private async purgeStoredPackage(
+    storageRef: string,
+    storedPackage: StoredPackage,
+  ): Promise<TemporaryImagingPurgeReceipt> {
     storedPackage.purgePending = true;
     storedPackage.abortController.abort();
     if (storedPackage.activeStages > 0) {
       await new Promise<void>((resolveIdle) => storedPackage.idleWaiters.push(resolveIdle));
     }
-    const deletedAt = new Date(this.now());
-    const receipt = Object.freeze({
-      storageRef: input.storageRef,
-      packageId: storedPackage.handle.packageId,
-      objectCount: storedPackage.objects.size,
-      byteLength: storedPackage.byteLength,
-      deletedAt,
-    });
     for (const object of storedPackage.objects.values()) {
       object.key.fill(0);
       object.nonce.fill(0);
@@ -709,18 +805,73 @@ export class EphemeralEncryptedTemporaryImagingStore {
       object.authTag = null;
     }
     try {
-      await rm(storedPackage.directory, { recursive: true, force: true });
+      await this.removePackageDirectory(storageRef);
     } catch {
       storageError("STORAGE_UNAVAILABLE");
     }
+    const receipt = Object.freeze({
+      storageRef,
+      packageId: storedPackage.handle.packageId,
+      objectCount: storedPackage.objects.size,
+      byteLength: storedPackage.byteLength,
+      deletedAt: new Date(this.now()),
+    });
     this.environmentBytes -= storedPackage.byteLength;
-    this.packages.delete(input.storageRef);
-    this.purgedPackages.set(input.storageRef, {
+    this.packages.delete(storageRef);
+    this.recoveryRequiredRefs.delete(storageRef);
+    this.purgedPackages.set(storageRef, {
       bindingFingerprint: packageBindingFingerprint(storedPackage.binding),
       receipt,
     });
     this.prunePurgedPackages();
     return receipt;
+  }
+
+  private async removePackageDirectory(storageRef: string): Promise<void> {
+    const directory = this.packageDirectory(storageRef);
+    const directoryInfo = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      return storageError("STORAGE_UNAVAILABLE");
+    });
+    if (!directoryInfo) return;
+    if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory()) {
+      storageError("STORAGE_UNAVAILABLE");
+    }
+    const entries = await readdir(directory, { withFileTypes: true }).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        return storageError("STORAGE_UNAVAILABLE");
+      },
+    );
+    if (!entries) return;
+    for (const entry of entries) {
+      if (!CIPHERTEXT_FILE_PATTERN.test(entry.name) || !entry.isFile()) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+      const filePath = join(directory, entry.name);
+      const fileInfo = await lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        return storageError("STORAGE_UNAVAILABLE");
+      });
+      if (!fileInfo) continue;
+      if (fileInfo.isSymbolicLink() || !fileInfo.isFile()) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+      try {
+        await unlink(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+          storageError("STORAGE_UNAVAILABLE");
+        }
+      }
+    }
+    try {
+      await rmdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -729,8 +880,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
       const rootInfo = await lstat(this.rootDirectory);
       if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) storageError("STORAGE_UNAVAILABLE");
       await chmod(this.rootDirectory, 0o700);
-      const entries = await readdir(this.rootDirectory);
-      if (entries.length > 0) storageError("RECOVERY_REQUIRED");
+      const entries = await readdir(this.rootDirectory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (validateUuid(entry.name)) this.recoveryRequiredRefs.add(entry.name.toLowerCase());
+        else this.hasUnexpectedRecoveryEntries = true;
+      }
     } catch (error) {
       if (error instanceof TemporaryImagingStorageError) throw error;
       storageError("STORAGE_UNAVAILABLE");
@@ -759,8 +913,19 @@ export class EphemeralEncryptedTemporaryImagingStore {
   private getPackage(storageRef: string): StoredPackage {
     if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
     const storedPackage = this.packages.get(storageRef);
-    if (!storedPackage) storageError("PACKAGE_NOT_FOUND");
+    if (!storedPackage) {
+      if (this.recoveryRequiredRefs.size > 0 || this.hasUnexpectedRecoveryEntries) {
+        storageError("RECOVERY_REQUIRED");
+      }
+      storageError("PACKAGE_NOT_FOUND");
+    }
     return storedPackage;
+  }
+
+  private assertRecoveryComplete(): void {
+    if (this.recoveryRequiredRefs.size > 0 || this.hasUnexpectedRecoveryEntries) {
+      storageError("RECOVERY_REQUIRED");
+    }
   }
 
   private assertPackageBinding(

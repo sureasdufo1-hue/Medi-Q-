@@ -712,16 +712,19 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
     $temporaryPayloadExitCode = $LASTEXITCODE
     $temporaryPayloadSummary = [string]::Join("`n", [string[]]@($temporaryPayloadOutput))
     if ($temporaryPayloadExitCode -ne 0 -or $temporaryPayloadSummary -notmatch '(?m)^(?:#|ℹ) pass 1$') {
-        $safeFailureCode = [regex]::Match($temporaryPayloadSummary, '\b(23514|23505|42501|25P02|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|AssertionError)\b').Groups[1].Value
+        $safeFailureCode = [regex]::Match($temporaryPayloadSummary, 'TEMP_PAYLOAD_STAGE=[A-Z_]+ code=([A-Za-z0-9_]+)').Groups[1].Value
+        if (-not $safeFailureCode) {
+            $safeFailureCode = [regex]::Match($temporaryPayloadSummary, '\b(23514|23505|42501|25P02|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|AssertionError)\b').Groups[1].Value
+        }
         if (-not $safeFailureCode) {
             $safeFailureCode = [regex]::Match($temporaryPayloadSummary, '\b(TEMP_PAYLOAD_[A-Z_]+|TEMPORARY_PAYLOAD_[A-Z_]+)\b').Groups[1].Value
         }
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         $safeFailureStage = [regex]::Match($temporaryPayloadSummary, 'TEMP_PAYLOAD_STAGE=([A-Z_]+)').Groups[1].Value
         if (-not $safeFailureStage) { $safeFailureStage = "unknown" }
-        throw "PACS-001 DEC-008 temporary-payload PostgreSQL/RLS Acceptance failed (exit=$temporaryPayloadExitCode, stage=$safeFailureStage, safe_error=$safeFailureCode); raw output suppressed."
+        throw "PACS-001 DEC-008/009 temporary-payload PostgreSQL/RLS Acceptance failed (exit=$temporaryPayloadExitCode, stage=$safeFailureStage, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "pacs001_dec008_runtime=PASS exact_grants=PASS forced_rls=PASS sibling_study_isolation=PASS same_operation_race=PASS binding=PASS purge_audit_rollback=PASS retry_before_stow=PASS deny_after_stow=PASS package_unchanged=PASS"
+    Write-Output "pacs001_temporary_payload_runtime=PASS exact_grants=PASS forced_rls=PASS sibling_study_isolation=PASS same_operation_race=PASS metadata_binding=PASS physical_purge=PASS restart_purge_only=PASS audit_retry=PASS retry_before_stow=PASS deny_after_stow=PASS package_unchanged=PASS"
 
     $integrationArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
