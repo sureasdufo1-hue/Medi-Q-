@@ -19,10 +19,16 @@ const membership = {
 function harness({ membershipResult = membership, queryFailureAt, resetFailureAt, registryFailure = false } = {}) {
   const queries = [];
   let transactionNumber = 0;
+  let resets = 0;
   const client = {
-    query: vi.fn(async (text, values) => {
-      queries.push({ text, values });
+    query: vi.fn(async (queryConfig, values) => {
+      const text = typeof queryConfig === "string" ? queryConfig : queryConfig.text;
+      queries.push({ text, values, queryConfig });
       if (text === "BEGIN") transactionNumber += 1;
+      if (text === "RESET mediq.tenant_id") {
+        resets += 1;
+        if (resets === resetFailureAt) throw new Error("reset failure");
+      }
       if (queryFailureAt?.(text, transactionNumber)) throw new Error("database detail");
       return { rows: [] };
     }),
@@ -37,19 +43,6 @@ function harness({ membershipResult = membership, queryFailureAt, resetFailureAt
       return membershipResult ? { ...membershipResult, tenantId } : null;
     }),
   };
-  if (resetFailureAt) {
-    let resets = 0;
-    client.query.mockImplementation(async (text, values) => {
-      queries.push({ text, values });
-      if (text === "RESET mediq.tenant_id") {
-        resets += 1;
-        if (resets === resetFailureAt) throw new Error("reset failure");
-      }
-      if (text === "BEGIN") transactionNumber += 1;
-      if (queryFailureAt?.(text, transactionNumber)) throw new Error("database detail");
-      return { rows: [] };
-    });
-  }
   const config = { oidcAuthentication: { issuer, audience: "mediq-api-test", jwksUri: "https://identity.example.test/jwks" } };
   return {
     service: new ActorTenantContextService(config, database, registry),
@@ -95,6 +88,14 @@ describe("ActorTenantContextService", () => {
       "RESET mediq.tenant_id",
     ]);
     expect(state.queries[2].values).toEqual([tenantA]);
+    const commitQueries = state.queries.filter(({ text }) => text === "COMMIT");
+    expect(commitQueries).toHaveLength(1);
+    expect(commitQueries[0].queryConfig).toEqual({ text: "COMMIT", query_timeout: 5_000 });
+    expect(
+      state.queries
+        .filter(({ text }) => text !== "COMMIT")
+        .every(({ queryConfig }) => typeof queryConfig === "string"),
+    ).toBe(true);
     expect(state.client.release).toHaveBeenCalledWith(undefined);
   });
 
@@ -128,6 +129,28 @@ describe("ActorTenantContextService", () => {
       constructor: ActorTenantContextUnavailableError,
       message: "ACTOR_TENANT_CONTEXT_UNAVAILABLE",
     });
+    expect(state.client.release).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it("fails closed on COMMIT timeout, attempts rollback where possible, discards the client, and never retries", async () => {
+    const state = harness({ queryFailureAt: (text) => text === "COMMIT" });
+    const work = vi.fn(async () => "work-result-must-not-escape");
+
+    await expect(state.service.run(principal, tenantA, work)).rejects.toMatchObject({
+      constructor: ActorTenantContextUnavailableError,
+      message: "ACTOR_TENANT_CONTEXT_UNAVAILABLE",
+    });
+
+    expect(work).toHaveBeenCalledOnce();
+    expect(state.database.connect).toHaveBeenCalledOnce();
+    expect(state.queries.filter(({ text }) => text === "COMMIT")).toHaveLength(1);
+    expect(state.queries.map(({ text }) => text)).toEqual([
+      "RESET mediq.tenant_id",
+      "BEGIN",
+      "SELECT set_config('mediq.tenant_id', $1, true)",
+      "COMMIT",
+      "ROLLBACK",
+    ]);
     expect(state.client.release).toHaveBeenCalledWith(expect.any(Error));
   });
 

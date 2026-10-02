@@ -6,7 +6,7 @@
 | 제목 | Bounded source integrity and authorized synthetic source-capture sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — CAP-001~004, CAP-006, CAP-013~014 pass only within recorded scopes; CAP-005's prior three-run checkpoint was later reopened by a classified COMMIT query timeout; CAP-007 positive runner evidence passed once but its static review/repeat gate remains open; CAP-008~012 and full destination/transfer workflow remain open |
+| 결과 | `PARTIAL` — CAP-001~008, CAP-013~014 pass only within recorded synthetic scopes; CAP-005, CAP-007 and CAP-008 passed their recorded 3×31/31 isolated gates; CAP-009~012, destination/transfer workflow and full P0 remain open |
 
 ## 1. 검증 환경
 
@@ -192,7 +192,7 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 
 - 결과: `PARTIAL`
 - PASS 범위: canonical streaming hash, operation-bound pending evidence/schema/RLS, exact permanent runtime grants (`CAP-013`), bounded operation-scope boundary (`CAP-001`), initial-authorization denial matrix (`CAP-002`), persisted-binding/initial-state rejection (`CAP-003`), configured endpoint/TLS/credential boundary (`CAP-004`), metadata validation (`CAP-005`), mapping/PatientID preflight (`CAP-006`), and isolated synthetic authorized source-capture effect boundary (`CAP-014`) only.
-- No PASS claim for CAP-007~012, production PACS, destination comparison/verification, transfer completion, product import route, STOW, or A→B E2E. CAP-001~006/014 evidence is limited to the disposable synthetic test environment.
+- CAP-007 and CAP-008 are `PASS (scoped)` only for their recorded synthetic internal stream/evidence and failure/cancellation/deadline tests. No PASS claim for CAP-009~012, production PACS, destination comparison/verification, transfer completion, product import route, STOW, or A→B E2E. CAP-001~008/013~014 evidence is limited to the disposable synthetic test environment.
 - 실제 환자정보, 운영 Credential, Secret 및 운영 DICOM을 증거에 포함하지 않는다.
 
 ## 8. Authorized Source-Capture Sub-gate — Current Checkpoint
@@ -212,7 +212,7 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 ### Current boundary
 
 - New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
-- `TC-INT-001-CAP-001~006` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005 passed three consecutive fresh isolated runs; an earlier pre-metadata Tenant-context failure remains unexplained but was not reproduced. CAP-007~012 remain open.
+- `TC-INT-001-CAP-001~008` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005, CAP-007 and CAP-008 each passed their recorded three consecutive fresh isolated runs; the historical pre-metadata Tenant-context failure root cause remains unknown. CAP-009~012 remain open.
 - The exact permanent runtime grant migration is present and validated. The service remains internal-only and is not reachable through HTTP; CAP-014 proves only the isolated synthetic source-capture boundary, not destination import or B-side product behavior.
 - No STOW, B write, destination verification or full A→B E2E was run or claimed.
 
@@ -269,21 +269,50 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 - 판정: `PASS` — `TC-INT-001-CAP-001~004` and CAP-014 scoped boundaries only. This does not prove CAP-005~012, production/client-ingress TLS, destination verification, STOW, `AT-SEC-012`, `AT-E2E-003`, or full P0 transfer.
 - 이전 시도 참고: CAP-002 fixture seeding first rejected a malformed synthetic idempotency UUID (`22P02`), and one earlier integration invocation exited 1 without a safely attributable root cause; that unresolved CAP-002 harness-risk record remains. The first CAP-003 fixture attempt was rejected by `PACS_TRANSFER_OPERATION_INITIAL_STATE_INVALID` (`23514`) because it tried to insert a non-`CREATED` state; this confirms the DB guard and was corrected by using the approved transition repository, not by bypassing it. Three later CAP-003-inclusive runs passed 18/18; the final CAP-004-inclusive runner passed 19/19 on three consecutive runs.
 
-## 11. CAP-007 — Authorized stream and exact-manifest evidence (PARTIAL)
+## 11. CAP-007 — Authorized stream and exact-manifest evidence (PASS, scoped)
 
 - Decision/Acceptance: `INT-001-CAP-007-REC-001` was recorded before implementation/test changes. Scope is test-only incremental observation of existing internal synthetic source capture; no route, schema/grant, production PACS, STOW, or destination behavior.
-- API regression: `npm run test:api -- --reporter=dot` exited 0; API build passed; 35 test files / 605 tests passed. This validates the strengthened stream lifecycle and safe diagnostic classifier unit tests, but does not substitute for repeated live Acceptance.
+- API regression after CAP-005 timeout implementation: `npm run test:api -- --reporter=dot` exited 0; API build passed; 35 test files / 606 tests passed.
 - Initial live command: `./scripts/test-int001-source-capture.ps1` exited 1 at module bootstrap because the dedicated Docker test target omitted the imported diagnostic helper. No Node test or DB diagnostic ran; B was EMPTY before, cleanup passed, and the existing `mediq` stack was unchanged. The missing helper COPY was then added and the test image rebuilt.
-- Corrected diagnostic runner: exited 0 with 31/31 tests; independent Audit/evidence observer PASS; B EMPTY before/after; zero STOW/destination calls; temporary cleanup and existing-stack preservation PASS. The first subsequent stability run also exited 0 with 31/31 and the same safeguards.
-- The second stability run was stopped at its first failure: safe marker `CAP005_EMPTY_UNEXPECTED_UNAVAILABLE_M0_I0_RNONE_CACTOR_TENANT_CONTEXT_UNAVAILABLE_DBCOMMIT_QUERY_READ_TIMEOUT_GTE1000MS`; no metadata/instance WADO was reached. Cleanup and existing-stack preservation passed. No in-run retry or third run was performed.
-- CAP-007 test code adds a test-only incremental byte/hash observer and assertions for canonical operation-bound instance order, full stream close before next open, max one active stream, synthetic fixture per-instance byte/hash equality, independently computed aggregate digest vs internal pending evidence, allowlisted response, and zero forbidden destination/STOW calls. One corrected full runner passed this path, but static no-buffer/no-spill review and repeated CAP-007-specific validation remain outstanding; retain `PARTIAL`, not PASS.
-- Overall judgment: CAP-007 `PARTIAL`; one positive live run is recorded, but completion criteria are not all closed. CAP-005 is also `PARTIAL`: the historical three-run checkpoint was followed by a classified recurrence and is reopened pending implementation of the recorded bounded-COMMIT recommendation and a fresh three-run sequence.
+- After implementing a per-COMMIT 5,000 ms node-postgres client deadline, three consecutive fresh invocations of `./scripts/test-int001-source-capture.ps1` each exited 0 with `authorized_capture_test=PASS tests=31 failed=0`, independent Audit/evidence observer PASS, B EMPTY before/after, zero STOW/destination calls, temporary cleanup and existing-stack preservation. No in-run retries occurred.
+- The test-only incremental observer asserts canonical operation-bound instance order, full stream close before next open, maximum one active stream, fixture byte/hash equality, independently recomputed aggregate digest vs pending evidence, allowlisted response, and zero forbidden destination/STOW calls. These assertions passed in each 31-test run.
+- Static review: the hash builder consumes one lazy instance stream at a time and retains only UID bytes, length and per-instance digest. The service does not assemble/write DICOM payload. The Orthanc parser is configured for one part, max 64 MiB per instance, bounded headers, and total/idle timeouts. Metadata JSON buffering is separately capped at 8 MiB; it is not DICOM payload. No whole-study DICOM aggregation or filesystem spill dependency exists. The parser's PassThrough may buffer within the single-instance 64 MiB cap; no constant-memory or 2 GiB performance claim is made.
+- Overall judgment: `TC-INT-001-CAP-007` is `PASS (scoped)` for the tested synthetic internal stream/manifest path only. Production PACS, high-volume performance, destination verification and complete A→B transfer remain unverified.
 
-## 12. CAP-005-RCA — Safe Tenant transaction failure diagnosis (in progress)
+## 12. CAP-005-RCA — Safe Tenant transaction failure diagnosis (diagnosis scoped)
 
 - Decision/Acceptance: `INT-001-CAP-005-RCA-001` / `TC-INT-001-CAP-005-RCA-001` were recorded before changing diagnostic code. Scope is test-only, allowlisted DB error classification; no service/DB/retry behavior changes.
 - Implemented test helper: `tests/integration/safe-database-diagnostics.mjs` returns only validated PostgreSQL SQLSTATE, allowlisted Node code, a fixed exact-message category, allowlisted error name, or `UNCLASSIFIED`; failed-query duration is bucketed. Arbitrary error strings and parameters are never returned.
 - Unit command: `npm run test:api -- --reporter=dot`; exited 0. API build passed; 35 test files / 605 tests passed, including four diagnostic-classifier tests covering valid/invalid SQLSTATE, allowed/rejected Node codes, fixed vs. arbitrary messages, and duration buckets.
 - First live invocation: `./scripts/test-int001-source-capture.ps1` exited 1 before Node tests began because the `authorized-source-capture-test` Docker target did not copy the imported helper; TAP reported module bootstrap at `authorized-source-capture.orthanc.integration.test.mjs:1:1`. This is a test-target packaging failure, not DB diagnostic evidence. Hospital B was confirmed `EMPTY` before the invocation; temporary cleanup passed and the pre-existing `mediq` stack was unchanged. The post-test B probe and DB observer did not run.
 - Acceptance amendment: a bootstrap/import failure is explicitly classified as setup failure and corrected before the one valid diagnostic run; once Node test execution begins, do not retry. The Docker test target now explicitly copies `tests/integration/safe-database-diagnostics.mjs`. The corrected isolated diagnostic run passed 31/31 with observer/B/cleanup/stack checks. A later stability run passed 31/31; the second stability run then failed at COMMIT with `QUERY_READ_TIMEOUT` (`GTE1000MS`), before WADO. No SQLSTATE was emitted; the installed node-postgres client source confirms the client-side read timer and runtime pool setting of 1,500 ms. The immediate timeout mechanism is known; underlying DB/host/storage latency remains unproven. The three-run gate stopped at first failure.
-- Follow-up decision: `INT-001-CAP-005-TIMEOUT-001` / `TC-INT-001-CAP-005-TIMEOUT-001` recommend a bounded `query_timeout=5000` only for verified Tenant `COMMIT`, preserving 1,500 ms pool defaults, fail-closed handling, client discard, and no automatic retry. This is approved under standing `PDEC-001` but is not implemented in this checkpoint. See report §13.12 and the policy decision log.
+- Follow-up decision: `INT-001-CAP-005-TIMEOUT-001` / `TC-INT-001-CAP-005-TIMEOUT-001` selected a bounded `query_timeout=5000` only for verified Tenant `COMMIT`, preserving 1,500 ms pool defaults, fail-closed handling, client discard, and no automatic retry. Implementation and acceptance evidence are recorded in §13 below. The underlying database/host/storage latency cause remains unknown.
+
+## 13. CAP-005-TIMEOUT — COMMIT-only bounded query deadline (PASS, scoped)
+
+- Decision/Acceptance: `INT-001-CAP-005-TIMEOUT-001` / `TC-INT-001-CAP-005-TIMEOUT-001` were approved and recorded before source changes.
+- Implementation: `ActorTenantContextService` passes `{ text: "COMMIT", query_timeout: 5000 }` only for COMMIT. `RuntimeDatabaseService` connection and default query timeout stay at 1,500 ms. Other transaction commands remain unchanged.
+- Unit assertions: successful path confirms only COMMIT receives the override. Simulated COMMIT failure maps to generic `ACTOR_TENANT_CONTEXT_UNAVAILABLE`, attempts `ROLLBACK`, discards the client, calls connect once, and sends COMMIT exactly once; no automatic retry is introduced.
+- API command: `npm run test:api -- --reporter=dot`; exit 0; TypeScript build passed; 35 test files / 606 tests passed.
+- Isolated command, executed three times consecutively with fresh disposable Compose projects and no retries:
+
+```powershell
+./scripts/test-int001-source-capture.ps1
+```
+
+- Each run: exit 0; 31/31; independent Audit/evidence observer PASS; Hospital B EMPTY before/after; zero STOW/destination calls; temporary project cleanup PASS; existing `mediq` stack unchanged.
+- Judgment: CAP-005 timeout Acceptance and the CAP-005 live stability gate are `PASS (scoped)`. The change removes the observed 1,500 ms client-side COMMIT deadline as the limit for that single query; it does not prove/fix underlying storage/database latency or any production SLO. A future timeout after COMMIT submission remains outcome-ambiguous and must not be blindly retried.
+
+## 14. CAP-008 — WADO stream failure, cancellation and deadline (PASS, scoped)
+
+- Decision/Acceptance: `INT-001-CAP-008-REC-001` / `TC-INT-001-CAP-008` were recorded before CAP-008 implementation/test changes.
+- API command: `npm run test:api -- --reporter=dot`; exit 0; API TypeScript build passed; 35 test files / 614 tests passed. Coverage includes manifest read/media-type/SOP UID/length/cap failures, no partial evidence, caller cancellation, fake-timer total deadline, fixed Audit/error classification, and an adapter regression where the outer WADO response fails after the DICOM part starts.
+- Defect found: the first post-change isolated run hung on the partial-body failure case. The parser reports outer-response failure through its async iterator while the current part stream may stay open; the adapter previously awaited only the part reader. The adapter now races the reader against iterator failure and terminates/releases the active stream fail-closed. The interrupted disposable project was explicitly cleaned; existing `mediq` containers remained healthy/unchanged. That unsuccessful attempt was not counted.
+- Isolated command, then executed three consecutive times with fresh disposable projects and no in-run retries:
+
+```powershell
+./scripts/test-int001-source-capture.ps1
+```
+
+- Each post-fix run: exit 0; 31/31; independent Audit/evidence observer PASS; active instance stream count returned to zero with no partial-stream completion; no pending evidence/success Audit and operation remained `CREATED` on injected failure; fixed minimized failure Audit where verified context resolved; Hospital B EMPTY before/after; zero STOW/destination calls; temporary cleanup PASS; existing `mediq` stack unchanged.
+- Judgment: `TC-INT-001-CAP-008` is `PASS (scoped)` for synthetic internal source-capture failure/cancellation/deadline behavior. Real PACS fault coverage, production timing/SLO, destination verification, STOW and full A→B remain unverified; CAP-009~012 remain open.

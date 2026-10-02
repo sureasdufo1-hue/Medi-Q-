@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
 import {
@@ -287,6 +287,7 @@ function makeHarness(options = {}) {
       dicomCalls.hospitalIds.push(request.context.hospitalId);
       const item = instanceFixture.find((entry) => entry.sopInstanceUid === request.sopInstanceUid);
       if (!item) throw new Error("SYNTHETIC_INSTANCE_NOT_FOUND");
+      options.onInstanceStreamOpen?.(item, request);
       if (options.revokeAfterStreams && dicomCalls.instances === instanceFixture.length) {
         currentConsentStatus = "WITHDRAWN";
       }
@@ -295,6 +296,9 @@ function makeHarness(options = {}) {
       }
       if (options.changeOperationAfterStreams && dicomCalls.instances === instanceFixture.length) {
         currentScope = operationScope({ operation_state: "FAILED" });
+      }
+      if (options.instanceStreamFactory) {
+        return options.instanceStreamFactory(item, request);
       }
       const body = new ReadableStream({
         start(controller) {
@@ -331,6 +335,7 @@ function makeHarness(options = {}) {
     dicomCalls,
     get activeTransactions() { return activeTransactions; },
     get authorizationCalls() { return authorizationCalls; },
+    get operationState() { return currentScope.operation_state; },
     set consentStatus(value) { currentConsentStatus = value; },
   };
 }
@@ -498,6 +503,178 @@ describe("AuthorizedSourceCaptureService", () => {
       result: "FAILURE",
       reason: "SOURCE_READ_FAILED",
     });
+  });
+
+  it.each([
+    {
+      name: "instance body read error",
+      createStream: (item) => ({
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(item.bytes.subarray(0, Math.min(8, item.bytes.byteLength)));
+            controller.error(new Error("private synthetic upstream detail"));
+          },
+        }),
+        mediaType: "application/dicom",
+        contentLength: item.bytes.byteLength,
+        sopInstanceUid: item.sopInstanceUid,
+      }),
+    },
+    {
+      name: "wrong media type",
+      createStream: (item) => ({
+        body: new ReadableStream({ start(controller) { controller.close(); } }),
+        mediaType: "application/octet-stream",
+        contentLength: item.bytes.byteLength,
+        sopInstanceUid: item.sopInstanceUid,
+      }),
+    },
+    {
+      name: "wrong SOP Instance UID",
+      createStream: (item) => ({
+        body: new ReadableStream({
+          start(controller) { controller.enqueue(item.bytes); controller.close(); },
+        }),
+        mediaType: "application/dicom",
+        contentLength: item.bytes.byteLength,
+        sopInstanceUid: "2.25.999999",
+      }),
+    },
+    {
+      name: "declared Content-Length mismatch",
+      createStream: (item) => ({
+        body: new ReadableStream({
+          start(controller) { controller.enqueue(item.bytes); controller.close(); },
+        }),
+        mediaType: "application/dicom",
+        contentLength: item.bytes.byteLength + 1,
+        sopInstanceUid: item.sopInstanceUid,
+      }),
+    },
+    {
+      name: "declared instance size exceeds hard cap",
+      createStream: (item) => ({
+        body: new ReadableStream({ start(controller) { controller.close(); } }),
+        mediaType: "application/dicom",
+        contentLength: 64 * 1024 * 1024 + 1,
+        sopInstanceUid: item.sopInstanceUid,
+      }),
+    },
+  ])("TC-INT-001-CAP-008 fails closed for $name with no partial evidence", async ({ createStream }) => {
+    const harness = makeHarness({ instanceStreamFactory: createStream });
+
+    await expect(harness.service.capture(command())).rejects.toMatchObject({
+      message: "SOURCE_CAPTURE_UNAVAILABLE",
+    });
+
+    expect(harness.dicomCalls.metadata).toBe(1);
+    expect(harness.dicomCalls.instances).toBe(1);
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(harness.operationState).toBe("CREATED");
+    expect(harness.activeTransactions).toBe(0);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_READ_FAILED" },
+    ]);
+    expect(JSON.stringify(auditActions(harness))).not.toMatch(/private|TEST-PATIENT|2\.25\./);
+  });
+
+  it("TC-INT-001-CAP-008 distinguishes caller cancellation and records no partial evidence", async () => {
+    let markStreamOpen;
+    let markReadStarted;
+    const streamOpen = new Promise((resolve) => { markStreamOpen = resolve; });
+    const readStarted = new Promise((resolve) => { markReadStarted = resolve; });
+    const controller = new AbortController();
+    const cancelled = vi.fn();
+    const harness = makeHarness({
+      onInstanceStreamOpen: markStreamOpen,
+      instanceStreamFactory: (_item, request) => ({
+        body: new ReadableStream({
+          pull() {
+            markReadStarted();
+            return new Promise((resolve) => {
+              request.context.signal.addEventListener("abort", resolve, { once: true });
+            });
+          },
+          cancel: cancelled,
+        }, { highWaterMark: 0 }),
+        mediaType: "application/dicom",
+        contentLength: undefined,
+        sopInstanceUid: _item.sopInstanceUid,
+      }),
+    });
+    const pending = harness.service.capture(command({ signal: controller.signal }));
+    const pendingOutcome = pending.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await streamOpen;
+    await readStarted;
+    controller.abort();
+
+    const outcome = await pendingOutcome;
+    expect(outcome).toHaveProperty("error");
+    expect(outcome.error).toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(harness.operationState).toBe("CREATED");
+    expect(harness.dicomCalls.instances).toBe(1);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_CAPTURE_CANCELLED" },
+    ]);
+  });
+
+  it("TC-INT-001-CAP-008 enforces the fixed 30-minute capture deadline with fake timers", async () => {
+    let markStreamOpen;
+    let markReadStarted;
+    const streamOpen = new Promise((resolve) => { markStreamOpen = resolve; });
+    const readStarted = new Promise((resolve) => { markReadStarted = resolve; });
+    const cancelled = vi.fn();
+    const harness = makeHarness({
+      onInstanceStreamOpen: markStreamOpen,
+      instanceStreamFactory: (_item, request) => ({
+        body: new ReadableStream({
+          pull() {
+            markReadStarted();
+            return new Promise((resolve) => {
+              request.context.signal.addEventListener("abort", resolve, { once: true });
+            });
+          },
+          cancel: cancelled,
+        }, { highWaterMark: 0 }),
+        mediaType: "application/dicom",
+        contentLength: undefined,
+        sopInstanceUid: _item.sopInstanceUid,
+      }),
+    });
+
+    vi.useFakeTimers();
+    try {
+      const pending = harness.service.capture(command());
+      const pendingOutcome = pending.then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      await streamOpen;
+      await readStarted;
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      const outcome = await pendingOutcome;
+      expect(outcome).toHaveProperty("error");
+      expect(outcome.error).toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(harness.operationState).toBe("CREATED");
+    expect(harness.dicomCalls.instances).toBe(1);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_CAPTURE_DEADLINE" },
+    ]);
   });
 
   it("TC-INT-001-CAP-009 reauthorizes after WADO and does not persist evidence after Consent withdrawal", async () => {

@@ -300,6 +300,36 @@ describe("OrthancDicomwebAdapter DCM-002 synthetic transport contract", () => {
     await expect(pending.retrieveInstanceStream({ context: context(TEST_HOSPITAL_A_ID, abortingController.signal), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP })).rejects.toThrow("DICOM_WADO_FAILED");
   });
 
+  it("propagates an outer WADO failure that occurs after a DICOM part has started", async () => {
+    const boundary = "mid-body-failure";
+    const header = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Type: application/dicom; transfer-syntax=${TS}\r\nContent-Length: 4096\r\n\r\n`,
+    );
+    const prefix = new Uint8Array(header.byteLength + 4);
+    prefix.set(header);
+    prefix.set([0x44, 0x49, 0x43, 0x4d], header.byteLength);
+    let emitted = false;
+    const response = new Response(new ReadableStream({
+      pull(controller) {
+        if (!emitted) {
+          emitted = true;
+          controller.enqueue(prefix);
+          return;
+        }
+        controller.error(new Error("SYNTHETIC_WADO_STREAM_FAILURE"));
+      },
+    }, { highWaterMark: 0 }), {
+      status: 200,
+      headers: { "content-type": `multipart/related; type=application/dicom; boundary=${boundary}` },
+    });
+    const instance = adapter(async () => response);
+    const result = await instance.retrieveInstanceStream({
+      context: context(), studyInstanceUid: STUDY, seriesInstanceUid: SERIES, sopInstanceUid: SOP,
+    });
+
+    await expect(streamBytes(result.body)).rejects.toThrow("DICOM_WADO_STREAM_FAILED");
+  });
+
   it("enforces the 64 MiB WADO part cap while the body is streamed", async () => {
     const boundary = "over-cap";
     const prefix = new TextEncoder().encode(`--${boundary}\r\nContent-Type: application/dicom\r\n\r\n`);

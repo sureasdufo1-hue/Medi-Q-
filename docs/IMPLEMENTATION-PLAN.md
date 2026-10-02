@@ -3,13 +3,17 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `IMPLEMENTATION-PLAN.md`
-**Version:** v3.36 MEDIQ-INT-001 safe DB diagnosis / bounded COMMIT timeout decision
+**Version:** v3.38 MEDIQ-INT-001 CAP-008 WADO stream failure handling
 **Current Target:** Capstone P0 End-to-End MVP
 **Architecture:** Modular Monolith
 **Deployment:** Docker Compose
 **Primary Integration:** DICOMweb — QIDO-RS / WADO-RS / STOW-RS
 **Status:** Approved Baseline
-**Execution revision:** v3.36 — safe test-only DB error classification identified node-postgres COMMIT query timeout; COMMIT-only timeout recommendation/Acceptance recorded, implementation pending
+
+**Latest execution update — MEDIQ-INT-001 — 2026-10-02 (authoritative; supersedes older v3.37 and v3.36 checkpoint paragraphs below):** API build/regression passed 35 files/614 tests. The approved 5,000 ms timeout applies only to verified Tenant `COMMIT`; the pool's connection/default query timeout remains 1,500 ms. CAP-005, CAP-007 and CAP-008 passed only their recorded synthetic internal scopes. Three fresh isolated CAP-008 runs each passed 31/31 with independent Audit/evidence observer, active-stream closure, B EMPTY before/after, zero STOW/destination calls, cleanup and existing-stack preservation. CAP-008 exposed and fixed a multipart adapter hang when the outer WADO body fails after a DICOM part starts. Static review still finds sequential per-instance hashing, no study-sized DICOM aggregation or filesystem spill; the parser may buffer within its one-instance 64 MiB limit, so no 2 GiB performance claim. Next: CAP-009 source-capture revalidation/race conditions; keep product route, destination verification, STOW and full P0 gated.
+**Execution revision:** v3.38 — CAP-008 WADO mid-body failure handling verified in API 35/614 and 3×31/31 fresh isolated runs; CAP-001~008/013~014 scoped only
+
+**Checkpoint history note:** The older v3.37/v3.36 status and next-gate paragraphs below describe earlier checkpoints and are retained as history only. The v3.38 latest execution update above is authoritative.
 
 **Current status correction — 2026-10-02:** Safe test-only diagnostics classified the recurring Tenant transaction failure as node-postgres `QUERY_READ_TIMEOUT` on `COMMIT` after the 1,500 ms client-side query deadline. The database/host/storage latency cause remains unknown. CAP-005 is `PARTIAL` pending the approved COMMIT-only timeout implementation and a fresh three-run gate. CAP-007 has one corrected 31/31 live runner and a following 31/31 stability pass, but its static no-buffer/no-spill review and completion gate remain open; it is `PARTIAL`, not PASS.
 
@@ -1785,7 +1789,7 @@ Negative tests PASS
 | 7     | MEDIQ-VIEW-001~006 | Viewer                   | BACKLOG |
 | 8     | MEDIQ-DWN-001~005  | Download                 | BACKLOG |
 | 9     | MEDIQ-PACS-001~008 | STOW/PACS Import         | IN PROGRESS — PACS-004 mapping gate PARTIAL; PACS-007 scoped operation ledger PASS; PACS-001 identity + operation-time Session fence sub-gates PASS on scratch PostgreSQL/API (API 29/529), and DB-008 aggregate + local migration smoke PASS after immutable 0018 checksum restoration; coordinator, product no-STOW/B-unchanged and full transfer remain incomplete |
-| 10    | MEDIQ-INT-001~004  | Integrity                | IN PROGRESS — INT-001 hash + pending persistence and CAP-001~006/CAP-013/014 PASS only within recorded scopes; CAP-005 30/30 on three fresh runs and CAP-006 API 34/601 + isolated 31/31 passed; historical CAP-005 DB-context cause remains unknown; CAP-007~012, destination comparison and completion enforcement remain open |
+| 10    | MEDIQ-INT-001~004  | Integrity                | IN PROGRESS — INT-001 hash + pending persistence and CAP-001~008/CAP-013/014 PASS only within recorded scopes; API 35/614 and CAP-008 three fresh 31/31 runs passed with active-stream failure handling; historical CAP-005 DB/host/storage cause remains unknown; CAP-009~012, destination comparison and completion enforcement remain open |
 | 10    | MEDIQ-PROV-001~003 | Provenance               | IN PROGRESS — PROV-001 operation-bound pending persistence PASS (scoped); authorized source-evidence persistence, terminal result, destination verification and full transfer Provenance remain NOT RUN |
 | 10    | MEDIQ-AUD-001~005  | Audit                    | IN PROGRESS — AUD-001 recommendation/Acceptance written before implementation; only current writer paths are in scope, global event completeness and other Audit controls remain open |
 | 11    | MEDIQ-SEC-001~015  | Security validation      | BACKLOG        |

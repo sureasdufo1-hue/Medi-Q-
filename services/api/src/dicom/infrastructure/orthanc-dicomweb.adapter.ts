@@ -890,6 +890,21 @@ function nodeReadableToWebStream(
 ): ReadableStream<Uint8Array> {
   const reader = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
   const source = reader.getReader();
+  const iteratorAdvance = iterator.next().then((extra) => {
+    if (!extra.done) {
+      extra.value.body.destroy();
+      throw new Error("DICOM_UPSTREAM_INVALID");
+    }
+    return extra;
+  });
+  // The multipart parser reports failures from the outer WADO response through
+  // its iterator. A part stream can remain open while that happens, so race
+  // each body read against the iterator's terminal failure instead of waiting
+  // indefinitely for the part stream to close.
+  const iteratorFailure = iteratorAdvance.then(
+    () => new Promise<never>(() => undefined),
+    (error: unknown) => Promise.reject(error),
+  );
   let settled = false;
   const finish = () => {
     if (settled) return;
@@ -901,16 +916,15 @@ function nodeReadableToWebStream(
     async pull(controller) {
       try {
         if (scope.signal.aborted) throw new Error("DICOM_OPERATION_ABORTED");
-        const next = await source.read();
-        if (!next.done) {
-          controller.enqueue(next.value);
+        const next = await Promise.race([
+          source.read().then((result) => ({ kind: "body" as const, result })),
+          iteratorFailure,
+        ]);
+        if (!next.result.done) {
+          controller.enqueue(next.result.value!);
           return;
         }
-        const extra = await iterator.next();
-        if (!extra.done) {
-          extra.value.body.destroy();
-          throw new Error("DICOM_UPSTREAM_INVALID");
-        }
+        await iteratorAdvance;
         finish();
         controller.close();
       } catch {

@@ -13,6 +13,7 @@ import {
 } from "../identity-context.types.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TENANT_CONTEXT_COMMIT_QUERY_TIMEOUT_MS = 5_000;
 
 function validPrincipal(
   principal: VerifiedAuthenticationPrincipal | null | undefined,
@@ -106,7 +107,11 @@ export class ActorTenantContextService {
       }
 
       try {
-        await client.query("COMMIT");
+        const commitQuery = {
+          text: "COMMIT",
+          query_timeout: TENANT_CONTEXT_COMMIT_QUERY_TIMEOUT_MS,
+        };
+        await client.query(commitQuery);
         transactionOpen = false;
       } catch {
         discardClient = true;

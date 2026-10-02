@@ -177,6 +177,34 @@ async function applyMetadataFault(response, fault) {
   return new Response(JSON.stringify(rows), { status: response.status, headers });
 }
 
+function partialDicomThenFail(response) {
+  const outerContentType = response.headers.get("content-type") ?? "";
+  const boundaryMatch = /(?:^|;)\s*boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(outerContentType);
+  assert.ok(boundaryMatch, "The synthetic A WADO response must contain a multipart boundary");
+  const boundary = (boundaryMatch[1] ?? boundaryMatch[2]).trim();
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  const partHeader = new TextEncoder().encode(
+    `--${boundary}\r\nContent-Type: application/dicom; transfer-syntax=1.2.840.10008.1.2.1\r\nContent-Length: 4096\r\n\r\n`,
+  );
+  const firstChunk = new Uint8Array(partHeader.byteLength + 4);
+  firstChunk.set(partHeader);
+  firstChunk.set([0x44, 0x49, 0x43, 0x4d], partHeader.byteLength);
+  let emittedPartialBody = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (!emittedPartialBody) {
+        emittedPartialBody = true;
+        controller.enqueue(firstChunk);
+        return;
+      }
+      controller.error(new Error("SYNTHETIC_WADO_STREAM_FAILURE"));
+    },
+  }, { highWaterMark: 0 });
+  return new Response(body, { status: response.status, headers });
+}
+
 function createHarness({
   failFirstInstance = false,
   databaseUrl,
@@ -342,20 +370,11 @@ function createHarness({
         }
         if (pendingFailure && url.pathname.includes("/instances/")) {
           pendingFailure = false;
-          // Keep the real upstream request and headers, but fail the response
-          // body at the transport boundary. Partially consuming Orthanc's
-          // multipart parser here can block parser shutdown and makes the
-          // test depend on third-party iterator cancellation semantics.
+          // Keep the real authorized A request, but inject a deterministic
+          // mid-body failure after a tiny synthetic DICOM prefix. The stored
+          // Orthanc object is never modified or partially copied to B.
           void response.body?.cancel().catch(() => undefined);
-          const failedBody = new ReadableStream({
-            start(controller) {
-              controller.error(new Error("SYNTHETIC_WADO_STREAM_FAILURE"));
-            },
-          });
-          return new Response(failedBody, {
-            status: response.status,
-            headers: response.headers,
-          });
+          return partialDicomThenFail(response);
         }
         if (response.body) {
           const reader = response.body.getReader();
@@ -990,7 +1009,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
   });
 
   await t.test("authorized interrupted WADO fails without evidence or operation transition", async () => {
-    const harness = createHarness({ failFirstInstance: true });
+    const harness = createHarness({ failFirstInstance: true, observeInstanceStreams: true });
     try {
       await assert.rejects(
         harness.service.capture({
@@ -1007,6 +1026,11 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.initialAuthorizationCommitted, true);
       assert.equal(counters.activeTenantTransactions, 0);
       assert.deepEqual(counters.sourceRequests, ["METADATA", "INSTANCE"]);
+      assert.equal(counters.instanceCalls, 1);
+      assert.equal(counters.maximumActiveInstanceStreams, 1);
+      assert.equal(counters.activeInstanceStreams, 0, "CAP008_ACTIVE_STREAM_CLOSED");
+      assert.equal(counters.instanceStreamOpenOrder.length, 1);
+      assert.deepEqual(counters.instanceStreamCompletionOrder, []);
       assert.equal(counters.forbiddenEndpointAttempts, 0);
       assert.equal(counters.stowCalls, 0);
       assert.equal(counters.destinationVerificationCalls, 0);
