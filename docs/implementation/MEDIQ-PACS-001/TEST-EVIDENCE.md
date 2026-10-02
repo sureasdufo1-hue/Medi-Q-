@@ -382,6 +382,8 @@ git diff --check
 
 ## 16. DEC-010 shared quota wiring checkpoint — 2026-10-03
 
+**Point-in-time note:** This section records the earlier wiring checkpoint before `STAGE-005` boundary tests. Its `NOT RUN` verdict is superseded by §17, which records the subsequent scoped Acceptance results.
+
 ### Commands and confirmed results
 
 ```powershell
@@ -411,3 +413,47 @@ git diff --check
 | Cross-process crash recovery, quota rebuild/failover, maximum-size throughput, runtime registration, SERVICE cleanup, Orthanc no-side-effect | Outside current slice | NOT RUN |
 
 **Judgment:** DEC-010 has implementation progress but is not Acceptance-complete. Keep the store unregistered, do not enable source-capture runtime wiring, and do not claim `STAGE-005` PASS. `MEDIQ-PACS-001` remains `PARTIAL`.
+
+## 17. PACS-001-DEC-010 — STAGE-005 quota Acceptance sub-gate
+
+**Execution date/environment:** 2026-10-03 Asia/Seoul; local Docker Desktop; uniquely named disposable DB-008 Compose project; PostgreSQL 18.6; synthetic `TEST-*` fixtures only. `-ScratchOnly` did not access the persistent `mediq` database or start/modify Orthanc A/B.
+
+### Commands and results
+
+```powershell
+node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+npx vitest run --maxWorkers=1 --no-file-parallelism tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs
+npm run typecheck:api
+npm run db:migrations:check
+npm run test:db-migrations
+npm run test:api
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+git diff --check
+```
+
+- `node --check`, `npm run typecheck:api`, and `npm run db:migrations:check` exited `0`; Drizzle reported `Everything's fine`. `npm run test:db-migrations` exited `0` with **6/6** tests. Focused store suite passed **14/14**. `npm run test:api` exited `0`: **37 files / 691 tests** passed; this command also rebuilt the API TypeScript output.
+- Final `scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` exited `0`. Clean migration, repeat apply, reset, reset/reapply, runtime/RLS regressions and owned-resource cleanup all passed. Final output: `product_tables=21`, `ledger=26`, `catalog=21|55|17|48`, `20` forced-RLS tables, runtime quota-table direct privileges `0`, runtime column-grant inventory `244`, and `db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED`. DB-002~007 persistent regression scripts were intentionally skipped in `-ScratchOnly` mode. The wrapper repeated its acceptance checks across clean/repeat/reset-reapply phases; PACS-001 temporary-payload integration reported PASS in each phase. The final owned scratch project was removed.
+- The first added integration attempt exposed a test-harness role leak: session-level `SET ROLE mediq_quota_owner` remained on a pooled inspector connection and denied a later Audit observation. The helpers now use `SET LOCAL ROLE`; the successful rerun completed the full wrapper. This was a test-harness issue, not a product migration change.
+- The first full API run timed out the 2,000-writer local filesystem case at Vitest’s default 5-second limit. The test now has a 30-second bound and aborts files in batches; the focused rerun passed 14/14 and the full API rerun passed 691/691.
+
+### Verified `STAGE-005` sub-cases
+
+- The ephemeral store rejects a 64 MiB+1 instance before writing any ciphertext bytes; the opened empty writer is explicitly aborted and its temporary object removed. It accepts at most 2,000 concurrently staged object writers and rejects the 2,001st; test cleanup aborts all writers.
+- With a disposable environment ceiling reduced to 16 MiB, two independent `mediq_runtime` PostgreSQL backend sessions raced to reserve one 16 MiB block for the same Study/storage reference. Exactly one reservation committed; the environment/package/ref counters remained at the ceiling. The test uses the same writer ID in both concurrent calls; a different writer ID is separately denied, but a concurrent distinct-writer collision case remains open.
+- Restoring approved maxima, 128 fixed 16 MiB reservations reached exactly 2 GiB for one ImagingPackage/Exchange without allocating 2 GiB of payload. The 129th block was denied with SQLSTATE `54000`; the counters remained exactly 2 GiB. The reduced environment contention and exact Package ceiling are separate assertions.
+- Runtime is allowed to execute only the three fixed reserve/settle/release functions for this path and is denied direct `SELECT` on all three quota tables. Missing Tenant context, unrelated Tenant, wrong Study/ref, wrong writer, expired StudyReference and invalid non-block delta all fail closed.
+- The scratch lifecycle stages one synthetic encrypted object, settles the previously reserved amount to its exact byte count, then attempts restart purge. A colliding Audit event after unlink leaves the reference `PURGE_PENDING` and retains the exact retryable quota reservation/counters. Successful retry commits `PURGED` plus the single success Audit and removes the reservation/package/global counter only after the ciphertext path is absent. Existing purge unit cases continue to cover reserve-before-write, quota-adapter failure and filesystem/Audit failure behavior.
+
+### Acceptance boundary and remaining work
+
+| Acceptance | Evidence | Judgment |
+|---|---|---|
+| 64 MiB+1 instance and 2,001st object | Store unit tests, included in focused 14/14 and full API 691/691 | PASS — local synthetic filesystem scope |
+| Reduced-cap independent-session environment contention | Two distinct PostgreSQL backend PIDs; one 16 MiB admission, one denial, no counter overshoot | PASS — disposable scratch DB; reduced limit, not exact 10 GiB exhaustion |
+| Exact 2 GiB Package quota boundary | 128 successful 16 MiB DB reservations; 129th rejected; counter remains 2 GiB | PASS — disposable PostgreSQL/RLS; reservation accounting only, not 2 GiB throughput |
+| Tenant/ref/expiry/writer denial and direct-table/function privileges | Runtime-role DB probes and 244-column/forced-RLS catalog evidence | PASS — scoped scratch DB; concurrent different-writer branch remains open |
+| Actual-byte settlement and release after physical removal; Audit failure rollback | Synthetic encrypted child payload, exact settlement, Audit-collision retained reservation, successful purge-only retry released after unlink | PASS — scoped scratch PostgreSQL/RLS + synthetic filesystem |
+| Source/recipient cross-Tenant Package aggregate, exact 10 GiB exhaustion, concurrent distinct-writer same-ref race, complete injected DB/filesystem/Audit matrix | Not fully exercised by this run | NOT RUN — required before full `STAGE-005` PASS |
+| Cross-process crash/failover, SERVICE scheduler, runtime volume, maximum-Study throughput, Orthanc no-side-effect and PACS coordinator | Outside this sub-gate | NOT RUN — remain separate later gates |
+
+**Judgment:** `STAGE-005` is **PARTIAL**, not PASS. Keep the store unregistered; do not wire a runtime volume/provider/worker, and do not add `PREFLIGHT_PASSED`, `STOW_STARTED`, destination calls or STOW. `MEDIQ-PACS-001` remains **PARTIAL**. No persistent development database, patient data, production credential or Orthanc A/B was accessed.

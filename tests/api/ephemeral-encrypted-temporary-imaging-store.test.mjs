@@ -194,6 +194,55 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
   });
 
+  it("rejects the first byte beyond 64 MiB before accepting ciphertext", async () => {
+    const { storageRoot, store, handle } = await setup();
+    const writer = await store.beginInstance({
+      storageRef: handle.storageRef,
+      packageBinding,
+      instanceBinding,
+    });
+    await expect(writer.write(Buffer.alloc(64 * 1024 * 1024 + 1))).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+    });
+    const [objectFile] = await readdir(join(storageRoot, handle.storageRef));
+    expect((await stat(join(storageRoot, handle.storageRef, objectFile))).size).toBe(0);
+    await writer.abort();
+    expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
+  });
+
+  it("rejects the 2,001st concurrently staged object", async () => {
+    const { storageRoot, store, handle } = await setup();
+    const writers = [];
+    try {
+      for (let index = 1; index <= 2_000; index += 1) {
+        writers.push(await store.beginInstance({
+          storageRef: handle.storageRef,
+          packageBinding,
+          instanceBinding: {
+            studyRefId: instanceBinding.studyRefId,
+            seriesInstanceUid: instanceBinding.seriesInstanceUid,
+            sopInstanceUid: `2.25.${100_000 + index}`,
+          },
+        }));
+      }
+      await expect(store.beginInstance({
+        storageRef: handle.storageRef,
+        packageBinding,
+        instanceBinding: {
+          studyRefId: instanceBinding.studyRefId,
+          seriesInstanceUid: instanceBinding.seriesInstanceUid,
+          sopInstanceUid: "2.25.999999",
+        },
+      })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+      expect(await readdir(join(storageRoot, handle.storageRef))).toHaveLength(2_000);
+    } finally {
+      for (let offset = 0; offset < writers.length; offset += 100) {
+        await Promise.all(writers.slice(offset, offset + 100).map((writer) => writer.abort()));
+      }
+    }
+    expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
+  }, 30_000);
+
   it("reserves the in-process environment quota before concurrent file writes", async () => {
     const { store, handle } = await setup({
       limits: {
