@@ -96,13 +96,25 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode) {
         $failedTestNames = @()
         if ($FailureCode -eq "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED") {
             $failedTestNames = @(
-                [regex]::Matches($joined, '(?m)^not ok \d+ - ([^\r\n]{1,160})$') |
+                [regex]::Matches($joined, '(?m)^\s*not ok \d+ - ([^\r\n]{1,160})$') |
                     ForEach-Object { $_.Groups[1].Value }
+            )
+            $failedTestLocations = @(
+                [regex]::Matches($joined, '(?m)^\s*location:\s*.*authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):(\d+)') |
+                    ForEach-Object { "authorized-source-capture.orthanc.integration.test.mjs:$($_.Groups[1].Value):$($_.Groups[2].Value)" } |
+                    Sort-Object -Unique
+            )
+            $failedAssertionMarkers = @(
+                [regex]::Matches($joined, '\bCAP005_[A-Z0-9_]{1,160}\b') |
+                    ForEach-Object { $_.Value } |
+                    Sort-Object -Unique
             )
             if ($failedTestNames.Count -gt 0) { $safeCode = "NODE_TEST_FAILURE" }
         }
         $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_tests=$($failedTestNames -join ',')" } else { "" }
-        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary); raw output suppressed."
+        $safeLocationSummary = if ($failedTestLocations.Count -gt 0) { "; test_locations=$($failedTestLocations -join ',')" } else { "" }
+        $safeAssertionSummary = if ($failedAssertionMarkers.Count -gt 0) { "; cap005_checks=$($failedAssertionMarkers -join ',')" } else { "" }
+        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary$safeLocationSummary$safeAssertionSummary); raw output suppressed."
     }
     return ,$output
 }
@@ -232,7 +244,7 @@ COMMIT;
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "19" -or $testFail -ne "0") {
+    if ($testPass -ne "30" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
@@ -267,4 +279,4 @@ finally {
 
 if ($cleanupFailure) { throw $cleanupFailure }
 if ($failure) { throw $failure }
-Write-Output "TC-INT-001-CAP-001/002/003/004/014=PASS scoped_authorized_source_capture=true"
+Write-Output "TC-INT-001-CAP-001/002/003/004/005/014=PASS scoped_authorized_source_capture=true"

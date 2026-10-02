@@ -21,9 +21,20 @@ const ids = Object.freeze({
   sourceMismatch: "1d000000-0000-4000-8000-000000000013",
   notCreated: "1d000000-0000-4000-8000-000000000014",
   fixtureStateTransition: "1d000000-0000-4000-8000-000000000015",
+  missingCount: "1d000000-0000-4000-8000-000000000016",
+  metadataEmpty: "1d000000-0000-4000-8000-000000000017",
+  metadataCountMismatch: "1d000000-0000-4000-8000-000000000018",
+  metadataSeriesMismatch: "1d000000-0000-4000-8000-000000000019",
+  metadataWrongStudy: "1d000000-0000-4000-8000-000000000020",
+  metadataDuplicate: "1d000000-0000-4000-8000-000000000021",
+  metadataMalformed: "1d000000-0000-4000-8000-000000000022",
+  metadataMissingTag: "1d000000-0000-4000-8000-000000000023",
+  metadataOverLimit: "1d000000-0000-4000-8000-000000000024",
+  metadataUnavailable: "1d000000-0000-4000-8000-000000000025",
   operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
+  operationMissingCount: "1b000000-0000-4000-8000-000000000014",
 });
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 try {
@@ -48,6 +59,16 @@ try {
       ids.sourceMismatch,
       ids.notCreated,
       ids.fixtureStateTransition,
+      ids.missingCount,
+      ids.metadataEmpty,
+      ids.metadataCountMismatch,
+      ids.metadataSeriesMismatch,
+      ids.metadataWrongStudy,
+      ids.metadataDuplicate,
+      ids.metadataMalformed,
+      ids.metadataMissingTag,
+      ids.metadataOverLimit,
+      ids.metadataUnavailable,
     ]],
   );
   const actualAudit = new Map(
@@ -72,6 +93,25 @@ try {
     [`${ids.failure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
     [`${ids.success}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.success}|PACS_SOURCE_CAPTURED|SUCCESS|<NULL>`, 1],
+    [`${ids.missingCount}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_METADATA_INVALID`, 1],
+    [`${ids.metadataEmpty}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataEmpty}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_METADATA_INVALID`, 1],
+    [`${ids.metadataCountMismatch}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataCountMismatch}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_METADATA_INVALID`, 1],
+    [`${ids.metadataSeriesMismatch}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataSeriesMismatch}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_METADATA_INVALID`, 1],
+    [`${ids.metadataWrongStudy}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataWrongStudy}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.metadataDuplicate}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataDuplicate}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.metadataMalformed}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataMalformed}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.metadataMissingTag}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataMissingTag}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.metadataOverLimit}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataOverLimit}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.metadataUnavailable}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.metadataUnavailable}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
   ]);
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 
@@ -105,14 +145,15 @@ try {
       WHERE op.operation_id = ANY($1::uuid[])
       GROUP BY op.operation_id, op.state
       ORDER BY op.operation_id`,
-    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated]],
+    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated, ids.operationMissingCount]],
   );
   assert.deepEqual(operationMatrix.rows, [
     { operation_id: ids.operationBindingMismatch, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationSourceMismatch, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationNotCreated, operation_state: "FAILED", evidence_count: 0 },
+    { operation_id: ids.operationMissingCount, operation_state: "CREATED", evidence_count: 0 },
   ]);
-  console.log("int001_capture_audit=PASS denied=8 unresolved=4 failed=1 success=1");
+  console.log("int001_capture_audit=PASS denied=12 unresolved=4 failed=7 started=11 success=1");
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_capture_persistence=PASS pending=1 operation_state=CREATED");
 } catch (error) {

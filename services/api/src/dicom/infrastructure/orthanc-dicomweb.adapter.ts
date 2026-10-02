@@ -835,7 +835,10 @@ function projectStudyMetadata(studyUid: string, rows: readonly Record<string, un
     const seriesUid = requiredTagString(row, "0020000E", "UI");
     const sopUid = requiredTagString(row, "00080018", "UI");
     const sopClassUid = requiredTagString(row, "00080016", "UI");
-    if (rowStudyUid !== studyUid || !seenSop.add(sopUid)) throw new Error("DICOM_UPSTREAM_INVALID");
+    if (rowStudyUid !== studyUid || seenSop.has(sopUid)) {
+      throw new Error("DICOM_UPSTREAM_INVALID");
+    }
+    seenSop.add(sopUid);
     let group = series.get(seriesUid);
     if (!group) {
       group = { instances: [] };

@@ -141,7 +141,11 @@ function studyMetadata(options = {}) {
 function makeHarness(options = {}) {
   let activeTransactions = 0;
   let authorizationCalls = 0;
-  let currentScope = operationScope({ operation_state: options.operationState ?? "CREATED" });
+  let currentScope = operationScope({
+    operation_state: options.operationState ?? "CREATED",
+    instance_count: Object.hasOwn(options, "instanceCount") ? options.instanceCount : 3,
+    series_count: Object.hasOwn(options, "seriesCount") ? options.seriesCount : 1,
+  });
   let currentMapping = mappingRow();
   let currentConsentStatus = options.consentStatus ?? "ACTIVE";
   const committedAudits = [];
@@ -236,8 +240,32 @@ function makeHarness(options = {}) {
       if (options.revokeAfterMetadata) currentConsentStatus = "WITHDRAWN";
       if (options.metadataFailure) throw new Error("private upstream response");
       const metadata = studyMetadata({ patientId: options.metadataPatientId });
-      if (options.wrongStudy) metadata.studyInstanceUid = "2.25.999";
-      if (options.metadataCountMismatch) metadata.series[0].instances.pop();
+      switch (options.metadataShape) {
+        case "EMPTY":
+          metadata.series = [];
+          break;
+        case "WRONG_STUDY":
+          metadata.studyInstanceUid = "2.25.999";
+          break;
+        case "COUNT_MISMATCH":
+          metadata.series[0].instances.pop();
+          break;
+        case "SERIES_COUNT_MISMATCH": {
+          const moved = metadata.series[0].instances.pop();
+          metadata.series.push({
+            seriesInstanceUid: "2.25.102",
+            instances: [moved],
+          });
+          break;
+        }
+        case "DUPLICATE_SOP":
+          metadata.series[0].instances[1].sopInstanceUid =
+            metadata.series[0].instances[0].sopInstanceUid;
+          break;
+        case "MALFORMED_IDENTITY":
+          metadata.series[0].instances[0].sopClassUid = "not-a-dicom-uid";
+          break;
+      }
       return metadata;
     },
     retrieveInstanceStream: async (request) => {
@@ -366,14 +394,32 @@ describe("AuthorizedSourceCaptureService", () => {
     expect(harness.committedEvidence).toHaveLength(0);
   });
 
-  it("TC-INT-001-CAP-005 rejects incomplete metadata before opening payload streams", async () => {
-    const harness = makeHarness({ metadataCountMismatch: true });
+  it.each([
+    { name: "missing persisted instance_count", options: { instanceCount: null }, metadataCalls: 0 },
+    { name: "zero persisted instance_count", options: { instanceCount: 0 }, metadataCalls: 0 },
+    { name: "over-limit persisted instance_count", options: { instanceCount: 2_001 }, metadataCalls: 0 },
+    { name: "empty metadata", options: { metadataShape: "EMPTY" }, metadataCalls: 1 },
+    { name: "wrong Study identity", options: { metadataShape: "WRONG_STUDY" }, metadataCalls: 1 },
+    { name: "instance count mismatch", options: { metadataShape: "COUNT_MISMATCH" }, metadataCalls: 1 },
+    { name: "persisted series count mismatch", options: { metadataShape: "SERIES_COUNT_MISMATCH" }, metadataCalls: 1 },
+    { name: "duplicate SOP identity", options: { metadataShape: "DUPLICATE_SOP" }, metadataCalls: 1 },
+    { name: "malformed SOP Class identity", options: { metadataShape: "MALFORMED_IDENTITY" }, metadataCalls: 1 },
+  ])("TC-INT-001-CAP-005 rejects $name before opening payload streams", async ({ options, metadataCalls }) => {
+    const harness = makeHarness(options);
     const result = await harness.service.capture(command());
 
     expect(result).toEqual({ kind: "DENIED", reason: "SOURCE_METADATA_INVALID" });
-    expect(harness.dicomCalls.metadata).toBe(1);
+    expect(harness.dicomCalls.metadata).toBe(metadataCalls);
     expect(harness.dicomCalls.instances).toBe(0);
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
     expect(harness.committedEvidence).toHaveLength(0);
+    expect(auditActions(harness)).not.toContainEqual({
+      action: "PACS_SOURCE_CAPTURED",
+      result: "SUCCESS",
+      reason: null,
+    });
+    expect(JSON.stringify(result)).not.toMatch(/TEST-PATIENT|2\.25\./);
+    expect(JSON.stringify(auditActions(harness))).not.toMatch(/TEST-PATIENT|2\.25\./);
   });
 
   it("TC-INT-001-CAP-006 rejects a source PatientID mismatch before instance WADO", async () => {

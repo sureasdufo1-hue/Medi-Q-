@@ -235,6 +235,14 @@ describe("OrthancDicomwebAdapter DCM-002 synthetic transport contract", () => {
     expect(JSON.stringify(result)).not.toContain("SYNTHETIC^DO-NOT-PROJECT");
   });
 
+  it("rejects duplicate SOP Instance UIDs in one source Study metadata response", async () => {
+    const duplicate = wadoMetadataRow(SOP);
+    const instance = adapter(async () => dicomJson([duplicate, structuredClone(duplicate)]));
+    await expect(instance.retrieveStudyMetadata({
+      context: context(), studyInstanceUid: STUDY, maximumItems: 2,
+    })).rejects.toThrow("DICOM_UPSTREAM_INVALID");
+  });
+
   it.each([
     ["missing", undefined],
     ["multi-valued", tag("LO", "TEST-PATIENT-007", "TEST-PATIENT-008")],

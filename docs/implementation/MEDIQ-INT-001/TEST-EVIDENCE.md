@@ -6,7 +6,7 @@
 | 제목 | Bounded source integrity and authorized synthetic source-capture sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — hash, persistence, CAP-001~004 and CAP-013~014 scoped PASS; CAP-005~012 and full destination/transfer workflow remain open |
+| 결과 | `PARTIAL` — hash, persistence, CAP-001~004 and CAP-013~014 scoped PASS; CAP-005 verification is implemented and one isolated run passed but repeatability is unresolved; CAP-006~012 and full destination/transfer workflow remain open |
 
 ## 1. 검증 환경
 
@@ -14,7 +14,7 @@
 |---|---|
 | OS | Windows local development workspace |
 | Runtime·Toolchain | Node.js 24.18.0; npm 11; TypeScript 6.0.3; Vitest 5.0.2 |
-| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
+| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/005/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
 | 데이터 | Synthetic/Test only |
 
 ## 2. 검증 매트릭스
@@ -27,6 +27,7 @@
 | `TC-INT-001-CAP-002` | Missing/invalid initial `PACS_IMPORT` authorization, cross-Tenant scope, and unavailable authorization dependency | Live service / PostgreSQL RLS / DICOM effect boundary / Audit | Absent Consent/Grant, withdrawn/expired Consent, revoked/expired Grant, wrong scope: fixed denial, zero DICOM gateway/A calls, no evidence, exactly one fixed minimized denial Audit when Tenant+operation resolve; hidden Tenant operation: no row/no Audit; DB unavailable: fixed unavailable/no DICOM/no Audit | `./scripts/test-int001-source-capture.ps1` exit 0; three consecutive runs each 19/19 Node tests; exact Audit observer: 7 CAP-002 denial rows, hidden/unavailable 0; B empty; cleanup/stack preservation PASS | `PASS` — CAP-002 scope only |
 | `TC-INT-001-CAP-003` | Persisted operation/session/study/package/source binding mismatch or operation state not `CREATED` | Integration / DB / security | Two inconsistent but individually FK-valid synthetic aggregates are generic-denied with zero DICOM/evidence/source-denial-Audit and unchanged `CREATED`; a valid `FAILED` operation reached through domain/repository transition is denied with one minimized source-capture denial Audit, zero DICOM/evidence, and remains `FAILED` | `./scripts/test-int001-source-capture.ps1` exit 0; three consecutive runs each 19/19 tests; independent observer verified exact denial/setup Audits and all four operation states/evidence counts; no DICOM calls on CAP-003 paths; B EMPTY; cleanup/stack preservation PASS | `PASS` — CAP-003 scope only |
 | `TC-INT-001-CAP-004` | Caller-controlled source endpoint/credential, untrusted origin, TLS downgrade, redirect or operation-role misuse | Live source-capture / adapter / TLS / route-boundary security | Extra endpoint/credential/Auth fields are rejected before Tenant context/network; actual authorized WADO uses only HTTPS `orthanc-a:8042/dicom-web/`, GET, redirect error and configured A Authorization; malformed origins and WADO-to-B/A-STOW are stopped before fetch; no browser controller/OpenAPI route | Source-capture runner exit 0 three consecutive times, each 19/19; 4 live A WADO requests/run observed with only exact configured A origin and auth-match boolean, zero forbidden-origin attempts; TLS/DICOM suite 7/7; AppConfig 11/11; API regression 34 files/585 tests; B EMPTY, cleanup/stack preservation PASS | `PASS` — CAP-004 scoped boundary only |
+| `TC-INT-001-CAP-005` | Persisted-count gate and WADO metadata semantic/wire validation, no payload retrieval on rejection | API unit / DICOM adapter / isolated PostgreSQL-RLS + HTTPS Test Orthanc | Empty/count/series mismatch fixed denial; malformed/wrong/duplicate/over-limit metadata sanitized source-read failure; invalid persisted count denied before WADO; zero instance requests/evidence/success Audit; unchanged operation; B empty | Unit/API matrix passed; API regression exit 0, build passed, 34 files/594 tests. Latest `./scripts/test-int001-source-capture.ps1` exited 0 with 30/30, independent Audit/evidence observer PASS, B EMPTY, temporary cleanup and existing-stack preservation PASS. Earlier invocations intermittently failed before metadata WADO with fixed `ACTOR_TENANT_CONTEXT_UNAVAILABLE` during COMMIT/session-fence DB work; cause and repeatability not established | `PARTIAL` — test coverage and latest run pass; intermittent pre-metadata DB-context failures remain unresolved |
 | `TC-INT-001-CAP-014` | Initial authorization ordering, source failure/success effects, active transaction boundary, and B-side zero-write | Integration / Security | A WADO follows committed DB-backed `PACS_IMPORT`; invalid Grant produces no A call; failure produces no evidence; success produces one pending baseline; no Tenant transaction spans WADO; B remains empty; disposable project is removed | `./scripts/test-int001-source-capture.ps1` exit 0; shared suite 19/19 on three consecutive runs including CAP-001~004; read-only Audit/evidence observer passed; B EMPTY before/after; cleanup PASS and existing `mediq` stack unchanged | `PASS` — CAP-014 scope only |
 | `REQ-INT-001` full; `SEC-INT-001/002`; `AT-FUNC-014`; `AT-SEC-018`; `AT-E2E-003` | Authorized source, destination match, failure blocks completion and complete transfer evidence | DB / Integration / Security / E2E | Trusted A source→MediQ→B destination verification and no false completion | Destination comparison, product import route, STOW, transfer terminal state and full P0 workflow were not part of CAP-014 | `NOT RUN` |
 
@@ -176,7 +177,7 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 
 | 시험 | 미실행 이유 | 잔여 위험 | 후속 조치 |
 |---|---|---|---|
-| Remaining CAP-005~012 negative/race/atomicity Acceptance beyond scoped CAP-001~004 | Live CAP-001~004 cover caller-scope, initial authorization, persisted binding, initial-state and source endpoint/TLS boundaries only; they do not cover every metadata, concurrency, rollback, destination and failure condition in the full CAP set | Some complete-service edge cases remain unverified | Continue separately under CAP-005~012 and retain STOW gate |
+| Remaining CAP-006~012 negative/race/atomicity Acceptance beyond scoped CAP-001~005 | CAP-005 metadata validation is covered by the partial matrix in §9, but its integration repeatability is unresolved; later gates still cover mapping, streaming, races, rollback, destination and failure conditions | CAP-005 runner stability and later complete-service edge cases remain unverified | Stabilize CAP-005, then continue CAP-006~012 and retain STOW gate |
 | Destination hash/verification, product no-STOW coordinator, STOW, production-like performance benchmark | Not in CAP-014 scope; no destination workflow or production workload was invoked | No destination authenticity, 2 GiB throughput, or end-to-end transfer claim | Separate recommendation/Acceptance and implementation before any STOW |
 
 ## 6. 증거 산출물
@@ -190,7 +191,7 @@ One earlier aggregate attempt stopped on a synthetic UID fixture range error; a 
 
 - 결과: `PARTIAL`
 - PASS 범위: canonical streaming hash, operation-bound pending evidence/schema/RLS, exact permanent runtime grants (`CAP-013`), bounded operation-scope boundary (`CAP-001`), initial-authorization denial matrix (`CAP-002`), persisted-binding/initial-state rejection (`CAP-003`), configured endpoint/TLS/credential boundary (`CAP-004`), and isolated synthetic authorized source-capture effect boundary (`CAP-014`) only.
-- No PASS claim for remaining CAP-005~012, production PACS, destination comparison/verification, transfer completion, product import route, STOW, or A→B E2E. CAP-001~004/014 evidence is limited to the disposable synthetic test environment.
+- No PASS claim for CAP-005 (repeatability unresolved), CAP-006~012, production PACS, destination comparison/verification, transfer completion, product import route, STOW, or A→B E2E. CAP-001~005/014 evidence is limited to the disposable synthetic test environment.
 - 실제 환자정보, 운영 Credential, Secret 및 운영 DICOM을 증거에 포함하지 않는다.
 
 ## 8. Authorized Source-Capture Sub-gate — Current Checkpoint
@@ -210,11 +211,23 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 ### Current boundary
 
 - New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
-- `TC-INT-001-CAP-001~004` and `CAP-013~014` are `PASS` for their recorded scopes; CAP-005~012 remain open/not accepted as complete end-to-end gates.
+- `TC-INT-001-CAP-001~004` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005's test matrix and one live run pass, but earlier pre-metadata Tenant-context DB failures are unexplained; keep CAP-005 `PARTIAL` pending stable reruns. CAP-006~012 remain open.
 - The exact permanent runtime grant migration is present and validated. The service remains internal-only and is not reachable through HTTP; CAP-014 proves only the isolated synthetic source-capture boundary, not destination import or B-side product behavior.
 - No STOW, B write, destination verification or full A→B E2E was run or claimed.
 
-## 9. CAP-001 / CAP-002 / CAP-003 / CAP-004 / CAP-014 — Isolated live source-capture boundary Acceptance
+## 9. CAP-005 — Metadata validation boundary (partial)
+
+- 실행 일시: 2026-10-02
+- Decision/Acceptance: `INT-001-CAP-005-REC-001`, recorded before test changes in the policy log and implementation report §13.8; synthetic/Test-only, internal service only, STOW/destination verification remain forbidden.
+- API regression: `npm run test:api -- --reporter=dot` exited 0; API build passed; 34 files / 594 tests passed.
+- Focused coverage: `tests/api/authorized-source-capture.test.mjs` exercises missing/zero/over-limit persisted counts, empty/count/series mismatches, wrong Study, duplicate SOP, malformed identity and fixed no-stream/no-evidence/no-success behavior. `tests/api/orthanc-dicomweb.adapter.test.mjs` verifies duplicate SOP identity is rejected. The adapter defect was that `!seenSop.add(sopUid)` can never detect duplicates because `Set.add()` returns the Set; it now checks `has()` before insertion.
+- Isolated command: `./scripts/test-int001-source-capture.ps1`; latest full invocation exited 0: `authorized_capture_test=PASS tests=30 failed=0`, independent Audit/evidence observer PASS, Hospital B EMPTY after, temporary project cleanup PASS, existing `mediq` stack unchanged. Test-only metadata response transformations happen in memory after HTTPS retrieval from synthetic Test Orthanc A.
+- Observed CAP-005 expectations: invalid persisted count caused no metadata request; empty/count/series mismatch wrote only the fixed denial; malformed/wrong/duplicate/over-limit cases wrote only the fixed source-read failure; all cases had zero instance-payload requests, no evidence/success Audit, unchanged operation state, zero B/STOW/destination calls and sanitized output. Raw DICOM, PatientID, UID and credentials were not recorded.
+- Stability caveat: prior isolated invocations intermittently failed before reaching metadata WADO with the fixed `ACTOR_TENANT_CONTEXT_UNAVAILABLE` outcome; safe diagnostics localized failures to DB COMMIT/session-fence transaction work but did not establish a root cause. The latest complete run passed, but repeatability is unresolved. Keep CAP-005 PARTIAL and run at least two stable consecutive isolated invocations before upgrading its Acceptance status.
+- Other checks: `git diff --check` exited 0; JavaScript integration test syntax validation passed. The isolated command itself confirmed disposable cleanup and preservation of the existing stack.
+- Not run in this gate: STOW, destination verification, production PACS, product HTTP source-capture route, full P0 transfer.
+
+## 10. CAP-001 / CAP-002 / CAP-003 / CAP-004 / CAP-014 — Historical isolated live source-capture boundary Acceptance
 
 - 실행 일시: 2026-10-02
 - 권고/범위: §13.3~13.7 of [IMPLEMENTATION-REPORT.md](IMPLEMENTATION-REPORT.md), recorded before the respective test changes; test is confined to synthetic data and disposable services.

@@ -41,12 +41,14 @@ const fixture = Object.freeze({
   sessionId: "16000000-0000-4000-8000-000000000001",
   packageId: "17000000-0000-4000-8000-000000000001",
   studyRefId: "18000000-0000-4000-8000-000000000001",
+  studyMissingCountId: "18000000-0000-4000-8000-000000000013",
   consentId: "19000000-0000-4000-8000-000000000001",
   grantId: "1a000000-0000-4000-8000-000000000001",
   operationId: "1b000000-0000-4000-8000-000000000001",
   operationBindingMismatchId: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatchId: "1b000000-0000-4000-8000-000000000012",
   operationNotCreatedId: "1b000000-0000-4000-8000-000000000013",
+  operationMissingCountId: "1b000000-0000-4000-8000-000000000014",
   correlationDenied: "1d000000-0000-4000-8000-000000000001",
   correlationFailure: "1d000000-0000-4000-8000-000000000002",
   correlationSuccess: "1d000000-0000-4000-8000-000000000003",
@@ -62,6 +64,16 @@ const fixture = Object.freeze({
   correlationSourceMismatch: "1d000000-0000-4000-8000-000000000013",
   correlationNotCreated: "1d000000-0000-4000-8000-000000000014",
   correlationFixtureStateTransition: "1d000000-0000-4000-8000-000000000015",
+  correlationMissingCount: "1d000000-0000-4000-8000-000000000016",
+  correlationMetadataEmpty: "1d000000-0000-4000-8000-000000000017",
+  correlationMetadataCountMismatch: "1d000000-0000-4000-8000-000000000018",
+  correlationMetadataSeriesMismatch: "1d000000-0000-4000-8000-000000000019",
+  correlationMetadataWrongStudy: "1d000000-0000-4000-8000-000000000020",
+  correlationMetadataDuplicate: "1d000000-0000-4000-8000-000000000021",
+  correlationMetadataMalformed: "1d000000-0000-4000-8000-000000000022",
+  correlationMetadataMissingTag: "1d000000-0000-4000-8000-000000000023",
+  correlationMetadataOverLimit: "1d000000-0000-4000-8000-000000000024",
+  correlationMetadataUnavailable: "1d000000-0000-4000-8000-000000000025",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -80,15 +92,118 @@ const otherTenantPrincipal = Object.freeze({
   subject: fixture.otherTenantSubject,
 });
 
-function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
+async function applyMetadataFault(response, fault) {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  if (fault === "MALFORMED_JSON") {
+    return new Response("{malformed synthetic DICOM JSON", {
+      status: response.status,
+      headers,
+    });
+  }
+  if (fault === "MISSING_RESPONSE") {
+    return new Response("synthetic upstream unavailable", {
+      status: 503,
+      headers,
+    });
+  }
+
+  const rows = await response.json();
+  switch (fault) {
+    case "EMPTY":
+      return new Response("[]", { status: response.status, headers });
+    case "COUNT_MISMATCH":
+      rows.pop();
+      break;
+    case "SERIES_COUNT_MISMATCH":
+      rows[0]["0020000E"].Value = ["2.25.902"];
+      break;
+    case "WRONG_STUDY":
+      rows[0]["0020000D"].Value = ["2.25.903"];
+      break;
+    case "DUPLICATE_SOP":
+      rows.push(structuredClone(rows[0]));
+      break;
+    case "MISSING_REQUIRED_TAG":
+      delete rows[0]["00080016"];
+      break;
+    case "OVER_LIMIT": {
+      const row = structuredClone(rows[0]);
+      while (rows.length <= 2_000) rows.push(structuredClone(row));
+      break;
+    }
+    default:
+      throw new Error("INT001_TEST_METADATA_FAULT_UNKNOWN");
+  }
+  return new Response(JSON.stringify(rows), { status: response.status, headers });
+}
+
+function createHarness({ failFirstInstance = false, databaseUrl, metadataFault } = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = databaseUrl
     ? Object.freeze({ ...parsedConfig, databaseUrl })
     : parsedConfig;
   const database = new RuntimeDatabaseService(config);
+  const databaseFailures = [];
+  const databaseForContext = Object.freeze({
+    connect: async () => {
+      let client;
+      try {
+        client = await database.connect();
+      } catch (error) {
+        const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+          ? error.code
+          : "ERROR";
+        databaseFailures.push(`CONNECT_${sqlState}`);
+        throw error;
+      }
+      return new Proxy(client, {
+        get(target, property) {
+          if (property === "query") {
+            return (...args) => {
+              const statement = typeof args[0] === "string" ? args[0] : args[0]?.text ?? "";
+              const queryLabel = statement.includes("FROM actors AS a")
+                ? "ACTOR_LOOKUP"
+                : statement.includes("pg_advisory_xact_lock")
+                  ? "SESSION_FENCE"
+                  : statement.includes("JOIN consents AS c")
+                    ? "AUTHORIZATION_READ"
+                    : statement.includes("FROM pacs_transfer_operations AS op")
+                      ? "SOURCE_SCOPE"
+                      : statement.includes("INSERT INTO audit_events")
+                        ? "AUDIT_INSERT"
+                        : statement.startsWith("RESET ")
+                        ? "TENANT_RESET"
+                          : statement === "BEGIN"
+                            ? "BEGIN"
+                            : statement === "COMMIT"
+                              ? "COMMIT"
+                              : statement === "ROLLBACK"
+                                ? "ROLLBACK"
+                            : statement.includes("set_config('mediq.tenant_id'")
+                              ? "TENANT_SETUP"
+                              : "OTHER_QUERY";
+              return Reflect.apply(target.query, target, args).catch((error) => {
+                const sqlState = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+                  ? error.code
+                  : error instanceof Error && /^[A-Za-z]+$/.test(error.name)
+                    ? error.name.toUpperCase()
+                    : "ERROR";
+                databaseFailures.push(`${queryLabel}_${sqlState}`);
+                throw error;
+              });
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  });
   const rawActorContext = new ActorTenantContextService(
     config,
-    database,
+    databaseForContext,
     new ActorRegistryRepository(),
   );
   let tenantContextRuns = 0;
@@ -100,6 +215,7 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
   let destinationVerificationCalls = 0;
   let metadataCalls = 0;
   let instanceCalls = 0;
+  const tenantContextFailures = [];
   const sourceRequests = [];
   const sourcePaths = [];
   const sourceRequestObservations = [];
@@ -117,6 +233,16 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
         const result = await rawActorContext.run(...args);
         committed = true;
         return result;
+      } catch (error) {
+        const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+          ? error.code
+          : typeof error?.message === "string" && /^[A-Z0-9_:-]{1,96}$/.test(error.message)
+            ? error.message
+            : error instanceof Error && /^[A-Za-z]+$/.test(error.name)
+              ? error.name.toUpperCase()
+              : "UNKNOWN";
+        tenantContextFailures.push(safeCode);
+        throw error;
       } finally {
         activeTenantTransactions -= 1;
         // Capture can make more than one scoped Tenant transaction during a
@@ -168,6 +294,9 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
         sourceRequests.push(url.pathname.includes("/metadata") ? "METADATA" : "INSTANCE");
         sourcePaths.push(url.pathname);
         const response = await globalThis.fetch(input, init);
+        if (metadataFault && url.pathname.endsWith("/metadata")) {
+          return applyMetadataFault(response, metadataFault);
+        }
         if (pendingFailure && url.pathname.includes("/instances/")) {
           pendingFailure = false;
           // Keep the real upstream request and headers, but fail the response
@@ -261,6 +390,8 @@ function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
       destinationVerificationCalls,
       metadataCalls,
       instanceCalls,
+      tenantContextFailures: [...tenantContextFailures],
+      databaseFailures: [...databaseFailures],
     }),
   });
 }
@@ -285,6 +416,17 @@ async function readOperationState(harness, operationId = fixture.operationId) {
         objectCount: row.source_object_count,
       })),
     });
+  });
+}
+
+function captureCommand(correlationId, operationId = fixture.operationId) {
+  return Object.freeze({
+    principal,
+    tenantCandidate: fixture.tenantId,
+    correlationId,
+    operationId,
+    consentId: fixture.consentId,
+    grantId: fixture.grantId,
   });
 }
 
@@ -357,6 +499,126 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       assert.equal(counters.destinationVerificationCalls, 0);
     } finally {
       await harness.database.onModuleDestroy();
+    }
+  });
+
+  await t.test("CAP-005 rejects a missing persisted expected instance count before WADO", async () => {
+    const harness = createHarness();
+    try {
+      let result;
+      try {
+        result = await harness.service.capture(captureCommand(
+          fixture.correlationMissingCount,
+          fixture.operationMissingCountId,
+        ));
+      } catch (error) {
+        const safeType = error instanceof AuthorizedSourceCaptureUnavailableError
+          ? "UNAVAILABLE"
+          : error instanceof Error && /^[A-Za-z]+$/.test(error.name)
+            ? error.name.toUpperCase()
+            : "UNKNOWN";
+        const counters = harness.counters();
+        throw new Error(`CAP005_MISSING_COUNT_UNEXPECTED_${safeType}_M${counters.metadataCalls}_I${counters.instanceCalls}_C${counters.tenantContextFailures.join("_") || "NONE"}_DB${counters.databaseFailures.join("_") || "NONE"}`);
+      }
+      assert.deepEqual(
+        result,
+        { kind: "DENIED", reason: "SOURCE_METADATA_INVALID" },
+        "CAP005_MISSING_COUNT_OUTCOME",
+      );
+      const counters = harness.counters();
+      assert.equal(counters.metadataCalls, 0, "CAP005_MISSING_COUNT_NO_METADATA");
+      assert.equal(counters.instanceCalls, 0, "CAP005_MISSING_COUNT_NO_INSTANCE");
+      assert.deepEqual(counters.sourceRequests, [], "CAP005_MISSING_COUNT_NO_REQUEST");
+      assert.equal(counters.stowCalls, 0, "CAP005_MISSING_COUNT_NO_STOW");
+      assert.equal(counters.destinationVerificationCalls, 0, "CAP005_MISSING_COUNT_NO_VERIFY");
+      const state = await readOperationState(harness, fixture.operationMissingCountId);
+      assert.equal(state.operationState, "CREATED", "CAP005_MISSING_COUNT_STATE");
+      assert.deepEqual(state.evidence, [], "CAP005_MISSING_COUNT_NO_EVIDENCE");
+    } finally {
+      await harness.database.onModuleDestroy();
+    }
+  });
+
+  await t.test("CAP-005 rejects invalid source metadata before any instance payload WADO", async (matrix) => {
+    const cases = [
+      { name: "empty valid metadata", fault: "EMPTY", correlationId: fixture.correlationMetadataEmpty, outcome: "DENIED" },
+      { name: "instance count mismatch", fault: "COUNT_MISMATCH", correlationId: fixture.correlationMetadataCountMismatch, outcome: "DENIED" },
+      { name: "persisted series count mismatch", fault: "SERIES_COUNT_MISMATCH", correlationId: fixture.correlationMetadataSeriesMismatch, outcome: "DENIED" },
+      { name: "wrong Study UID", fault: "WRONG_STUDY", correlationId: fixture.correlationMetadataWrongStudy, outcome: "UNAVAILABLE" },
+      { name: "duplicate SOP identity", fault: "DUPLICATE_SOP", correlationId: fixture.correlationMetadataDuplicate, outcome: "UNAVAILABLE" },
+      { name: "malformed DICOM JSON", fault: "MALFORMED_JSON", correlationId: fixture.correlationMetadataMalformed, outcome: "UNAVAILABLE" },
+      { name: "missing required identity tag", fault: "MISSING_REQUIRED_TAG", correlationId: fixture.correlationMetadataMissingTag, outcome: "UNAVAILABLE" },
+      { name: "metadata over 2,000-instance ceiling", fault: "OVER_LIMIT", correlationId: fixture.correlationMetadataOverLimit, outcome: "UNAVAILABLE" },
+      { name: "metadata endpoint unavailable", fault: "MISSING_RESPONSE", correlationId: fixture.correlationMetadataUnavailable, outcome: "UNAVAILABLE" },
+    ];
+
+    for (const scenario of cases) {
+      await matrix.test(scenario.name, async () => {
+        const harness = createHarness({ metadataFault: scenario.fault });
+        try {
+          if (scenario.outcome === "DENIED") {
+            let result;
+            try {
+              result = await harness.service.capture(captureCommand(scenario.correlationId));
+            } catch (error) {
+              const safeType = error instanceof AuthorizedSourceCaptureUnavailableError
+                ? "UNAVAILABLE"
+                : error instanceof Error && /^[A-Za-z]+$/.test(error.name)
+                  ? error.name.toUpperCase()
+                  : "UNKNOWN";
+              const counters = harness.counters();
+              const requestKinds = counters.sourceRequests.join("_") || "NONE";
+              throw new Error(`CAP005_${scenario.fault}_UNEXPECTED_${safeType}_M${counters.metadataCalls}_I${counters.instanceCalls}_R${requestKinds}_C${counters.tenantContextFailures.join("_") || "NONE"}_DB${counters.databaseFailures.join("_") || "NONE"}`);
+            }
+            assert.deepEqual(
+              result,
+              { kind: "DENIED", reason: "SOURCE_METADATA_INVALID" },
+              `CAP005_${scenario.fault}_OUTCOME`,
+            );
+            assert.doesNotMatch(
+              JSON.stringify(result),
+              /TEST-PATIENT|2\.25\.|SYNTHETIC/,
+              `CAP005_${scenario.fault}_NO_IDENTIFIER_LEAK`,
+            );
+          } else {
+            await assert.rejects(
+              harness.service.capture(captureCommand(scenario.correlationId)),
+              (error) => {
+                assert.ok(error instanceof AuthorizedSourceCaptureUnavailableError);
+                assert.equal(error.message, "SOURCE_CAPTURE_UNAVAILABLE", `CAP005_${scenario.fault}_FIXED_ERROR`);
+                assert.doesNotMatch(error.message, /TEST-PATIENT|2\.25\.|SYNTHETIC|DICOM_UPSTREAM/, `CAP005_${scenario.fault}_NO_UPSTREAM_DETAIL`);
+                return true;
+              },
+              `CAP005_${scenario.fault}_EXPECTED_FAILURE`,
+            );
+          }
+
+          const counters = harness.counters();
+          assert.equal(counters.metadataCalls, 1, `CAP005_${scenario.fault}_METADATA_ONCE`);
+          assert.equal(counters.instanceCalls, 0, `CAP005_${scenario.fault}_NO_INSTANCE`);
+          assert.deepEqual(counters.sourceRequests, ["METADATA"], `CAP005_${scenario.fault}_METADATA_ONLY`);
+          assert.equal(counters.sourcePaths.length, 1, `CAP005_${scenario.fault}_ONE_PATH`);
+          assert.ok(counters.sourcePaths[0].endsWith("/metadata"), `CAP005_${scenario.fault}_METADATA_PATH`);
+          assert.equal(counters.sourceRequestObservations.length, 1, `CAP005_${scenario.fault}_ONE_OBSERVATION`);
+          assert.deepEqual(counters.sourceRequestObservations[0], {
+            protocol: "https:",
+            hostname: "orthanc-a",
+            port: "8042",
+            pathname: counters.sourcePaths[0],
+            method: "GET",
+            redirect: "error",
+            configuredAAuthorization: true,
+          }, `CAP005_${scenario.fault}_EXACT_A_REQUEST`);
+          assert.equal(counters.forbiddenEndpointAttempts, 0, `CAP005_${scenario.fault}_NO_FORBIDDEN_ENDPOINT`);
+          assert.equal(counters.stowCalls, 0, `CAP005_${scenario.fault}_NO_STOW`);
+          assert.equal(counters.destinationVerificationCalls, 0, `CAP005_${scenario.fault}_NO_DESTINATION_VERIFY`);
+          const state = await readOperationState(harness);
+          assert.equal(state.operationState, "CREATED", `CAP005_${scenario.fault}_STATE`);
+          assert.deepEqual(state.evidence, [], `CAP005_${scenario.fault}_NO_EVIDENCE`);
+        } finally {
+          await harness.database.onModuleDestroy();
+        }
+      });
     }
   });
 

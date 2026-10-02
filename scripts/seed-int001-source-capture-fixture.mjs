@@ -23,12 +23,14 @@ const ids = Object.freeze({
   study: "18000000-0000-4000-8000-000000000001",
   studyOther: "18000000-0000-4000-8000-000000000011",
   studySourceMismatch: "18000000-0000-4000-8000-000000000012",
+  studyMissingCount: "18000000-0000-4000-8000-000000000013",
   consent: "19000000-0000-4000-8000-000000000001",
   grant: "1a000000-0000-4000-8000-000000000001",
   operation: "1b000000-0000-4000-8000-000000000001",
   operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
+  operationMissingCount: "1b000000-0000-4000-8000-000000000014",
 });
 
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
@@ -109,7 +111,7 @@ try {
     `INSERT INTO imaging_packages
       (package_id, exchange_session_id, patient_ref_id, source_hospital_id,
        state, storage_ref, study_count, created_at, updated_at, retention_expires_at, deleted_at)
-     VALUES ($1, $2, $3, $4, 'AVAILABLE', NULL, 1, now(), now(), NULL, NULL)`,
+     VALUES ($1, $2, $3, $4, 'AVAILABLE', NULL, 2, now(), now(), NULL, NULL)`,
     [ids.imagingPackage, ids.session, ids.patient, ids.hospitalA],
   );
   await client.query(
@@ -136,6 +138,12 @@ try {
        ($4, $5, $6, '2.25.139413224574575433810421680499794275979', 'CT', 1, 3, now())`,
     [ids.studyOther, ids.imagingPackageOther, ids.hospitalA,
       ids.studySourceMismatch, ids.imagingPackageSourceMismatch, ids.hospitalB],
+  );
+  await client.query(
+    `INSERT INTO study_references
+      (study_ref_id, package_id, source_hospital_id, study_instance_uid, modality, series_count, instance_count, created_at)
+     VALUES ($1, $2, $3, '2.25.139413224574575433810421680499794275980', 'CT', 1, NULL, now())`,
+    [ids.studyMissingCount, ids.imagingPackage, ids.hospitalA],
   );
   await client.query(
     `INSERT INTO consents
@@ -267,6 +275,16 @@ try {
              NULL, NULL, now(), now(), NULL)`,
     [ids.operation, ids.tenantB, ids.session, ids.study, ids.actorB,
       "1b000000-0000-4000-8000-000000000002"],
+  );
+  await client.query(
+    `INSERT INTO pacs_transfer_operations
+      (operation_id, tenant_id, exchange_session_id, study_ref_id, actor_id,
+       idempotency_key, request_digest, state, version, reason_code,
+       source_object_count, destination_object_count, created_at, updated_at, stow_started_at)
+     VALUES ($1, $2, $3, $4, $5, $6, repeat('e', 64), 'CREATED', 0, NULL,
+             NULL, NULL, now(), now(), NULL)`,
+    [ids.operationMissingCount, ids.tenantB, ids.session, ids.studyMissingCount,
+      ids.actorB, "1b000000-0000-4000-8000-000000000015"],
   );
   await client.query(
     `INSERT INTO pacs_transfer_operations
