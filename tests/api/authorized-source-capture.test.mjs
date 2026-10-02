@@ -146,7 +146,15 @@ function makeHarness(options = {}) {
     instance_count: Object.hasOwn(options, "instanceCount") ? options.instanceCount : 3,
     series_count: Object.hasOwn(options, "seriesCount") ? options.seriesCount : 1,
   });
-  let currentMapping = mappingRow();
+  let currentMapping = options.mapping === null
+    ? null
+    : mappingRow({
+      status: options.mappingStatus ?? "VALID",
+      validated_at: Object.hasOwn(options, "mappingValidatedAt")
+        ? options.mappingValidatedAt
+        : new Date("2026-10-01T00:00:00.000Z"),
+      ...(options.mappingOverrides ?? {}),
+    });
   let currentConsentStatus = options.consentStatus ?? "ACTIVE";
   const committedAudits = [];
   const committedEvidence = [];
@@ -174,7 +182,9 @@ function makeHarness(options = {}) {
             };
           }
           if (sql.includes("FROM patient_mappings")) {
-            return { rowCount: 1, rows: [{ ...currentMapping }] };
+            return currentMapping
+              ? { rowCount: 1, rows: [{ ...currentMapping }] }
+              : { rowCount: 0, rows: [] };
           }
           if (sql.includes("INSERT INTO audit_events")) {
             const action = values[7];
@@ -264,6 +274,9 @@ function makeHarness(options = {}) {
           break;
         case "MALFORMED_IDENTITY":
           metadata.series[0].instances[0].sopClassUid = "not-a-dicom-uid";
+          break;
+        case "ONE_PATIENT_ID_MISMATCH":
+          metadata.series[0].instances[0].patientId = "TEST-PATIENT-OTHER";
           break;
       }
       return metadata;
@@ -431,6 +444,45 @@ describe("AuthorizedSourceCaptureService", () => {
     expect(harness.dicomCalls.instances).toBe(0);
     expect(harness.committedEvidence).toHaveLength(0);
     expect(JSON.stringify(auditActions(harness))).not.toContain("TEST-PATIENT-OTHER");
+  });
+
+  it.each([
+    { name: "missing mapping", options: { mapping: null } },
+    { name: "ambiguous mapping", options: { mappingStatus: "AMBIGUOUS" } },
+    { name: "unverified mapping", options: { mappingStatus: "UNVERIFIED" } },
+    { name: "revoked mapping", options: { mappingStatus: "REVOKED" } },
+    { name: "missing mapping validation evidence", options: { mappingValidatedAt: null } },
+    { name: "mapping patient binding mismatch", options: { mappingOverrides: { patient_ref_id: "05000000-0000-4000-8000-000000000099" } } },
+  ])("TC-INT-001-CAP-006 denies $name before metadata WADO", async ({ options }) => {
+    const harness = makeHarness(options);
+    const result = await harness.service.capture(command());
+
+    expect(result).toEqual({ kind: "DENIED", reason: "PATIENT_MAPPING_INVALID" });
+    expect(harness.dicomCalls.metadata).toBe(0);
+    expect(harness.dicomCalls.instances).toBe(0);
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_DENIED", result: "DENY", reason: "PATIENT_MAPPING_INVALID" },
+    ]);
+    expect(JSON.stringify(auditActions(harness))).not.toMatch(/TEST-PATIENT|2\.25\./);
+  });
+
+  it("TC-INT-001-CAP-006 denies one mismatched source PatientID before any payload WADO", async () => {
+    const harness = makeHarness({ metadataShape: "ONE_PATIENT_ID_MISMATCH" });
+    const result = await harness.service.capture(command());
+
+    expect(result).toEqual({ kind: "DENIED", reason: "SOURCE_PATIENT_ID_MISMATCH" });
+    expect(harness.dicomCalls.metadata).toBe(1);
+    expect(harness.dicomCalls.instances).toBe(0);
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURE_DENIED", result: "DENY", reason: "SOURCE_PATIENT_ID_MISMATCH" },
+    ]);
+    expect(JSON.stringify(auditActions(harness))).not.toMatch(/TEST-PATIENT|2\.25\./);
+    expect(JSON.stringify(result)).not.toMatch(/TEST-PATIENT|2\.25\./);
   });
 
   it("TC-INT-001-CAP-008 records a fixed failure and no evidence when A metadata retrieval fails", async () => {

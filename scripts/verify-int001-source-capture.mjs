@@ -31,6 +31,7 @@ const ids = Object.freeze({
   metadataMissingTag: "1d000000-0000-4000-8000-000000000023",
   metadataOverLimit: "1d000000-0000-4000-8000-000000000024",
   metadataUnavailable: "1d000000-0000-4000-8000-000000000025",
+  patientIdMismatch: "1d000000-0000-4000-8000-000000000026",
   operationBindingMismatch: "1b000000-0000-4000-8000-000000000011",
   operationSourceMismatch: "1b000000-0000-4000-8000-000000000012",
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
@@ -69,6 +70,7 @@ try {
       ids.metadataMissingTag,
       ids.metadataOverLimit,
       ids.metadataUnavailable,
+      ids.patientIdMismatch,
     ]],
   );
   const actualAudit = new Map(
@@ -112,6 +114,8 @@ try {
     [`${ids.metadataOverLimit}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
     [`${ids.metadataUnavailable}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.metadataUnavailable}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
+    [`${ids.patientIdMismatch}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.patientIdMismatch}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_PATIENT_ID_MISMATCH`, 1],
   ]);
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 

@@ -74,6 +74,7 @@ const fixture = Object.freeze({
   correlationMetadataMissingTag: "1d000000-0000-4000-8000-000000000023",
   correlationMetadataOverLimit: "1d000000-0000-4000-8000-000000000024",
   correlationMetadataUnavailable: "1d000000-0000-4000-8000-000000000025",
+  correlationPatientIdMismatch: "1d000000-0000-4000-8000-000000000026",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -127,6 +128,9 @@ async function applyMetadataFault(response, fault) {
       break;
     case "MISSING_REQUIRED_TAG":
       delete rows[0]["00080016"];
+      break;
+    case "PATIENT_ID_MISMATCH":
+      rows[0]["00100020"].Value = ["TEST-PATIENT-OTHER"];
       break;
     case "OVER_LIMIT": {
       const row = structuredClone(rows[0]);
@@ -619,6 +623,27 @@ test("authorized source capture uses only A WADO after database-backed authoriza
           await harness.database.onModuleDestroy();
         }
       });
+    }
+  });
+
+  await t.test("CAP-006 denies a source PatientID mismatch before any instance payload WADO", async () => {
+    const harness = createHarness({ metadataFault: "PATIENT_ID_MISMATCH" });
+    try {
+      const result = await harness.service.capture(captureCommand(fixture.correlationPatientIdMismatch));
+      assert.deepEqual(result, { kind: "DENIED", reason: "SOURCE_PATIENT_ID_MISMATCH" });
+      const counters = harness.counters();
+      assert.equal(counters.metadataCalls, 1, "CAP006_METADATA_ONCE");
+      assert.equal(counters.instanceCalls, 0, "CAP006_NO_INSTANCE_WADO");
+      assert.deepEqual(counters.sourceRequests, ["METADATA"], "CAP006_METADATA_ONLY");
+      assert.equal(counters.stowCalls, 0, "CAP006_NO_STOW");
+      assert.equal(counters.destinationVerificationCalls, 0, "CAP006_NO_DESTINATION_VERIFY");
+      assert.equal(counters.forbiddenEndpointAttempts, 0, "CAP006_NO_FORBIDDEN_ENDPOINT");
+      assert.doesNotMatch(JSON.stringify(result), /TEST-PATIENT|2\.25\.|SYNTHETIC/);
+      const state = await readOperationState(harness);
+      assert.equal(state.operationState, "CREATED", "CAP006_STATE_UNCHANGED");
+      assert.deepEqual(state.evidence, [], "CAP006_NO_EVIDENCE");
+    } finally {
+      await harness.database.onModuleDestroy();
     }
   });
 
