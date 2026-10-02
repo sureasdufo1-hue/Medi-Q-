@@ -12,7 +12,12 @@ if (
   throw new Error("TEMP_PAYLOAD_CHILD_FIXTURE_INVALID");
 }
 
-const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: fixture.rootDirectory });
+const store = new EphemeralEncryptedTemporaryImagingStore({
+  rootDirectory: fixture.rootDirectory,
+  // This child isolates restart/purge mechanics; the separate DEC-010
+  // PostgreSQL acceptance exercises the production quota adapter.
+  sharedQuota: { reserve: async () => {}, settle: async () => {} },
+});
 await store.beginReservedPackage(fixture.packageBinding, fixture.storageRef);
 const payload = Buffer.from("SYNTHETIC-PURGE-FIXTURE-NOT-REAL-DICOM-OR-PHI", "utf8");
 async function* source() {

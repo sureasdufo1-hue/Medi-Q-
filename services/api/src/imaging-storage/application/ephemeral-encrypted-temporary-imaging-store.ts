@@ -131,6 +131,7 @@ interface StoredPackage {
   quotaStudyRefId: string | null;
   sharedQuotaReservedBytes: number;
   quotaReservationTail: Promise<void>;
+  quotaFinalizing: boolean;
   byteLength: number;
   activeStages: number;
   sealed: boolean;
@@ -254,8 +255,8 @@ function resolveLimits(
  * Internal single-process P0 encrypted spool primitive. It has no authority:
  * callers must complete Consent/Authorization/Grant/RLS checks before reads.
  * DEKs exist only in this process. A restart cannot decrypt existing files.
- * DB metadata, Tenant-scoped cleanup and purge Audit are deliberately not part
- * of this primitive and must be integrated before a product path is enabled.
+ * Reserved packages require a shared database quota adapter. The store remains
+ * unregistered until Tenant metadata, cleanup and purge Audit gates pass.
  */
 export class EphemeralEncryptedTemporaryImagingStore {
   private readonly rootDirectory: string;
@@ -286,7 +287,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
   async beginPackage(
     binding: TemporaryImagingPackageBinding,
   ): Promise<TemporaryImagingPackageHandle> {
-    return this.createPackage(binding, randomUUID());
+    return this.createPackage(binding, randomUUID(), false);
   }
 
   /**
@@ -298,12 +299,14 @@ export class EphemeralEncryptedTemporaryImagingStore {
     binding: TemporaryImagingPackageBinding,
     storageRef: string,
   ): Promise<TemporaryImagingPackageHandle> {
-    return this.createPackage(binding, storageRef);
+    if (!this.sharedQuota) storageError("QUOTA_UNAVAILABLE");
+    return this.createPackage(binding, storageRef, true);
   }
 
   private async createPackage(
     binding: TemporaryImagingPackageBinding,
     storageRef: string,
+    quotaRequired: boolean,
   ): Promise<TemporaryImagingPackageHandle> {
     await this.ready;
     this.assertRecoveryComplete();
@@ -344,10 +347,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
       abortController: new AbortController(),
       idleWaiters: [],
       quotaWriterId: randomUUID(),
-      quotaRequired: false,
+      quotaRequired,
       quotaStudyRefId: null,
       sharedQuotaReservedBytes: 0,
       quotaReservationTail: Promise.resolve(),
+      quotaFinalizing: false,
       byteLength: 0,
       activeStages: 0,
       sealed: false,
@@ -395,7 +399,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
     await this.ready;
     const storedPackage = this.getPackage(input.storageRef);
     this.assertPackageBinding(storedPackage, input.packageBinding);
-    if (storedPackage.sealed || storedPackage.purgePending) storageError("BINDING_MISMATCH");
+    if (
+      storedPackage.sealed ||
+      storedPackage.purgePending ||
+      storedPackage.quotaFinalizing
+    ) storageError("BINDING_MISMATCH");
     if (
       !input.instanceBinding ||
       !validateUuid(input.instanceBinding.studyRefId) ||
@@ -414,6 +422,13 @@ export class EphemeralEncryptedTemporaryImagingStore {
       )
     ) {
       storageError("BINDING_MISMATCH");
+    }
+    if (storedPackage.quotaRequired) {
+      const studyRefId = input.instanceBinding.studyRefId.toLowerCase();
+      if (storedPackage.quotaStudyRefId && storedPackage.quotaStudyRefId !== studyRefId) {
+        storageError("BINDING_MISMATCH");
+      }
+      storedPackage.quotaStudyRefId = studyRefId;
     }
 
     const objectRef = randomUUID();
@@ -528,6 +543,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
         byteLength = nextLength;
         storedPackage.byteLength = nextPackageBytes;
         this.environmentBytes = nextEnvironmentBytes;
+        await this.reserveSharedQuota(
+          storedPackage,
+          input.instanceBinding.studyRefId,
+          nextPackageBytes,
+        );
         digest.update(bytes);
         const encrypted = cipher.update(bytes);
         await writeCiphertext(encrypted);
@@ -614,6 +634,30 @@ export class EphemeralEncryptedTemporaryImagingStore {
     }
     const expiresAt = this.now() + this.limits.packageTtlMilliseconds;
     if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()) storageError("INVALID_INPUT");
+    if (storedPackage.quotaRequired) {
+      const studyRefId = storedPackage.quotaStudyRefId;
+      if (
+        !this.sharedQuota ||
+        !studyRefId ||
+        storedPackage.sharedQuotaReservedBytes < storedPackage.byteLength
+      ) {
+        storageError("QUOTA_UNAVAILABLE");
+      }
+      // Freeze the package before awaiting settlement. If the DB commit is
+      // ambiguous, the safe recovery is retrying this seal or purging it.
+      storedPackage.quotaFinalizing = true;
+      try {
+        await this.sharedQuota.settle({
+          tenantId: storedPackage.binding.tenantId,
+          studyRefId,
+          storageRef: storedPackage.handle.storageRef,
+          writerId: storedPackage.quotaWriterId,
+          actualBytes: storedPackage.byteLength,
+        });
+      } catch {
+        storageError("QUOTA_UNAVAILABLE");
+      }
+    }
     storedPackage.sealed = true;
     storedPackage.expiresAt = expiresAt;
     return Object.freeze({
@@ -912,6 +956,46 @@ export class EphemeralEncryptedTemporaryImagingStore {
   private packageDirectory(storageRef: string): string {
     if (!validateUuid(storageRef)) storageError("INVALID_INPUT");
     return join(this.rootDirectory, storageRef);
+  }
+
+  private async reserveSharedQuota(
+    storedPackage: StoredPackage,
+    studyRefIdInput: string,
+    requiredBytes: number,
+  ): Promise<void> {
+    if (!storedPackage.quotaRequired) return;
+    const quota = this.sharedQuota;
+    const studyRefId = studyRefIdInput.toLowerCase();
+    if (
+      !quota ||
+      storedPackage.quotaStudyRefId !== studyRefId ||
+      storedPackage.quotaFinalizing
+    ) {
+      storageError("QUOTA_UNAVAILABLE");
+    }
+
+    const previousReservation = storedPackage.quotaReservationTail;
+    let releaseReservation!: () => void;
+    storedPackage.quotaReservationTail = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    await previousReservation;
+    try {
+      while (storedPackage.sharedQuotaReservedBytes < requiredBytes) {
+        await quota.reserve({
+          tenantId: storedPackage.binding.tenantId,
+          studyRefId,
+          storageRef: storedPackage.handle.storageRef,
+          writerId: storedPackage.quotaWriterId,
+          deltaBytes: TEMPORARY_PAYLOAD_QUOTA_RESERVATION_BYTES,
+        });
+        storedPackage.sharedQuotaReservedBytes += TEMPORARY_PAYLOAD_QUOTA_RESERVATION_BYTES;
+      }
+    } catch {
+      storageError("QUOTA_UNAVAILABLE");
+    } finally {
+      releaseReservation();
+    }
   }
 
   private prunePurgedPackages(): void {

@@ -116,6 +116,7 @@ export const temporaryPayloadReservations = pgTable(
       .references(() => imagingPackages.packageId, { onDelete: "restrict" }),
     writerId: uuid("writer_id").notNull(),
     reservedBytes: bigint("reserved_bytes", { mode: "number" }).notNull().default(0),
+    settled: boolean("settled").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

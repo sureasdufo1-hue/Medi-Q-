@@ -2709,8 +2709,8 @@ Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pai
 - ViewerSession의 Actor, Tenant, PatientReference, Source Hospital, Study, Grant 및 expiry binding은 Application Layer에서 강제한다.
 - Viewer open, retrieval, deny, expiry, close는 기존 Audit 구조에 event로 기록한다.
 - 임시 DICOM Payload는 PostgreSQL에 저장하지 않는다.
-- Temporary Cache가 필요하면 object metadata의 opaque storage reference, operation-scoped state, expiry와 purge timestamp만 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다. `PACS-001-DEC-008`은 payload lifecycle metadata를 기존 `StudyReference` 행에 둔다. `PACS-001-DEC-010`은 새 운영 제어 테이블 2개에 비식별 예약량 집계/opaque reservation만 저장하며 영상 Binary·DICOM UID·raw key는 DB에 두지 않는다.
-- 현재 implementation status at the DEC-010 recommendation checkpoint: DEC-008 metadata and DEC-009 purge/restart gates are scoped PASS; shared multi-process quota is pending implementation and DB-008 table/catalog counts will change additively. Runtime registration remains prohibited.
+- Temporary Cache가 필요하면 object metadata의 opaque storage reference, operation-scoped state, expiry와 purge timestamp만 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다. `PACS-001-DEC-008`은 payload lifecycle metadata를 기존 `StudyReference` 행에 둔다. `PACS-001-DEC-010`은 새 운영 제어 테이블 3개에 비식별 예약량 집계/opaque reservation만 저장하며 영상 Binary·DICOM UID·raw key는 DB에 두지 않는다.
+- Current implementation status (2026-10-03): DEC-008 metadata and DEC-009 purge/restart gates are scoped PASS; DEC-010 schema/functions and unregistered store reserve/settle/purge-release wiring are implemented. Scratch schema compatibility observed 21 tables/26 migrations/catalog `21|55|17|48` with 244 runtime column grants unchanged. Full `STAGE-005` limit/contention/failure Acceptance is still open; runtime registration remains prohibited.
 
 ## Schema Change Gate
 
@@ -2722,7 +2722,7 @@ Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pai
 
 ### P0 Temporary Payload Quota Control — PACS-001-DEC-010
 
-The three operational tables below are quota-control metadata, not medical-image entities. Their runtime-readable/writable surface is only the fixed quota-function API; `mediq_runtime` receives no direct table privilege.
+The three operational tables below are quota-control metadata, not medical-image entities. Their runtime-readable/writable surface is only the fixed quota-function API; `mediq_runtime` receives no direct table privilege. The non-login quota owner receives the minimum parent-column reads needed to check StudyReference, including the confirmed purge timestamp.
 
 | Table | Purpose | Minimum fields | Access boundary |
 |---|---|---|---|
@@ -2740,7 +2740,7 @@ P1 Mobile Vault의 DICOM Binary는 모바일 기기의 암호화 Local Storage�
 
 # P1 Mobile Security Logical Data Amendment — 2026-09-15
 
-P0 PostgreSQL 18-table baseline과 현재 Migration은 변경하지 않는다. P1 구현 Ticket에서 Schema Change Gate를 통과할 때 다음 최소 Metadata를 정규화한다.
+P0 PostgreSQL 21-table baseline과 현재 Migration은 변경하지 않는다. P1 구현 Ticket에서 Schema Change Gate를 통과할 때 다음 최소 Metadata를 정규화한다.
 
 ## devices 후보 필드
 

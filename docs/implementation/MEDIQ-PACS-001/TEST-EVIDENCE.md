@@ -379,3 +379,35 @@ git diff --check
 - **Not executed:** fresh scratch-schema apply/reset/reapply, SQL function/RLS/grant probes, cross-process quota contention, store reserve-before-write/settle/release wiring tests. No `STAGE-005` PASS is claimed; no persistent DB was accessed.
 
 **Judgment:** source compiles and the pre-existing API regression suite passes, but shared quota behavior remains unverified and incomplete. `MEDIQ-PACS-001` stays `PARTIAL`; keep the new storage path unregistered.
+
+## 16. DEC-010 shared quota wiring checkpoint — 2026-10-03
+
+### Commands and confirmed results
+
+```powershell
+npm run build:api
+npm run db:migrations:check
+npm run test:db-migrations
+npm run test:api
+npx vitest run --maxWorkers=1 --no-file-parallelism tests/api/temporary-payload-purge-coordinator.test.mjs tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+git diff --check
+```
+
+- `npm run build:api`: exit 0. `npm run db:migrations:check`: exit 0, Drizzle reported consistency. `npm run test:db-migrations`: 6/6 passed. `npm run test:api`: exit 0, 37 files / 689 tests passed. Focused quota/store and purge unit suites: 2 files / 18 tests passed.
+- Scratch schema expectations were extended to 21 product tables, 26 migration ledger entries and catalog `21|55|17|48`; DB-009 now expects 20 forced-RLS quota/product tables, 17 runtime policies, 20 migrator policies, zero direct runtime table privileges, and the unchanged 244 column grants.
+- During scratch validation, the first migration application failed with SQLSTATE `42501` because migration 0025 attempted DDL before `SET ROLE mediq_quota_owner`; ordering was corrected. A subsequent purge integration exposed a missing owner SELECT grant on `study_references.temporary_payload_purged_at`; the narrow grant was added without expanding runtime grants. These failures were scratch-only and led to code/migration fixes.
+- A later `-ScratchOnly` run emitted `db008_clean_up=PASS product_tables=21 ledger=26 catalog=21|55|17|48`, `db008_reset=PASS`, `db008_reset_postgres=PASS`, and the PACS-001 `temporary_payload_runtime=PASS` line (exact grants, forced RLS, sibling isolation, metadata binding, physical purge, restart recovery and Audit retry). The reset/reapply pass then progressed through PACS-007, PACS-001 purge, DB-009, EXC/Consent/Grant, fence and Provenance checks. Its final wrapper process exit / `db008_schema_validation` line was not captured, so this checkpoint does **not** claim whole-wrapper DB-008 PASS. An independent post-run Docker inventory showed no remaining `mediq-db008` resources.
+- Persistent `mediq` DB and Orthanc A/B were not accessed by `-ScratchOnly`. No production credentials or patient data were used.
+
+### DEC-010 Acceptance boundary
+
+| Acceptance | Evidence | Judgment |
+|---|---|---|
+| Store reserves before ciphertext write; fail closed on adapter failure; settlement to actual payload size; one StudyReference per reserved storage ref | New synthetic store unit tests; focused suite 18/18 and full API suite 689/689 | PASS — local unit scope only |
+| Purge release occurs after path removal and transactionally with `PURGED`+Audit; Audit rollback preserves reservation/counters | Purge-coordinator unit tests and PACS-001 scratch integration after the owner-column grant fix | PASS — scoped synthetic filesystem + disposable PostgreSQL/RLS lifecycle |
+| Migration applies with three tables, `settled` marker, dedicated owner functions; runtime grants unchanged | Scratch output showed 21 tables / 26 migrations / catalog `21|55|17|48`; DB-009 printed 20 forced-RLS tables and 244 runtime grants | PASS — schema and existing access-boundary sub-gates observed; whole wrapper final exit unavailable |
+| 64 MiB/object, 2,000-object, 2 GiB/package and 10 GiB/environment edges; independent runtime-session contention; source/recipient shared package aggregate; full wrong-binding/failure matrix | Not implemented in database Acceptance yet | NOT RUN — `STAGE-005` remains open |
+| Cross-process crash recovery, quota rebuild/failover, maximum-size throughput, runtime registration, SERVICE cleanup, Orthanc no-side-effect | Outside current slice | NOT RUN |
+
+**Judgment:** DEC-010 has implementation progress but is not Acceptance-complete. Keep the store unregistered, do not enable source-capture runtime wiring, and do not claim `STAGE-005` PASS. `MEDIQ-PACS-001` remains `PARTIAL`.

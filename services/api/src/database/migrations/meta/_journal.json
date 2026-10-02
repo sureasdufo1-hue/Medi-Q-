@@ -176,6 +176,13 @@
       "when": 1790972729514,
       "tag": "0024_silky_korath",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790974067550,
+      "tag": "0025_sweet_liz_osborn",
+      "breakpoints": true
     }
   ]
 }

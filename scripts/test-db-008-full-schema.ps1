@@ -14,9 +14,10 @@ $approvedProductTables = @(
     "organizations", "tenants", "hospitals", "hospital_endpoints", "actors",
     "patient_refs", "patient_mappings", "exchange_sessions", "consents", "consent_actions",
     "transfer_grants", "transfer_grant_scopes", "imaging_packages", "study_references",
-    "integrity_evidence", "provenance_records", "audit_events", "pacs_transfer_operations"
+    "integrity_evidence", "provenance_records", "audit_events", "pacs_transfer_operations",
+    "temporary_payload_package_quotas", "temporary_payload_quota_state", "temporary_payload_reservations"
 )
-$expectedCatalogCounts = "18|50|17|42"
+$expectedCatalogCounts = "21|55|17|48"
 
 function Read-LocalEnv([string]$Path) {
     $settings = @{}
@@ -235,7 +236,7 @@ SELECT
 "@
     $inventory = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $inventorySql -Label "DB-009 privilege/RLS catalog inventory"
     $inventoryValue = [string]::Join("", [string[]]@($inventory)).Trim()
-    if (@($inventory).Count -ne 1 -or $inventoryValue -ne "17|17|17|0|244|0") {
+    if (@($inventory).Count -ne 1 -or $inventoryValue -ne "20|17|20|0|244|0") {
         $actualInventory = [string]::Join(",", [string[]]@($inventory))
         throw "DB-009 privilege/RLS catalog inventory mismatch; observed_count=$($inventory.Count) observed=$actualInventory."
     }
@@ -759,7 +760,7 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
         $safeFailureSummary = if ($safeDatabaseCode) { "$safeFailureCode/$safeDatabaseCode" } else { $safeFailureCode }
         throw "DB-009 PAT-001/IAM-002/AUT-005/PAT-002 runtime integration failed (exit=$integrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, privilege_mismatch=$privilegeSummary, safe_error=$safeFailureSummary); raw output suppressed."
     }
-    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=244 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_column_insert consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_12_select_12_insert study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=17 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
+    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=244 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_column_insert consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_12_select_12_insert study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=20 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
 
     $excFixture = [ordered]@{
         subjectA = $subjectA; actorA = $actorA; tenantA = $tenantA; hospitalA = $hospitalA
@@ -1071,7 +1072,7 @@ SELECT
 "@
     $catalog = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $catalogSql -Label "DB-008 scratch constraint catalog"
     $catalogValue = [string]::Join("", [string[]]@($catalog))
-    $catalogMatches = $catalog.Count -eq 1 -and [regex]::IsMatch($catalogValue, '^18\|50\|17\|42$')
+    $catalogMatches = $catalog.Count -eq 1 -and [string]::Equals($catalogValue, $expectedCatalogCounts, [StringComparison]::Ordinal)
     if (-not $catalogMatches) {
         $actualCodes = (@($catalogValue.ToCharArray()) | ForEach-Object { [int]$_ }) -join ","
         throw "DB-008 scratch PK/FK/UNIQUE/CHECK catalog mismatch; actual=$catalogValue length=$($catalogValue.Length) codes=$actualCodes expected=$expectedCatalogCounts."
@@ -1079,7 +1080,7 @@ SELECT
 
     $ledger = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql "SELECT count(*)::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='__drizzle_migrations') FROM public.__drizzle_migrations;" -Label "DB-008 scratch migration ledger"
     $ledgerText = [string]::Join("", [string[]]@($ledger))
-    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^24\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
+    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^26\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
 
     $runtimeProbe = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_RUNTIME_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_RUNTIME_PASSWORD"] -Sql "SELECT 1;" -Label "DB-008 scratch runtime role probe"
     $runtimeText = [string]::Join("", [string[]]@($runtimeProbe))
@@ -1189,7 +1190,7 @@ try {
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs
-    Write-Output "db008_clean_up=PASS product_tables=18 ledger=24 catalog=$expectedCatalogCounts"
+    Write-Output "db008_clean_up=PASS product_tables=21 ledger=26 catalog=$expectedCatalogCounts"
 
     Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
     Write-Output "db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true"
@@ -1198,7 +1199,7 @@ try {
     Write-Output "db008_reset_postgres=PASS role_bootstrap=PASS"
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
-    Write-Output "db008_reset_reapply=PASS product_tables=18 ledger=24"
+    Write-Output "db008_reset_reapply=PASS product_tables=21 ledger=26"
 
     if ($ScratchOnly) {
         Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"

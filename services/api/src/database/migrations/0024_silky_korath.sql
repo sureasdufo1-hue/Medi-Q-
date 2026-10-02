@@ -4,8 +4,8 @@ CREATE TABLE "temporary_payload_package_quotas" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "temporary_payload_package_quotas_bytes_check" CHECK ("temporary_payload_package_quotas"."reserved_bytes" >= 0 AND "temporary_payload_package_quotas"."reserved_bytes" <= 2147483648)
 );
---> statement-breakpoin
-ALTER TABLE "temporary_payload_package_quotas" ENABLE ROW LEVEL SECURITY;--> statement-breakpoin
+--> statement-breakpoint
+ALTER TABLE "temporary_payload_package_quotas" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "temporary_payload_quota_state" (
 	"singleton_id" boolean PRIMARY KEY DEFAULT true NOT NULL,
 	"max_environment_bytes" bigint DEFAULT 10737418240 NOT NULL,
@@ -17,8 +17,8 @@ CREATE TABLE "temporary_payload_quota_state" (
 	CONSTRAINT "temporary_payload_quota_package_limit_check" CHECK ("temporary_payload_quota_state"."max_package_bytes" > 0 AND "temporary_payload_quota_state"."max_package_bytes" <= 2147483648),
 	CONSTRAINT "temporary_payload_quota_reserved_bytes_check" CHECK ("temporary_payload_quota_state"."reserved_bytes" >= 0 AND "temporary_payload_quota_state"."reserved_bytes" <= "temporary_payload_quota_state"."max_environment_bytes")
 );
---> statement-breakpoin
-ALTER TABLE "temporary_payload_quota_state" ENABLE ROW LEVEL SECURITY;--> statement-breakpoin
+--> statement-breakpoint
+ALTER TABLE "temporary_payload_quota_state" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "temporary_payload_reservations" (
 	"storage_ref" uuid PRIMARY KEY NOT NULL,
 	"quota_state_id" boolean DEFAULT true NOT NULL,
@@ -31,20 +31,20 @@ CREATE TABLE "temporary_payload_reservations" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "temporary_payload_reservations_bytes_check" CHECK ("temporary_payload_reservations"."reserved_bytes" >= 0 AND "temporary_payload_reservations"."reserved_bytes" <= 2147483648)
 );
---> statement-breakpoin
-ALTER TABLE "temporary_payload_reservations" ENABLE ROW LEVEL SECURITY;--> statement-breakpoin
-ALTER TABLE "temporary_payload_package_quotas" ADD CONSTRAINT "temporary_payload_package_quotas_package_id_imaging_packages_package_id_fk" FOREIGN KEY ("package_id") REFERENCES "public"."imaging_packages"("package_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoin
-ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_quota_state_id_temporary_payload_quota_state_singleton_id_fk" FOREIGN KEY ("quota_state_id") REFERENCES "public"."temporary_payload_quota_state"("singleton_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoin
-ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_tenant_id_tenants_tenant_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("tenant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoin
-ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_study_ref_id_study_references_study_ref_id_fk" FOREIGN KEY ("study_ref_id") REFERENCES "public"."study_references"("study_ref_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoin
-ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_package_id_imaging_packages_package_id_fk" FOREIGN KEY ("package_id") REFERENCES "public"."imaging_packages"("package_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoin
-CREATE INDEX "temporary_payload_reservations_tenant_package_idx" ON "temporary_payload_reservations" USING btree ("tenant_id","package_id");--> statement-breakpoin
-CREATE INDEX "temporary_payload_reservations_tenant_study_idx" ON "temporary_payload_reservations" USING btree ("tenant_id","study_ref_id");--> statement-breakpoin
+--> statement-breakpoint
+ALTER TABLE "temporary_payload_reservations" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "temporary_payload_package_quotas" ADD CONSTRAINT "temporary_payload_package_quotas_package_id_imaging_packages_package_id_fk" FOREIGN KEY ("package_id") REFERENCES "public"."imaging_packages"("package_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_quota_state_id_temporary_payload_quota_state_singleton_id_fk" FOREIGN KEY ("quota_state_id") REFERENCES "public"."temporary_payload_quota_state"("singleton_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_tenant_id_tenants_tenant_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("tenant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_study_ref_id_study_references_study_ref_id_fk" FOREIGN KEY ("study_ref_id") REFERENCES "public"."study_references"("study_ref_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "temporary_payload_reservations" ADD CONSTRAINT "temporary_payload_reservations_package_id_imaging_packages_package_id_fk" FOREIGN KEY ("package_id") REFERENCES "public"."imaging_packages"("package_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "temporary_payload_reservations_tenant_package_idx" ON "temporary_payload_reservations" USING btree ("tenant_id","package_id");--> statement-breakpoint
+CREATE INDEX "temporary_payload_reservations_tenant_study_idx" ON "temporary_payload_reservations" USING btree ("tenant_id","study_ref_id");--> statement-breakpoint
 CREATE POLICY "hospitals_mediq_quota_owner_tenant_scope" ON "hospitals" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING ("hospitals"."tenant_id" =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
 ) WITH CHECK ("hospitals"."tenant_id" =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
-);--> statement-breakpoin
+);--> statement-breakpoint
 CREATE POLICY "exchange_sessions_mediq_quota_owner_tenant_scope" ON "exchange_sessions" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (EXISTS (
         SELECT 1 FROM hospitals h
          WHERE h.hospital_id IN (
@@ -61,41 +61,41 @@ CREATE POLICY "exchange_sessions_mediq_quota_owner_tenant_scope" ON "exchange_se
            AND h.tenant_id =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
 
-      ));--> statement-breakpoin
+      ));--> statement-breakpoint
 CREATE POLICY "imaging_packages_mediq_quota_owner_tenant_scope" ON "imaging_packages" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (EXISTS (
         SELECT 1 FROM exchange_sessions e
          WHERE e.session_id = "imaging_packages"."exchange_session_id"
       )) WITH CHECK (EXISTS (
         SELECT 1 FROM exchange_sessions e
          WHERE e.session_id = "imaging_packages"."exchange_session_id"
-      ));--> statement-breakpoin
+      ));--> statement-breakpoint
 CREATE POLICY "study_references_mediq_quota_owner_tenant_scope" ON "study_references" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (EXISTS (
         SELECT 1 FROM imaging_packages p
          WHERE p.package_id = "study_references"."package_id"
       )) WITH CHECK (EXISTS (
         SELECT 1 FROM imaging_packages p
          WHERE p.package_id = "study_references"."package_id"
-      ));--> statement-breakpoin
+      ));--> statement-breakpoint
 CREATE POLICY "pacs_transfer_operations_mediq_quota_owner_tenant_scope" ON "pacs_transfer_operations" AS PERMISSIVE FOR SELECT TO "mediq_quota_owner" USING ("pacs_transfer_operations"."tenant_id" =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
-);--> statement-breakpoin
+);--> statement-breakpoint
 CREATE POLICY "temporary_payload_package_quotas_mediq_quota_owner_scope" ON "temporary_payload_package_quotas" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (EXISTS (
         SELECT 1 FROM imaging_packages p
          WHERE p.package_id = "temporary_payload_package_quotas"."package_id"
       )) WITH CHECK (EXISTS (
         SELECT 1 FROM imaging_packages p
          WHERE p.package_id = "temporary_payload_package_quotas"."package_id"
-      ));--> statement-breakpoin
-CREATE POLICY "temporary_payload_package_quotas_mediq_migrator_scope" ON "temporary_payload_package_quotas" AS PERMISSIVE FOR ALL TO "mediq_migrator" USING (true) WITH CHECK (true);--> statement-breakpoin
-CREATE POLICY "temporary_payload_quota_state_mediq_quota_owner_scope" ON "temporary_payload_quota_state" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (true) WITH CHECK (true);--> statement-breakpoin
-CREATE POLICY "temporary_payload_quota_state_mediq_migrator_scope" ON "temporary_payload_quota_state" AS PERMISSIVE FOR ALL TO "mediq_migrator" USING (true) WITH CHECK (true);--> statement-breakpoin
+      ));--> statement-breakpoint
+CREATE POLICY "temporary_payload_package_quotas_mediq_migrator_scope" ON "temporary_payload_package_quotas" AS PERMISSIVE FOR ALL TO "mediq_migrator" USING (true) WITH CHECK (true);--> statement-breakpoint
+CREATE POLICY "temporary_payload_quota_state_mediq_quota_owner_scope" ON "temporary_payload_quota_state" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING (true) WITH CHECK (true);--> statement-breakpoint
+CREATE POLICY "temporary_payload_quota_state_mediq_migrator_scope" ON "temporary_payload_quota_state" AS PERMISSIVE FOR ALL TO "mediq_migrator" USING (true) WITH CHECK (true);--> statement-breakpoint
 CREATE POLICY "temporary_payload_reservations_mediq_quota_owner_scope" ON "temporary_payload_reservations" AS PERMISSIVE FOR ALL TO "mediq_quota_owner" USING ("temporary_payload_reservations"."tenant_id" =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
 ) WITH CHECK ("temporary_payload_reservations"."tenant_id" =
   NULLIF(current_setting('mediq.tenant_id', true), '')::uuid
-);--> statement-breakpoin
+);--> statement-breakpoint
 CREATE POLICY "temporary_payload_reservations_mediq_migrator_scope" ON "temporary_payload_reservations" AS PERMISSIVE FOR ALL TO "mediq_migrator" USING (true) WITH CHECK (true);
---> statement-breakpoin
+--> statement-breakpoint
 ALTER TABLE public.temporary_payload_quota_state FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.temporary_payload_package_quotas FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.temporary_payload_reservations FORCE ROW LEVEL SECURITY;
@@ -105,7 +105,7 @@ REVOKE ALL ON TABLE public.temporary_payload_quota_state,
 ALTER TABLE public.temporary_payload_quota_state OWNER TO mediq_quota_owner;
 ALTER TABLE public.temporary_payload_package_quotas OWNER TO mediq_quota_owner;
 ALTER TABLE public.temporary_payload_reservations OWNER TO mediq_quota_owner;
---> statement-breakpoin
+--> statement-breakpoint
 GRANT SELECT (hospital_id, tenant_id) ON TABLE public.hospitals TO mediq_quota_owner;
 GRANT SELECT (session_id, source_hospital_id, destination_hospital_id)
   ON TABLE public.exchange_sessions TO mediq_quota_owner;
@@ -116,20 +116,20 @@ GRANT SELECT (study_ref_id, package_id, temporary_storage_ref,
   ON TABLE public.study_references TO mediq_quota_owner;
 GRANT SELECT (operation_id, tenant_id, exchange_session_id, study_ref_id, state)
   ON TABLE public.pacs_transfer_operations TO mediq_quota_owner;
---> statement-breakpoin
+--> statement-breakpoint
 SET ROLE mediq_quota_owner;
 INSERT INTO public.temporary_payload_quota_state (singleton_id)
 VALUES (true);
---> statement-breakpoin
+--> statement-breakpoint
 CREATE FUNCTION public.reserve_temporary_payload_quota(
   p_study_ref_id uuid,
   p_storage_ref uuid,
   p_writer_id uuid,
-  p_delta_bytes bigin
-) RETURNS bigin
+  p_delta_bytes bigint
+) RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 SET row_security = on
 AS $quota_reserve$
 DECLARE
@@ -244,16 +244,16 @@ BEGIN
   RETURN v_current_reserved + p_delta_bytes;
 END
 $quota_reserve$;
---> statement-breakpoin
+--> statement-breakpoint
 CREATE FUNCTION public.settle_temporary_payload_quota(
   p_study_ref_id uuid,
   p_storage_ref uuid,
   p_writer_id uuid,
-  p_actual_bytes bigin
-) RETURNS bigin
+  p_actual_bytes bigint
+) RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 SET row_security = on
 AS $quota_settle$
 DECLARE
@@ -339,14 +339,14 @@ BEGIN
   RETURN p_actual_bytes;
 END
 $quota_settle$;
---> statement-breakpoin
+--> statement-breakpoint
 CREATE FUNCTION public.release_temporary_payload_quota(
   p_study_ref_id uuid,
   p_storage_ref uuid
-) RETURNS bigin
+) RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, pg_temp
 SET row_security = on
 AS $quota_release$
 DECLARE

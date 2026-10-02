@@ -3,10 +3,10 @@
 | 항목 | 값 |
 |---|---|
 | Ticket | `MEDIQ-PACS-001` |
-| 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool primitive sub-gates |
+| 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — identity/fence and source handoffs pass in scoped boundaries; `DEC-008` metadata and `DEC-009` physical purge/restart pass in isolated PostgreSQL/RLS + synthetic filesystem tests; remaining lifecycle gates and runtime integration remain open |
+| 상태 | `PARTIAL` — identity/fence/source handoffs, `DEC-008/009` lifecycle and migration compatibility pass in scoped synthetic/scratch boundaries; `DEC-010` shared quota is wired into the unregistered store/purge paths, but full `STAGE-005` quota Acceptance and final DB-008 wrapper exit remain unverified |
 
 ## 1. 목표 및 판정 범위
 
@@ -32,12 +32,13 @@
 - `PACS-001-DEC-008` 범위의 Study 단위 임시 payload lifecycle 기반: `study_references`에 storage ref/state/expiry/purged-at 네 열, 상태·shape CHECK와 cleanup/unique partial index를 추가하고, runtime role의 네 열 SELECT/UPDATE 권한만 migration에 부여.
 - Verified Tenant transaction을 전제로 exact operation/Session/Package/Study/source binding을 확인하는 PostgreSQL metadata repository와 purge success Audit event rule을 추가. 이는 persistence primitive이며 아직 source capture, cleanup worker 또는 Nest runtime에 연결하지 않음.
 - `PACS-001-DEC-009`에 따라 internal purge saga를 추가: verified Tenant runner에서 `PURGE_PENDING` 선커밋, in-memory DEK/nonce/tag zeroization 및 정확한 UUID ciphertext 경로 제거, 경로 부재 확인 후 `PURGED`+성공 Audit 원자 커밋, 재시작 후 DB-bound ref를 사용하는 purge-only 복구.
+- `PACS-001-DEC-010` 구현 slice: quota singleton/package/reservation tables와 fixed definer functions, `settled` marker 및 narrow quota repository를 추가하고, reserved store는 매 write 전에 16 MiB reservation, seal 시 actual-byte settlement를 수행한다. Physical purge 후 `PURGED`+Audit transaction 안에서 quota release를 호출한다. SQL owner에 필요한 `temporary_payload_purged_at` SELECT만 추가했으며 runtime의 기존 244 column grants는 유지한다.
 
 ### 제외
 
 - `PacsImportMappingGateService` 또는 API/controller에 validator를 연결하는 coordinator 구현, HTTP/OpenAPI route.
-- Full coordinator, source-capture/runtime storage wiring, cleanup worker, shared/cross-process quota, verified Tenant SERVICE scheduler, runtime-volume durability or `STOW_STARTED` transition.
-- The first DB-008 `-ScratchOnly` attempt stalled during one-off psql client startup; the final rerun completed with exit `0`, scratch clean/repeat/reset/reapply and catalog PASS. DB-002~007 remained intentionally skipped in scratch-only mode.
+- Full coordinator, source-capture/Nest/runtime storage registration, cleanup worker, verified Tenant SERVICE scheduler, runtime-volume durability or `STOW_STARTED` transition.
+- Full `STAGE-005` limits/contention/binding/failure Acceptance remains incomplete. DB-008 scratch runs applied the 21-table/26-migration schema and exercised existing lifecycle regressions, but the latest long wrapper's final process exit was not captured; whole-wrapper PASS is not claimed. DB-002~007 persistent regressions are intentionally skipped in scratch-only mode.
 - PatientID를 DICOM payload에 rewrite하거나 수정하는 동작.
 - STOW-RS, destination write/verification, actual no-STOW coordinator 증명, reconciliation.
 - TLS/production PACS, real patient/PHI/credential 사용.
@@ -113,6 +114,12 @@
 | 적용 권한 | `PACS-001-DEC-010`, `TC-PACS-001-STAGE-005` and the user's standing instruction to implement recorded recommendations without repeating the approval request. |
 | 잔여 위험 | Singleton row locks serialize reservation blocks; full 2 GiB/production throughput and database failover recovery remain unverified. `STAGE-009/010/011/012` and runtime activation remain open. |
 
+### 3.6 DEC-010 implementation checkpoint — code wired, Acceptance incomplete
+
+The unregistered `beginReservedPackage` path now fails closed when the shared quota adapter is absent. For each staged write it reserves capacity before encryption/file output, serializes reserve calls per storage reference, and refuses a second StudyReference for one reserved storage package. Seal freezes writes while settling actual bytes; purge releases counters only after physical path absence and inside the same verified Tenant transaction as `PURGED` plus success Audit. A `settled` marker makes settlement replay exact-value idempotent and blocks further reservation after settlement. The migration owner received only the additional purge-timestamp column read needed by the release function; `mediq_runtime` direct quota-table privileges remain zero and its existing column inventory remains 244.
+
+API build and all 689 API tests passed. Disposable DB-008 runs applied the schema and the PACS-001 temporary-payload/RLS purge integration passed after correcting migration role ordering and the minimal owner-column grant. The latest wrapper emitted clean/repeat and reset/reapply sub-gate output during execution, but its final wrapper exit was not captured; therefore DB-008 whole-wrapper PASS is not claimed in this checkpoint. Quota-specific size/object/package/environment boundaries, independent-session races and complete failure/retry Acceptance remain open; no `STAGE-005` PASS is claimed and storage stays unregistered.
+
 ## 4. 구현 결과
 
 - `validatePacsPatientIdBinding`는 empty input, non-canonical destination/source ID, 64자 초과 및 어떤 instance라도 destination과 다른 경우 fail closed한다.
@@ -151,9 +158,9 @@
 | `tests/database/pacs-import-authorization-fence.integration.test.mjs` | Scratch-only real PostgreSQL concurrency, post-revoke/withdrawal denial and no-operation-state test |
 | `services/api/Dockerfile`, `infra/docker-compose.yml`, `scripts/validate-compose-baseline.ps1`, `scripts/test-db-008-full-schema.ps1` | Integration-test packaging, fixture, allowlist and DB-008 isolated acceptance wiring |
 | `services/api/src/database/migrations/0023_illegal_marvel_zombies.sql` | Four StudyReference metadata columns, state/shape constraints, partial indexes and exact runtime column grants |
-| `services/api/src/database/schema/temporary-payload-quota.ts`, `services/api/src/database/migrations/0024_silky_korath.sql`, related schema/RLS files | DEC-010 quota tables, dedicated owner policies, fixed reserve/settle/release functions and migration draft; scratch-DB application/integration remains unverified |
-| `services/api/src/imaging-storage/application/temporary-payload-quota.port.ts`, `services/api/src/imaging-storage/persistence/postgres-temporary-payload-quota.repository.ts` | Quota port and fixed-function repository adapter draft; no runtime provider registration |
-| `scripts/setup-local-postgres-roles.ps1`, `scripts/test-db-008-full-schema.ps1`, `scripts/test-int001-source-capture.ps1` | Add non-login quota-owner role bootstrap to migration/test harnesses; DEC-010 database assertions are not yet implemented |
+| `services/api/src/database/schema/temporary-payload-quota.ts`, migrations `0024/0025`, related schema/RLS files | DEC-010 quota tables, `settled` marker, dedicated owner policies, fixed reserve/settle/release functions and narrow purge-timestamp owner grant; scratch application and existing lifecycle compatibility evidence recorded |
+| `services/api/src/imaging-storage/application/temporary-payload-quota.port.ts`, `services/api/src/imaging-storage/persistence/postgres-temporary-payload-quota.repository.ts` | Quota port and fixed-function repository adapter; no runtime provider registration |
+| `scripts/test-db-008-full-schema.ps1` | Update isolated catalog/table/RLS expectations to 21 tables, 26 migrations and unchanged runtime grants; full `STAGE-005` database assertion cases remain incomplete |
 | `services/api/src/imaging-storage/persistence/postgres-temporary-payload-metadata.repository.ts` | Exact operation/resource-bound temporary payload metadata persistence primitive |
 | `tests/database/temporary-payload-metadata-runtime.integration.test.mjs` | Scratch PostgreSQL/RLS binding/state and physical purge saga, restart-only recovery, retry/Audit, sibling-isolation Acceptance |
 | `services/api/src/imaging-storage/application/temporary-payload-purge.coordinator.ts` | Internal unregistered three-phase purge coordinator with verified Tenant transactions and retry-safe Audit finalization |
@@ -196,15 +203,15 @@
 ## 7. 실행 및 검증 요약
 
 - 상세 명령·결과: [TEST-EVIDENCE.md](TEST-EVIDENCE.md)
-- Current `npm run test:api -- --reporter=dot`: 36 files / 678 tests PASS; focused source builder/authorized capture/spool suites: 3 files / 78 tests PASS, including exact-source staging/read-back, revocation purge, quota-race, and one-chunk awaited-write/no-prefetch cases.
+- Latest `npm run test:api`: 37 files / 689 tests PASS; focused store/purge suite: 2 files / 18 tests PASS, including reserve-before-write, fail-closed quota failure, settlement and purge quota-release ordering/rollback.
 - `npm run typecheck:api` and `npm run test:dicom-port-contract`: PASS.
 - `./scripts/test-int001-source-capture.ps1 -EnvFile .env`: 35/35 isolated synthetic integration tests PASS; independent Audit/evidence observer PASS; exact per-instance digest/length matched the synthetic source fixture; B EMPTY before/after; scratch cleanup and existing `mediq` stack preservation PASS.
 - PACS-001 fence integration: PASS in the isolated PostgreSQL scratch DB, including revoke/fence concurrency and operation-row non-change.
 - The first aggregate run failed at the local migration smoke because four trailing spaces in already-applied migration `0018` had been stripped from the source file. A retained migrator image confirmed the exact historical bytes; those bytes were restored without editing the DB ledger or changing SQL semantics. The direct migration smoke and subsequent complete `scripts/test-db-008-full-schema.ps1 -EnvFile .env` rerun both exited `0`. DB-008 clean/reset/reapply, 18-table/20-migration catalog, DB-002~007 regressions, PACS-007, PACS-001 fence, exact RLS/privilege probes and scratch cleanup passed. See [TEST-EVIDENCE.md](TEST-EVIDENCE.md).
-- Final DEC-008 post-amendment `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` exited `0`. The disposable project verified clean/repeat/reset/reapply, 18 tables/24 migrations/catalog `18|50|17|42`, 244 exact runtime grants, the new metadata PostgreSQL/RLS test, and existing DB-009/EXC/Consent/Grant/PACS-fence/Provenance/Integrity integrations. It explicitly skipped DB-002~007 scripts that would access the persistent development DB; output confirmed `persistent_mediq_database=NOT_ACCESSED` and `db008_ephemeral_cleanup=PASS`.
+- Earlier DEC-008/009 DB-008 `-ScratchOnly` evidence is retained in §§11–13. For DEC-010, the disposable schema applied with 21 tables/26 migrations/catalog `21|55|17|48`; DB-009 reported 20 forced-RLS tables and the unchanged 244 runtime grants, and PACS-001 purge lifecycle integration passed. The latest long wrapper's final exit line was not captured; do not interpret this as a whole-wrapper PASS. Persistent DB and Orthanc A/B were not accessed.
 - Latest DEC-009 verification: API build, strict typecheck, and 37-file/686-test API regression passed. The embedded temporary-payload integration emitted full PASS for exact grants, forced RLS, binding, physical purge, restart purge-only, Audit retry, sibling isolation, retry-before-STOW and deny-after-STOW. Final `-ScratchOnly` wrapper rerun exited `0` with clean/repeat/reset/reapply, 18 product tables, 24 migrations, catalog `18|50|17|42`, runtime denial and owned scratch cleanup. DB-002~007 were intentionally skipped and persistent `mediq` was not accessed.
 - Isolated Test Orthanc read-only integration: 5/5 PASS; no STOW or PACS mutation.
-- The new storage/purge saga remains unregistered and does not use actual configured service volumes or a downstream PACS port. `STAGE-007/008/013/014` pass only in the recorded synthetic/local filesystem + scratch PostgreSQL/RLS harness. `STAGE-005/009/010/011/012` remain NOT RUN.
+- The storage/purge/shared-quota paths remain unregistered and do not use actual configured service volumes or a downstream PACS port. `STAGE-007/008/013/014` pass only in the recorded synthetic/local filesystem + scratch PostgreSQL/RLS harness. DEC-010 reserve/settle/release integration has scoped unit/lifecycle evidence; full `STAGE-005` quota limits and contention are NOT RUN. `STAGE-009/010/011/012` remain NOT RUN.
 - Ticket result: **PARTIAL**.
 
 ## 8. 미구현 사항 및 잔여 위험
@@ -212,7 +219,7 @@
 - The full coordinator must prove it gets the mapping from trusted persisted state and calls this validator for every exact source instance before dispatch.
 - `PACS-001-DEC-005` ephemeral handoff is PASS only for its internal scope; no persistent UID inventory is stored, and the ordinary source-capture result remains minimized. The exact inventory is transient application memory and cannot survive a process crash; no JavaScript zeroization guarantee is claimed. This is not the PACS coordinator or a dispatch capability.
 - `PACS-001-DEC-006` per-instance digests are transient and non-authorizing. The optional internal test seam stages the same checked WADO bytes, but the production Nest module does not inject the store and therefore still discards source bytes after hashing.
-- `PACS-001-DEC-007/008/009` storage remains unregistered. After restart, the primitive denies reads and new staging while an orphan is unresolved; an exact Tenant-validated reference can invoke purge-only recovery but never decryption. The Audit observer uses the migration role solely for test evidence because `mediq_runtime` intentionally has no Audit SELECT grant. Scoped tests cover the local filesystem/DB purge saga and key-buffer zeroization, not forensic erasure, crash/fsync durability, scheduled SERVICE cleanup, shared quota or runtime-volume wiring. No persistent storage path may be activated before `STAGE-005/009/010/011/012` and broader runtime/Orthanc no-side-effect gates pass.
+- `PACS-001-DEC-007/008/009/010` storage remains unregistered. After restart, the primitive denies reads and new staging while an orphan is unresolved; an exact Tenant-validated reference can invoke purge-only recovery but never decryption. The Audit observer uses the migration role solely for test evidence because `mediq_runtime` intentionally has no Audit SELECT grant. Scoped tests cover the local filesystem/DB purge saga, key-buffer zeroization and quota lifecycle wiring, not quota edge/contention Acceptance, forensic erasure, crash/fsync durability, scheduled SERVICE cleanup or runtime-volume wiring. No persistent storage path may be activated before `STAGE-005/009/010/011/012` and broader runtime/Orthanc no-side-effect gates pass.
 - DEC-008 proved metadata/Audit transaction behavior; DEC-009 separately proves physical path removal before success Audit in the synthetic scratch harness. Neither makes the storage lifecycle an active product feature or proves a full PACS coordinator.
 - The fence has only been proven for internal paths using the shared helper and same database; full coordinator's atomic authorization + durable `STOW_STARTED` dispatch boundary remains open.
 - Endpoint/TLS preflight integration, Integrity/Provenance/Audit gates, STOW result parsing, destination verification/reconciliation, and product-level zero-STOW/B-unchanged negative tests remain open.
@@ -223,15 +230,15 @@
 
 ```text
 Ticket: MEDIQ-PACS-001
-Scope: Internal identity/fence and source-handoff sub-gates, `DEC-007` spool, `DEC-008` StudyReference metadata, and `DEC-009` unregistered purge/restart saga
-Changed: Added immutable source handoffs, bounded AES-256-GCM spool, four StudyReference lifecycle metadata columns/grants, exact-binding repository and internal purge coordinator; physical path removal precedes `PURGED`+Audit; restart cleanup is purge-only; ordinary `capture()` allowlist unchanged
-Not changed: Full coordinator/runtime source-storage wiring, cleanup worker/SERVICE scheduler, shared quota, runtime volume, operation transition/`STOW_STARTED`, HTTP route, destination verifier invocation, STOW, PACS write or reconciliation
-Security impact: Exact metadata grants and forced Tenant RLS were scratch-tested; no route, worker, runtime volume, destination-write or STOW capability was added. Path unlink is not forensic erasure; cross-process/runtime crash durability and production DEK lifecycle are unproven
-Tests executed: Latest checkpoint `npm run test:api` (build plus 37 files/686 tests) and `npm run db:migrations:check` passed; `git diff --check` passed. Prior DEC-009 PostgreSQL/RLS + synthetic physical purge/restart/Audit-retry and final ScratchOnly wrapper evidence remain in TEST-EVIDENCE §§12–13. Persistent DB NOT ACCESSED.
-Tests not executed: DEC-010 scratch migration apply/reset/reapply, quota SQL/RLS/grant/independent-session race, shared store reserve-before-write/settle/release, `STAGE-005/009/010/011/012`, runtime module/volume registration, SERVICE cleanup, maximum-study bounds, full coordinator no-STOW/B-unchanged, Mandatory Preflight/dispatch/`STOW_STARTED`, live STOW, unknown-outcome reconciliation, destination verification and P0 E2E. DB-002~007 persistent regressions were intentionally skipped in `-ScratchOnly` mode
+Scope: Internal identity/fence/source-handoff sub-gates, `DEC-007` spool, `DEC-008` StudyReference metadata, `DEC-009` purge/restart and partial `DEC-010` shared quota wiring
+Changed: Added immutable source handoffs, bounded AES-256-GCM spool, four StudyReference lifecycle metadata columns/grants, exact-binding repository and internal purge coordinator; shared DB quota reserve-before-write, seal settlement and post-unlink purge release; runtime grant inventory remains 244; ordinary `capture()` allowlist unchanged
+Not changed: Full quota `STAGE-005` edge/contention Acceptance, source-storage runtime registration, cleanup worker/SERVICE scheduler, runtime volume, operation transition/`STOW_STARTED`, HTTP route, destination verifier invocation, STOW, PACS write or reconciliation
+Security impact: Exact metadata grants/forced Tenant RLS and existing quota lifecycle integration were scratch-tested; the quota owner has one minimum parent-column SELECT grant and runtime receives no direct quota-table privileges. No route, worker, runtime volume, destination-write or STOW capability was added. Path unlink is not forensic erasure; cross-process failure recovery/runtime crash durability and production DEK lifecycle are unproven
+Tests executed: API build and 37 files/689 tests; focused store/purge 18 tests; migration consistency and runner 6/6. Scratch schema/catalog `21|55|17|48`, unchanged 244 runtime grants and PACS-001 purge integration were observed. The final long DB-008 wrapper exit was not captured; whole-wrapper PASS is not claimed. Persistent DB/Orthanc not accessed.
+Tests not executed: Full `STAGE-005` size/object/package/environment limits, independent-session races, full wrong-binding/failure matrix; `STAGE-009/010/011/012`, runtime module/volume registration, SERVICE cleanup, maximum-study bounds, full coordinator no-STOW/B-unchanged, Mandatory Preflight/dispatch/`STOW_STARTED`, live STOW, unknown-outcome reconciliation, destination verification and P0 E2E. DB-002~007 persistent regressions were intentionally skipped in `-ScratchOnly` mode
 Evidence: TEST-EVIDENCE.md
 Implementation record: docs/implementation/MEDIQ-PACS-001/
-Remaining risks: The store/coordinator remain unregistered and are not a product storage path; source bytes are discarded in the current Nest runtime. Shared quota, verified SERVICE scheduling, runtime volume/fsync, host-level durability and maximum-study performance remain open; no effect-capable PACS coordinator consumes the handoff; full Mandatory Preflight, endpoint/TLS, destination-byte verification and terminal Integrity/Provenance/Audit remain open
+Remaining risks: The store/coordinator remain unregistered and are not a product storage path; source bytes are discarded in the current Nest runtime. Full quota Acceptance, verified SERVICE scheduling, runtime volume/fsync, host-level durability and maximum-study performance remain open; no effect-capable PACS coordinator consumes the handoff; full Mandatory Preflight, endpoint/TLS, destination-byte verification and terminal Integrity/Provenance/Audit remain open
 Status: PARTIAL
 ```
 
@@ -247,4 +254,4 @@ Status: PARTIAL
 | 2026-10-02 | `PARTIAL` | Added optional exact-source observer integration and atomic in-process quota reservation; `STORE-CORE-001~007` + `STAGE-001` scoped unit PASS; `STAGE-002~012`, runtime registration, DB/RLS lifecycle and full coordinator remain NOT RUN |
 | 2026-10-03 | `PARTIAL` | `PACS-001-DEC-008` exact StudyReference metadata grants/RLS, sibling isolation, race, purge-Audit transaction, operation-state fence and DB-008 scratch clean/repeat/reset/reapply PASS. Physical storage purge saga, runtime registration, SERVICE cleanup/quota and full coordinator remain open |
 | 2026-10-03 | `PARTIAL` | `PACS-001-DEC-009` physical purge ordering, restart purge-only recovery, sibling isolation, retry/Audit idempotency and scoped STAGE-007/008/013/014 passed; API 37/686, build/typecheck and final ScratchOnly clean/repeat/reset/reapply/catalog/runtime-denial/cleanup all passed. DB-002~007 intentionally skipped; runtime/service/quota/no-STOW/full coordinator remain open |
-| 2026-10-03 | `PARTIAL` | `PACS-001-DEC-010` recommendation/Acceptance recorded; quota schema/migration/functions and persistence adapter drafted. API build and 37/686 regression, Drizzle migration consistency and diff checks passed; dedicated database/quota Acceptance remains NOT RUN and store wiring incomplete |
+| 2026-10-03 | `PARTIAL` | `PACS-001-DEC-010` schema/functions, pre-write shared reserve, seal settlement, purge release and focused tests wired. API 37/689, build, migration consistency and migration-runner 6/6 passed; scratch schema/purge compatibility evidence captured, but the long wrapper final exit and full quota Acceptance are unverified |

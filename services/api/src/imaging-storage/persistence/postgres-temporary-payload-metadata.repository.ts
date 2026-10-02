@@ -325,6 +325,10 @@ export class PostgresTemporaryPayloadMetadataRepository {
       );
 
       if (updated.rowCount === 1) {
+        await this.transaction.query(
+          "SELECT public.release_temporary_payload_quota($1::uuid, $2::uuid)",
+          [binding.studyRefId, input.storageRef.toLowerCase()],
+        );
         await new PostgresAuditEventWriter(this.transaction).record(
           AuditEvent.create({
             auditEventId: input.auditEventId.toLowerCase(),

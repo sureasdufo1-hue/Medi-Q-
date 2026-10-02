@@ -1,0 +1,4072 @@
+{
+  "id": "31997f97-1f44-41c7-8cde-20d5781c472d",
+  "prevId": "220b3db1-4f0a-455e-aee5-42398bf9a263",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.actors": {
+      "name": "actors",
+      "schema": "",
+      "columns": {
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_subject": {
+          "name": "external_subject",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "actors_tenant_id_idx": {
+          "name": "actors_tenant_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actors_hospital_id_idx": {
+          "name": "actors_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actors_status_idx": {
+          "name": "actors_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "actors_tenant_id_tenants_tenant_id_fk": {
+          "name": "actors_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "actors",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "actors_hospital_id_hospitals_hospital_id_fk": {
+          "name": "actors_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "actors",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "actors_tenant_hospital_fk": {
+          "name": "actors_tenant_hospital_fk",
+          "tableFrom": "actors",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "tenant_id",
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "actors_tenant_subject_unique": {
+          "name": "actors_tenant_subject_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "external_subject"
+          ]
+        }
+      },
+      "policies": {
+        "actors_tenant_scope": {
+          "name": "actors_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"actors\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"actors\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        },
+        "actors_migration_access": {
+          "name": "actors_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "actors_actor_type_check": {
+          "name": "actors_actor_type_check",
+          "value": "\"actors\".\"actor_type\" IN ('USER', 'SERVICE')"
+        },
+        "actors_status_check": {
+          "name": "actors_status_check",
+          "value": "\"actors\".\"status\" IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hospital_endpoints": {
+      "name": "hospital_endpoints",
+      "schema": "",
+      "columns": {
+        "endpoint_id": {
+          "name": "endpoint_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "endpoint_type": {
+          "name": "endpoint_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_url": {
+          "name": "base_url",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "hospital_endpoints_hospital_id_idx": {
+          "name": "hospital_endpoints_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospital_endpoints_endpoint_type_idx": {
+          "name": "hospital_endpoints_endpoint_type_idx",
+          "columns": [
+            {
+              "expression": "endpoint_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hospital_endpoints_hospital_id_hospitals_hospital_id_fk": {
+          "name": "hospital_endpoints_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "hospital_endpoints",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hospital_endpoints_hospital_type_unique": {
+          "name": "hospital_endpoints_hospital_type_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_id",
+            "endpoint_type"
+          ]
+        }
+      },
+      "policies": {
+        "hospital_endpoints_tenant_scope": {
+          "name": "hospital_endpoints_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id = \"hospital_endpoints\".\"hospital_id\"\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id = \"hospital_endpoints\".\"hospital_id\"\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )"
+        },
+        "hospital_endpoints_migration_access": {
+          "name": "hospital_endpoints_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "hospital_endpoints_endpoint_type_check": {
+          "name": "hospital_endpoints_endpoint_type_check",
+          "value": "\"hospital_endpoints\".\"endpoint_type\" IN ('QIDO_RS', 'WADO_RS', 'STOW_RS')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hospitals": {
+      "name": "hospitals",
+      "schema": "",
+      "columns": {
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_code": {
+          "name": "hospital_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "environment_type": {
+          "name": "environment_type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "hospitals_tenant_id_idx": {
+          "name": "hospitals_tenant_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospitals_organization_id_idx": {
+          "name": "hospitals_organization_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hospitals_status_idx": {
+          "name": "hospitals_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hospitals_tenant_id_tenants_tenant_id_fk": {
+          "name": "hospitals_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hospitals",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hospitals_organization_id_organizations_organization_id_fk": {
+          "name": "hospitals_organization_id_organizations_organization_id_fk",
+          "tableFrom": "hospitals",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "organization_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hospitals_tenant_org_fk": {
+          "name": "hospitals_tenant_org_fk",
+          "tableFrom": "hospitals",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "organization_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hospitals_hospital_code_unique": {
+          "name": "hospitals_hospital_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_code"
+          ]
+        },
+        "hospitals_tenant_hospital_unique": {
+          "name": "hospitals_tenant_hospital_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "hospital_id"
+          ]
+        }
+      },
+      "policies": {
+        "hospitals_tenant_scope": {
+          "name": "hospitals_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"hospitals\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"hospitals\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        },
+        "hospitals_migration_access": {
+          "name": "hospitals_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "hospitals_mediq_quota_owner_tenant_scope": {
+          "name": "hospitals_mediq_quota_owner_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "\"hospitals\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"hospitals\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        }
+      },
+      "checkConstraints": {
+        "hospitals_environment_type_check": {
+          "name": "hospitals_environment_type_check",
+          "value": "\"hospitals\".\"environment_type\" IN ('TEST', 'DEVELOPMENT')"
+        },
+        "hospitals_status_check": {
+          "name": "hospitals_status_check",
+          "value": "\"hospitals\".\"status\" IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.organizations": {
+      "name": "organizations",
+      "schema": "",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_code": {
+          "name": "organization_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_type": {
+          "name": "organization_type",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "organizations_status_idx": {
+          "name": "organizations_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "organizations_organization_code_unique": {
+          "name": "organizations_organization_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_code"
+          ]
+        }
+      },
+      "policies": {
+        "organizations_tenant_scope": {
+          "name": "organizations_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM tenants t\n         WHERE t.organization_id = \"organizations\".\"organization_id\"\n           AND t.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM tenants t\n         WHERE t.organization_id = \"organizations\".\"organization_id\"\n           AND t.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )"
+        },
+        "organizations_migration_access": {
+          "name": "organizations_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "organizations_status_check": {
+          "name": "organizations_status_check",
+          "value": "\"organizations\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.tenants": {
+      "name": "tenants",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_code": {
+          "name": "tenant_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "tenants_organization_id_idx": {
+          "name": "tenants_organization_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "tenants_status_idx": {
+          "name": "tenants_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "tenants_organization_id_organizations_organization_id_fk": {
+          "name": "tenants_organization_id_organizations_organization_id_fk",
+          "tableFrom": "tenants",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "organization_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenants_tenant_code_unique": {
+          "name": "tenants_tenant_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_code"
+          ]
+        },
+        "tenants_tenant_org_unique": {
+          "name": "tenants_tenant_org_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "organization_id"
+          ]
+        }
+      },
+      "policies": {
+        "tenants_tenant_scope": {
+          "name": "tenants_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"tenants\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"tenants\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        },
+        "tenants_migration_access": {
+          "name": "tenants_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "tenants_status_check": {
+          "name": "tenants_status_check",
+          "value": "\"tenants\".\"status\" IN ('ACTIVE', 'SUSPENDED', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.patient_mappings": {
+      "name": "patient_mappings",
+      "schema": "",
+      "columns": {
+        "mapping_id": {
+          "name": "mapping_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hospital_id": {
+          "name": "hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "local_patient_id": {
+          "name": "local_patient_id",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "validated_at": {
+          "name": "validated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "patient_mappings_patient_ref_id_idx": {
+          "name": "patient_mappings_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "patient_mappings_hospital_id_idx": {
+          "name": "patient_mappings_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "patient_mappings_status_idx": {
+          "name": "patient_mappings_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "patient_mappings_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "patient_mappings_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "patient_mappings",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "patient_mappings_hospital_id_hospitals_hospital_id_fk": {
+          "name": "patient_mappings_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "patient_mappings",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "patient_mappings_hospital_local_patient_unique": {
+          "name": "patient_mappings_hospital_local_patient_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "hospital_id",
+            "local_patient_id"
+          ]
+        },
+        "patient_mappings_patient_hospital_unique": {
+          "name": "patient_mappings_patient_hospital_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "patient_ref_id",
+            "hospital_id"
+          ]
+        }
+      },
+      "policies": {
+        "patient_mappings_tenant_scope": {
+          "name": "patient_mappings_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id = \"patient_mappings\".\"hospital_id\"\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id = \"patient_mappings\".\"hospital_id\"\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )"
+        },
+        "patient_mappings_migration_access": {
+          "name": "patient_mappings_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "patient_mappings_status_check": {
+          "name": "patient_mappings_status_check",
+          "value": "\"patient_mappings\".\"status\" IN ('VALID', 'UNVERIFIED', 'AMBIGUOUS', 'REVOKED')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.patient_refs": {
+      "name": "patient_refs",
+      "schema": "",
+      "columns": {
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_code": {
+          "name": "patient_ref_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "patient_refs_status_idx": {
+          "name": "patient_refs_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "patient_refs_patient_ref_code_unique": {
+          "name": "patient_refs_patient_ref_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "patient_ref_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "patient_refs_p0_synthetic_code_check": {
+          "name": "patient_refs_p0_synthetic_code_check",
+          "value": "\"patient_refs\".\"patient_ref_code\" ~ '^MQ-TEST-[A-Z0-9][A-Z0-9-]{0,55}$'"
+        },
+        "patient_refs_status_check": {
+          "name": "patient_refs_status_check",
+          "value": "\"patient_refs\".\"status\" IN ('ACTIVE', 'INACTIVE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.exchange_sessions": {
+      "name": "exchange_sessions",
+      "schema": "",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_hospital_id": {
+          "name": "destination_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requester_actor_id": {
+          "name": "requester_actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "exchange_sessions_patient_ref_id_idx": {
+          "name": "exchange_sessions_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_source_hospital_id_idx": {
+          "name": "exchange_sessions_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_destination_hospital_id_idx": {
+          "name": "exchange_sessions_destination_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "destination_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_requester_actor_id_idx": {
+          "name": "exchange_sessions_requester_actor_id_idx",
+          "columns": [
+            {
+              "expression": "requester_actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_state_idx": {
+          "name": "exchange_sessions_state_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_created_at_idx": {
+          "name": "exchange_sessions_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "exchange_sessions_destination_state_idx": {
+          "name": "exchange_sessions_destination_state_idx",
+          "columns": [
+            {
+              "expression": "destination_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "exchange_sessions_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "exchange_sessions_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "exchange_sessions_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_destination_hospital_id_hospitals_hospital_id_fk": {
+          "name": "exchange_sessions_destination_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "destination_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "exchange_sessions_requester_actor_id_actors_actor_id_fk": {
+          "name": "exchange_sessions_requester_actor_id_actors_actor_id_fk",
+          "tableFrom": "exchange_sessions",
+          "tableTo": "actors",
+          "columnsFrom": [
+            "requester_actor_id"
+          ],
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "exchange_sessions_requester_idempotency_key_unique": {
+          "name": "exchange_sessions_requester_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "requester_actor_id",
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {
+        "exchange_sessions_tenant_scope": {
+          "name": "exchange_sessions_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id IN (\n           \"exchange_sessions\".\"source_hospital_id\", \"exchange_sessions\".\"destination_hospital_id\"\n         )\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id IN (\n           \"exchange_sessions\".\"source_hospital_id\", \"exchange_sessions\".\"destination_hospital_id\"\n         )\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )"
+        },
+        "exchange_sessions_migration_access": {
+          "name": "exchange_sessions_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "exchange_sessions_mediq_quota_owner_tenant_scope": {
+          "name": "exchange_sessions_mediq_quota_owner_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id IN (\n           \"exchange_sessions\".\"source_hospital_id\", \"exchange_sessions\".\"destination_hospital_id\"\n         )\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM hospitals h\n         WHERE h.hospital_id IN (\n           \"exchange_sessions\".\"source_hospital_id\", \"exchange_sessions\".\"destination_hospital_id\"\n         )\n           AND h.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n      )"
+        }
+      },
+      "checkConstraints": {
+        "exchange_sessions_state_check": {
+          "name": "exchange_sessions_state_check",
+          "value": "\"exchange_sessions\".\"state\" IN ('REQUESTED', 'CONSENT_PENDING', 'CONSENTED', 'AUTHORIZED', 'READY', 'ACTIVE', 'COMPLETED', 'REJECTED', 'EXPIRED', 'REVOKED', 'FAILED', 'CANCELLED')"
+        },
+        "exchange_sessions_distinct_hospitals_check": {
+          "name": "exchange_sessions_distinct_hospitals_check",
+          "value": "\"exchange_sessions\".\"source_hospital_id\" <> \"exchange_sessions\".\"destination_hospital_id\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.imaging_packages": {
+      "name": "imaging_packages",
+      "schema": "",
+      "columns": {
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_ref": {
+          "name": "storage_ref",
+          "type": "varchar(1024)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "study_count": {
+          "name": "study_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "retention_expires_at": {
+          "name": "retention_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "imaging_packages_exchange_session_id_idx": {
+          "name": "imaging_packages_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_patient_ref_id_idx": {
+          "name": "imaging_packages_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_source_hospital_id_idx": {
+          "name": "imaging_packages_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_state_idx": {
+          "name": "imaging_packages_state_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "imaging_packages_retention_expires_at_idx": {
+          "name": "imaging_packages_retention_expires_at_idx",
+          "columns": [
+            {
+              "expression": "retention_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "imaging_packages_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "imaging_packages_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "imaging_packages_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "imaging_packages_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "imaging_packages_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "imaging_packages_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "imaging_packages",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "imaging_packages_tenant_scope": {
+          "name": "imaging_packages_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"imaging_packages\".\"exchange_session_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"imaging_packages\".\"exchange_session_id\"\n      )"
+        },
+        "imaging_packages_migration_access": {
+          "name": "imaging_packages_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "imaging_packages_mediq_quota_owner_tenant_scope": {
+          "name": "imaging_packages_mediq_quota_owner_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"imaging_packages\".\"exchange_session_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"imaging_packages\".\"exchange_session_id\"\n      )"
+        }
+      },
+      "checkConstraints": {
+        "imaging_packages_state_check": {
+          "name": "imaging_packages_state_check",
+          "value": "\"imaging_packages\".\"state\" IN ('REGISTERED', 'AVAILABLE', 'IN_EXCHANGE', 'SESSION_COMPLETE', 'RETENTION_PENDING', 'DELETED', 'FAILED')"
+        },
+        "imaging_packages_study_count_check": {
+          "name": "imaging_packages_study_count_check",
+          "value": "\"imaging_packages\".\"study_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.study_references": {
+      "name": "study_references",
+      "schema": "",
+      "columns": {
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_instance_uid": {
+          "name": "study_instance_uid",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "modality": {
+          "name": "modality",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "series_count": {
+          "name": "series_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "instance_count": {
+          "name": "instance_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "temporary_storage_ref": {
+          "name": "temporary_storage_ref",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "temporary_payload_state": {
+          "name": "temporary_payload_state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "temporary_payload_expires_at": {
+          "name": "temporary_payload_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "temporary_payload_purged_at": {
+          "name": "temporary_payload_purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "study_references_package_id_idx": {
+          "name": "study_references_package_id_idx",
+          "columns": [
+            {
+              "expression": "package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_source_hospital_id_idx": {
+          "name": "study_references_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_study_instance_uid_idx": {
+          "name": "study_references_study_instance_uid_idx",
+          "columns": [
+            {
+              "expression": "study_instance_uid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_temporary_payload_cleanup_idx": {
+          "name": "study_references_temporary_payload_cleanup_idx",
+          "columns": [
+            {
+              "expression": "temporary_payload_state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "temporary_payload_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"study_references\".\"temporary_payload_state\" IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "study_references_temporary_storage_ref_unique": {
+          "name": "study_references_temporary_storage_ref_unique",
+          "columns": [
+            {
+              "expression": "temporary_storage_ref",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"study_references\".\"temporary_storage_ref\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "study_references_package_id_imaging_packages_package_id_fk": {
+          "name": "study_references_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "study_references",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "study_references_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "study_references_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "study_references",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "study_references_package_uid_unique": {
+          "name": "study_references_package_uid_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "package_id",
+            "study_instance_uid"
+          ]
+        }
+      },
+      "policies": {
+        "study_references_tenant_scope": {
+          "name": "study_references_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"study_references\".\"package_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"study_references\".\"package_id\"\n      )"
+        },
+        "study_references_migration_access": {
+          "name": "study_references_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "study_references_mediq_quota_owner_tenant_scope": {
+          "name": "study_references_mediq_quota_owner_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"study_references\".\"package_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"study_references\".\"package_id\"\n      )"
+        }
+      },
+      "checkConstraints": {
+        "study_references_series_count_check": {
+          "name": "study_references_series_count_check",
+          "value": "\"study_references\".\"series_count\" IS NULL OR \"study_references\".\"series_count\" >= 0"
+        },
+        "study_references_instance_count_check": {
+          "name": "study_references_instance_count_check",
+          "value": "\"study_references\".\"instance_count\" IS NULL OR \"study_references\".\"instance_count\" >= 0"
+        },
+        "study_references_temporary_payload_state_check": {
+          "name": "study_references_temporary_payload_state_check",
+          "value": "\"study_references\".\"temporary_payload_state\" IS NULL OR \"study_references\".\"temporary_payload_state\" IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING', 'PURGED')"
+        },
+        "study_references_temporary_payload_shape_check": {
+          "name": "study_references_temporary_payload_shape_check",
+          "value": "(\n        \"study_references\".\"temporary_payload_state\" IS NULL\n        AND \"study_references\".\"temporary_storage_ref\" IS NULL\n        AND \"study_references\".\"temporary_payload_expires_at\" IS NULL\n        AND \"study_references\".\"temporary_payload_purged_at\" IS NULL\n      ) OR (\n        \"study_references\".\"temporary_payload_state\" IS NOT NULL\n        AND\n        \"study_references\".\"temporary_payload_state\" IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')\n        AND \"study_references\".\"temporary_storage_ref\" IS NOT NULL\n        AND \"study_references\".\"temporary_payload_expires_at\" IS NOT NULL\n        AND \"study_references\".\"temporary_payload_purged_at\" IS NULL\n      ) OR (\n        \"study_references\".\"temporary_payload_state\" IS NOT NULL\n        AND\n        \"study_references\".\"temporary_payload_state\" = 'PURGED'\n        AND \"study_references\".\"temporary_storage_ref\" IS NOT NULL\n        AND \"study_references\".\"temporary_payload_expires_at\" IS NOT NULL\n        AND \"study_references\".\"temporary_payload_purged_at\" IS NOT NULL\n      )"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.consent_actions": {
+      "name": "consent_actions",
+      "schema": "",
+      "columns": {
+        "consent_action_id": {
+          "name": "consent_action_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "consent_id": {
+          "name": "consent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "consent_actions_consent_id_idx": {
+          "name": "consent_actions_consent_id_idx",
+          "columns": [
+            {
+              "expression": "consent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "consent_actions_consent_id_consents_consent_id_fk": {
+          "name": "consent_actions_consent_id_consents_consent_id_fk",
+          "tableFrom": "consent_actions",
+          "tableTo": "consents",
+          "columnsFrom": [
+            "consent_id"
+          ],
+          "columnsTo": [
+            "consent_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "consent_actions_consent_action_unique": {
+          "name": "consent_actions_consent_action_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "consent_id",
+            "action"
+          ]
+        }
+      },
+      "policies": {
+        "consent_actions_tenant_scope": {
+          "name": "consent_actions_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM consents c\n         WHERE c.consent_id = \"consent_actions\".\"consent_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM consents c\n         WHERE c.consent_id = \"consent_actions\".\"consent_id\"\n      )"
+        },
+        "consent_actions_migration_access": {
+          "name": "consent_actions_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "consent_actions_action_check": {
+          "name": "consent_actions_action_check",
+          "value": "\"consent_actions\".\"action\" IN ('VIEW', 'DOWNLOAD', 'PACS_IMPORT', 'MOBILE_EXPORT')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.consents": {
+      "name": "consents",
+      "schema": "",
+      "columns": {
+        "consent_id": {
+          "name": "consent_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "patient_ref_id": {
+          "name": "patient_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_hospital_id": {
+          "name": "destination_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "imaging_package_id": {
+          "name": "imaging_package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consent_version": {
+          "name": "consent_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "withdrawn_at": {
+          "name": "withdrawn_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "consents_one_active_per_session_uidx": {
+          "name": "consents_one_active_per_session_uidx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"consents\".\"status\" = 'ACTIVE'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consents_exchange_session_id_idx": {
+          "name": "consents_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consents_patient_ref_id_idx": {
+          "name": "consents_patient_ref_id_idx",
+          "columns": [
+            {
+              "expression": "patient_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consents_status_idx": {
+          "name": "consents_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "consents_expires_at_idx": {
+          "name": "consents_expires_at_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "consents_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "consents_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "consents",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "consents_patient_ref_id_patient_refs_patient_ref_id_fk": {
+          "name": "consents_patient_ref_id_patient_refs_patient_ref_id_fk",
+          "tableFrom": "consents",
+          "tableTo": "patient_refs",
+          "columnsFrom": [
+            "patient_ref_id"
+          ],
+          "columnsTo": [
+            "patient_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "consents_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "consents_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "consents",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "consents_destination_hospital_id_hospitals_hospital_id_fk": {
+          "name": "consents_destination_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "consents",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "destination_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "consents_imaging_package_id_imaging_packages_package_id_fk": {
+          "name": "consents_imaging_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "consents",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "imaging_package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "consents_session_version_unique": {
+          "name": "consents_session_version_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "exchange_session_id",
+            "consent_version"
+          ]
+        }
+      },
+      "policies": {
+        "consents_tenant_scope": {
+          "name": "consents_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"consents\".\"exchange_session_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"consents\".\"exchange_session_id\"\n      )"
+        },
+        "consents_migration_access": {
+          "name": "consents_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "consents_status_check": {
+          "name": "consents_status_check",
+          "value": "\"consents\".\"status\" IN ('PENDING', 'ACTIVE', 'WITHDRAWN', 'EXPIRED', 'REJECTED')"
+        },
+        "consents_version_check": {
+          "name": "consents_version_check",
+          "value": "\"consents\".\"consent_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.transfer_grant_scopes": {
+      "name": "transfer_grant_scopes",
+      "schema": "",
+      "columns": {
+        "grant_scope_id": {
+          "name": "grant_scope_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "grant_id": {
+          "name": "grant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "transfer_grant_scopes_grant_id_transfer_grants_grant_id_fk": {
+          "name": "transfer_grant_scopes_grant_id_transfer_grants_grant_id_fk",
+          "tableFrom": "transfer_grant_scopes",
+          "tableTo": "transfer_grants",
+          "columnsFrom": [
+            "grant_id"
+          ],
+          "columnsTo": [
+            "grant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "transfer_grant_scopes_grant_scope_unique": {
+          "name": "transfer_grant_scopes_grant_scope_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "grant_id",
+            "scope"
+          ]
+        }
+      },
+      "policies": {
+        "transfer_grant_scopes_tenant_scope": {
+          "name": "transfer_grant_scopes_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM transfer_grants g\n         WHERE g.grant_id = \"transfer_grant_scopes\".\"grant_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM transfer_grants g\n         WHERE g.grant_id = \"transfer_grant_scopes\".\"grant_id\"\n      )"
+        },
+        "transfer_grant_scopes_migration_access": {
+          "name": "transfer_grant_scopes_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "transfer_grant_scopes_scope_check": {
+          "name": "transfer_grant_scopes_scope_check",
+          "value": "\"transfer_grant_scopes\".\"scope\" IN ('study:view', 'study:download', 'study:pacs-transfer', 'study:mobile-export')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.transfer_grants": {
+      "name": "transfer_grants",
+      "schema": "",
+      "columns": {
+        "grant_id": {
+          "name": "grant_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consent_id": {
+          "name": "consent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient_tenant_id": {
+          "name": "recipient_tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient_hospital_id": {
+          "name": "recipient_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient_actor_id": {
+          "name": "recipient_actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imaging_package_id": {
+          "name": "imaging_package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "transfer_grants_exchange_session_id_idx": {
+          "name": "transfer_grants_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_consent_id_idx": {
+          "name": "transfer_grants_consent_id_idx",
+          "columns": [
+            {
+              "expression": "consent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_recipient_tenant_id_idx": {
+          "name": "transfer_grants_recipient_tenant_id_idx",
+          "columns": [
+            {
+              "expression": "recipient_tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_recipient_hospital_id_idx": {
+          "name": "transfer_grants_recipient_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "recipient_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_status_idx": {
+          "name": "transfer_grants_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_expires_at_idx": {
+          "name": "transfer_grants_expires_at_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_exchange_session_status_idx": {
+          "name": "transfer_grants_exchange_session_status_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "transfer_grants_tenant_actor_idempotency_key_unique": {
+          "name": "transfer_grants_tenant_actor_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "recipient_tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recipient_actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"transfer_grants\".\"idempotency_key\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "transfer_grants_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "transfer_grants_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transfer_grants_consent_id_consents_consent_id_fk": {
+          "name": "transfer_grants_consent_id_consents_consent_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "consents",
+          "columnsFrom": [
+            "consent_id"
+          ],
+          "columnsTo": [
+            "consent_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transfer_grants_recipient_tenant_id_tenants_tenant_id_fk": {
+          "name": "transfer_grants_recipient_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "recipient_tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transfer_grants_recipient_hospital_id_hospitals_hospital_id_fk": {
+          "name": "transfer_grants_recipient_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "recipient_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transfer_grants_recipient_actor_id_actors_actor_id_fk": {
+          "name": "transfer_grants_recipient_actor_id_actors_actor_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "actors",
+          "columnsFrom": [
+            "recipient_actor_id"
+          ],
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "transfer_grants_imaging_package_id_imaging_packages_package_id_fk": {
+          "name": "transfer_grants_imaging_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "transfer_grants",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "imaging_package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "transfer_grants_tenant_scope": {
+          "name": "transfer_grants_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"transfer_grants\".\"recipient_tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        OR EXISTS (\n          SELECT 1 FROM exchange_sessions e\n           WHERE e.session_id = \"transfer_grants\".\"exchange_session_id\"\n        )",
+          "withCheck": "\"transfer_grants\".\"recipient_tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        OR EXISTS (\n          SELECT 1 FROM exchange_sessions e\n           WHERE e.session_id = \"transfer_grants\".\"exchange_session_id\"\n        )"
+        },
+        "transfer_grants_migration_access": {
+          "name": "transfer_grants_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "transfer_grants_status_check": {
+          "name": "transfer_grants_status_check",
+          "value": "\"transfer_grants\".\"status\" IN ('ACTIVE', 'EXPIRED', 'REVOKED', 'CONSUMED')"
+        },
+        "transfer_grants_expiry_check": {
+          "name": "transfer_grants_expiry_check",
+          "value": "\"transfer_grants\".\"expires_at\" > \"transfer_grants\".\"issued_at\""
+        },
+        "transfer_grants_idempotency_actor_check": {
+          "name": "transfer_grants_idempotency_actor_check",
+          "value": "\"transfer_grants\".\"idempotency_key\" IS NULL OR \"transfer_grants\".\"recipient_actor_id\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.integrity_evidence": {
+      "name": "integrity_evidence",
+      "schema": "",
+      "columns": {
+        "integrity_id": {
+          "name": "integrity_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verification_stage": {
+          "name": "verification_stage",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "algorithm": {
+          "name": "algorithm",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_digest": {
+          "name": "source_digest",
+          "type": "varchar(256)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_digest": {
+          "name": "destination_digest",
+          "type": "varchar(256)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_object_count": {
+          "name": "source_object_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_object_count": {
+          "name": "destination_object_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "integrity_evidence_exchange_session_id_idx": {
+          "name": "integrity_evidence_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integrity_evidence_package_id_idx": {
+          "name": "integrity_evidence_package_id_idx",
+          "columns": [
+            {
+              "expression": "package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integrity_evidence_status_idx": {
+          "name": "integrity_evidence_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integrity_evidence_operation_stage_unique": {
+          "name": "integrity_evidence_operation_stage_unique",
+          "columns": [
+            {
+              "expression": "operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "verification_stage",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"integrity_evidence\".\"operation_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "integrity_evidence_operation_id_pacs_transfer_operations_operation_id_fk": {
+          "name": "integrity_evidence_operation_id_pacs_transfer_operations_operation_id_fk",
+          "tableFrom": "integrity_evidence",
+          "tableTo": "pacs_transfer_operations",
+          "columnsFrom": [
+            "operation_id"
+          ],
+          "columnsTo": [
+            "operation_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "integrity_evidence_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "integrity_evidence_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "integrity_evidence",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "integrity_evidence_package_id_imaging_packages_package_id_fk": {
+          "name": "integrity_evidence_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "integrity_evidence",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "integrity_evidence_study_ref_id_study_references_study_ref_id_fk": {
+          "name": "integrity_evidence_study_ref_id_study_references_study_ref_id_fk",
+          "tableFrom": "integrity_evidence",
+          "tableTo": "study_references",
+          "columnsFrom": [
+            "study_ref_id"
+          ],
+          "columnsTo": [
+            "study_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "integrity_evidence_tenant_scope": {
+          "name": "integrity_evidence_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"integrity_evidence\".\"exchange_session_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"integrity_evidence\".\"exchange_session_id\"\n      )"
+        },
+        "integrity_evidence_migration_access": {
+          "name": "integrity_evidence_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "integrity_evidence_stage_check": {
+          "name": "integrity_evidence_stage_check",
+          "value": "verification_stage IN ('SOURCE_CAPTURE', 'DESTINATION_VERIFY', 'END_TO_END')"
+        },
+        "integrity_evidence_status_check": {
+          "name": "integrity_evidence_status_check",
+          "value": "status IN ('PENDING', 'VERIFIED', 'FAILED', 'NOT_APPLICABLE')"
+        },
+        "integrity_evidence_source_count_check": {
+          "name": "integrity_evidence_source_count_check",
+          "value": "source_object_count IS NULL OR source_object_count >= 0"
+        },
+        "integrity_evidence_destination_count_check": {
+          "name": "integrity_evidence_destination_count_check",
+          "value": "destination_object_count IS NULL OR destination_object_count >= 0"
+        },
+        "integrity_evidence_source_capture_binding_check": {
+          "name": "integrity_evidence_source_capture_binding_check",
+          "value": "verification_stage <> 'SOURCE_CAPTURE' OR (\n        operation_id IS NOT NULL\n        AND study_ref_id IS NOT NULL\n        AND algorithm = 'SHA256-MANIFEST-V1'\n        AND source_digest IS NOT NULL\n        AND source_digest ~ '^sha256:[0-9a-f]{64}$'\n        AND source_object_count IS NOT NULL\n        AND source_object_count > 0\n        AND destination_digest IS NULL\n        AND destination_object_count IS NULL\n        AND status = 'PENDING'\n        AND verified_at IS NULL\n      )"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.provenance_records": {
+      "name": "provenance_records",
+      "schema": "",
+      "columns": {
+        "provenance_id": {
+          "name": "provenance_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_hospital_id": {
+          "name": "source_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_hospital_id": {
+          "name": "destination_hospital_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "integrity_id": {
+          "name": "integrity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transfer_type": {
+          "name": "transfer_type",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transfer_status": {
+          "name": "transfer_status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ingested_at": {
+          "name": "ingested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transferred_at": {
+          "name": "transferred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "provenance_records_operation_id_unique": {
+          "name": "provenance_records_operation_id_unique",
+          "columns": [
+            {
+              "expression": "operation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"provenance_records\".\"operation_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provenance_records_exchange_session_id_idx": {
+          "name": "provenance_records_exchange_session_id_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provenance_records_package_id_idx": {
+          "name": "provenance_records_package_id_idx",
+          "columns": [
+            {
+              "expression": "package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provenance_records_source_hospital_id_idx": {
+          "name": "provenance_records_source_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "source_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provenance_records_destination_hospital_id_idx": {
+          "name": "provenance_records_destination_hospital_id_idx",
+          "columns": [
+            {
+              "expression": "destination_hospital_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provenance_records_transfer_status_idx": {
+          "name": "provenance_records_transfer_status_idx",
+          "columns": [
+            {
+              "expression": "transfer_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "provenance_records_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "provenance_records_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_package_id_imaging_packages_package_id_fk": {
+          "name": "provenance_records_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_study_ref_id_study_references_study_ref_id_fk": {
+          "name": "provenance_records_study_ref_id_study_references_study_ref_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "study_references",
+          "columnsFrom": [
+            "study_ref_id"
+          ],
+          "columnsTo": [
+            "study_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_source_hospital_id_hospitals_hospital_id_fk": {
+          "name": "provenance_records_source_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "source_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_destination_hospital_id_hospitals_hospital_id_fk": {
+          "name": "provenance_records_destination_hospital_id_hospitals_hospital_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "hospitals",
+          "columnsFrom": [
+            "destination_hospital_id"
+          ],
+          "columnsTo": [
+            "hospital_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_integrity_id_integrity_evidence_integrity_id_fk": {
+          "name": "provenance_records_integrity_id_integrity_evidence_integrity_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "integrity_evidence",
+          "columnsFrom": [
+            "integrity_id"
+          ],
+          "columnsTo": [
+            "integrity_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provenance_records_operation_id_pacs_transfer_operations_operation_id_fk": {
+          "name": "provenance_records_operation_id_pacs_transfer_operations_operation_id_fk",
+          "tableFrom": "provenance_records",
+          "tableTo": "pacs_transfer_operations",
+          "columnsFrom": [
+            "operation_id"
+          ],
+          "columnsTo": [
+            "operation_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "provenance_records_tenant_scope": {
+          "name": "provenance_records_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"provenance_records\".\"exchange_session_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM exchange_sessions e\n         WHERE e.session_id = \"provenance_records\".\"exchange_session_id\"\n      )"
+        },
+        "provenance_records_migration_access": {
+          "name": "provenance_records_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "provenance_records_transfer_type_check": {
+          "name": "provenance_records_transfer_type_check",
+          "value": "transfer_type IN ('VIEW', 'DOWNLOAD', 'PACS_IMPORT', 'MOBILE_EXPORT')"
+        },
+        "provenance_records_transfer_status_check": {
+          "name": "provenance_records_transfer_status_check",
+          "value": "transfer_status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED')"
+        },
+        "provenance_records_pacs_operation_required_check": {
+          "name": "provenance_records_pacs_operation_required_check",
+          "value": "transfer_type <> 'PACS_IMPORT' OR (\n        operation_id IS NOT NULL\n        AND destination_hospital_id IS NOT NULL\n        AND study_ref_id IS NOT NULL\n      )"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.audit_events": {
+      "name": "audit_events",
+      "schema": "",
+      "columns": {
+        "audit_event_id": {
+          "name": "audit_event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resource_type": {
+          "name": "resource_type",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason_code": {
+          "name": "reason_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "audit_events_occurred_at_idx": {
+          "name": "audit_events_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_events_exchange_session_occurred_at_idx": {
+          "name": "audit_events_exchange_session_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "exchange_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_events_actor_occurred_at_idx": {
+          "name": "audit_events_actor_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_events_tenant_occurred_at_idx": {
+          "name": "audit_events_tenant_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_events_correlation_id_idx": {
+          "name": "audit_events_correlation_id_idx",
+          "columns": [
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_events_actor_id_actors_actor_id_fk": {
+          "name": "audit_events_actor_id_actors_actor_id_fk",
+          "tableFrom": "audit_events",
+          "tableTo": "actors",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "audit_events_tenant_id_tenants_tenant_id_fk": {
+          "name": "audit_events_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "audit_events",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "audit_events_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "audit_events_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "audit_events",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "audit_events_tenant_scope": {
+          "name": "audit_events_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"audit_events\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"audit_events\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        },
+        "audit_events_migration_access": {
+          "name": "audit_events_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "audit_events_result_check": {
+          "name": "audit_events_result_check",
+          "value": "result IN ('SUCCESS', 'FAILURE', 'ALLOW', 'DENY')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.pacs_transfer_operations": {
+      "name": "pacs_transfer_operations",
+      "schema": "",
+      "columns": {
+        "operation_id": {
+          "name": "operation_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exchange_session_id": {
+          "name": "exchange_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_digest": {
+          "name": "request_digest",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "reason_code": {
+          "name": "reason_code",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_object_count": {
+          "name": "source_object_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_object_count": {
+          "name": "destination_object_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stow_started_at": {
+          "name": "stow_started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "pacs_transfer_operations_state_updated_idx": {
+          "name": "pacs_transfer_operations_state_updated_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "pacs_transfer_operations_tenant_id_tenants_tenant_id_fk": {
+          "name": "pacs_transfer_operations_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "pacs_transfer_operations",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "pacs_transfer_operations_exchange_session_id_exchange_sessions_session_id_fk": {
+          "name": "pacs_transfer_operations_exchange_session_id_exchange_sessions_session_id_fk",
+          "tableFrom": "pacs_transfer_operations",
+          "tableTo": "exchange_sessions",
+          "columnsFrom": [
+            "exchange_session_id"
+          ],
+          "columnsTo": [
+            "session_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "pacs_transfer_operations_study_ref_id_study_references_study_ref_id_fk": {
+          "name": "pacs_transfer_operations_study_ref_id_study_references_study_ref_id_fk",
+          "tableFrom": "pacs_transfer_operations",
+          "tableTo": "study_references",
+          "columnsFrom": [
+            "study_ref_id"
+          ],
+          "columnsTo": [
+            "study_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "pacs_transfer_operations_actor_id_actors_actor_id_fk": {
+          "name": "pacs_transfer_operations_actor_id_actors_actor_id_fk",
+          "tableFrom": "pacs_transfer_operations",
+          "tableTo": "actors",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "pacs_transfer_operations_session_study_unique": {
+          "name": "pacs_transfer_operations_session_study_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "exchange_session_id",
+            "study_ref_id"
+          ]
+        },
+        "pacs_transfer_operations_tenant_actor_key_unique": {
+          "name": "pacs_transfer_operations_tenant_actor_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "actor_id",
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {
+        "pacs_transfer_operations_tenant_scope": {
+          "name": "pacs_transfer_operations_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_runtime"
+          ],
+          "using": "\"pacs_transfer_operations\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        AND EXISTS (\n          SELECT 1 FROM actors a\n           WHERE a.actor_id = \"pacs_transfer_operations\".\"actor_id\"\n             AND a.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        )\n        AND EXISTS (\n          SELECT 1 FROM exchange_sessions e\n           WHERE e.session_id = \"pacs_transfer_operations\".\"exchange_session_id\"\n        )",
+          "withCheck": "\"pacs_transfer_operations\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        AND EXISTS (\n          SELECT 1 FROM actors a\n           WHERE a.actor_id = \"pacs_transfer_operations\".\"actor_id\"\n             AND a.tenant_id = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n\n        )\n        AND EXISTS (\n          SELECT 1 FROM exchange_sessions e\n           WHERE e.session_id = \"pacs_transfer_operations\".\"exchange_session_id\"\n        )"
+        },
+        "pacs_transfer_operations_migration_access": {
+          "name": "pacs_transfer_operations_migration_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "pacs_transfer_operations_mediq_quota_owner_tenant_scope": {
+          "name": "pacs_transfer_operations_mediq_quota_owner_tenant_scope",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "\"pacs_transfer_operations\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        }
+      },
+      "checkConstraints": {
+        "pacs_transfer_operations_state_check": {
+          "name": "pacs_transfer_operations_state_check",
+          "value": "\"pacs_transfer_operations\".\"state\" IN ('CREATED', 'PREFLIGHT_PASSED', 'STOW_STARTED', 'VERIFYING', 'COMPLETED', 'DENIED', 'FAILED', 'PARTIAL', 'RESULT_UNKNOWN')"
+        },
+        "pacs_transfer_operations_version_check": {
+          "name": "pacs_transfer_operations_version_check",
+          "value": "\"pacs_transfer_operations\".\"version\" >= 0"
+        },
+        "pacs_transfer_operations_digest_check": {
+          "name": "pacs_transfer_operations_digest_check",
+          "value": "\"pacs_transfer_operations\".\"request_digest\" ~ '^[0-9a-f]{64}$'"
+        },
+        "pacs_transfer_operations_reason_code_check": {
+          "name": "pacs_transfer_operations_reason_code_check",
+          "value": "\"pacs_transfer_operations\".\"reason_code\" IS NULL OR \"pacs_transfer_operations\".\"reason_code\" ~ '^[A-Z0-9_]{1,64}$'"
+        },
+        "pacs_transfer_operations_source_count_check": {
+          "name": "pacs_transfer_operations_source_count_check",
+          "value": "\"pacs_transfer_operations\".\"source_object_count\" IS NULL OR \"pacs_transfer_operations\".\"source_object_count\" >= 0"
+        },
+        "pacs_transfer_operations_destination_count_check": {
+          "name": "pacs_transfer_operations_destination_count_check",
+          "value": "\"pacs_transfer_operations\".\"destination_object_count\" IS NULL OR \"pacs_transfer_operations\".\"destination_object_count\" >= 0"
+        },
+        "pacs_transfer_operations_dispatch_timestamp_check": {
+          "name": "pacs_transfer_operations_dispatch_timestamp_check",
+          "value": "(\"pacs_transfer_operations\".\"state\" IN ('CREATED', 'PREFLIGHT_PASSED', 'DENIED') AND \"pacs_transfer_operations\".\"stow_started_at\" IS NULL)\n        OR (\"pacs_transfer_operations\".\"state\" IN ('STOW_STARTED', 'VERIFYING', 'COMPLETED', 'PARTIAL', 'RESULT_UNKNOWN') AND \"pacs_transfer_operations\".\"stow_started_at\" IS NOT NULL)\n        OR \"pacs_transfer_operations\".\"state\" = 'FAILED'"
+        },
+        "pacs_transfer_operations_completed_count_check": {
+          "name": "pacs_transfer_operations_completed_count_check",
+          "value": "\"pacs_transfer_operations\".\"state\" <> 'COMPLETED' OR (\n        \"pacs_transfer_operations\".\"source_object_count\" IS NOT NULL\n        AND \"pacs_transfer_operations\".\"source_object_count\" > 0\n        AND \"pacs_transfer_operations\".\"destination_object_count\" = \"pacs_transfer_operations\".\"source_object_count\"\n      )"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.temporary_payload_package_quotas": {
+      "name": "temporary_payload_package_quotas",
+      "schema": "",
+      "columns": {
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reserved_bytes": {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "temporary_payload_package_quotas_package_id_imaging_packages_package_id_fk": {
+          "name": "temporary_payload_package_quotas_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "temporary_payload_package_quotas",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "temporary_payload_package_quotas_mediq_quota_owner_scope": {
+          "name": "temporary_payload_package_quotas_mediq_quota_owner_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"temporary_payload_package_quotas\".\"package_id\"\n      )",
+          "withCheck": "EXISTS (\n        SELECT 1 FROM imaging_packages p\n         WHERE p.package_id = \"temporary_payload_package_quotas\".\"package_id\"\n      )"
+        },
+        "temporary_payload_package_quotas_mediq_migrator_scope": {
+          "name": "temporary_payload_package_quotas_mediq_migrator_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "temporary_payload_package_quotas_bytes_check": {
+          "name": "temporary_payload_package_quotas_bytes_check",
+          "value": "\"temporary_payload_package_quotas\".\"reserved_bytes\" >= 0 AND \"temporary_payload_package_quotas\".\"reserved_bytes\" <= 2147483648"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.temporary_payload_quota_state": {
+      "name": "temporary_payload_quota_state",
+      "schema": "",
+      "columns": {
+        "singleton_id": {
+          "name": "singleton_id",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "max_environment_bytes": {
+          "name": "max_environment_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10737418240
+        },
+        "max_package_bytes": {
+          "name": "max_package_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 2147483648
+        },
+        "reserved_bytes": {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "temporary_payload_quota_state_mediq_quota_owner_scope": {
+          "name": "temporary_payload_quota_state_mediq_quota_owner_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        },
+        "temporary_payload_quota_state_mediq_migrator_scope": {
+          "name": "temporary_payload_quota_state_mediq_migrator_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "temporary_payload_quota_singleton_check": {
+          "name": "temporary_payload_quota_singleton_check",
+          "value": "\"temporary_payload_quota_state\".\"singleton_id\""
+        },
+        "temporary_payload_quota_environment_limit_check": {
+          "name": "temporary_payload_quota_environment_limit_check",
+          "value": "\"temporary_payload_quota_state\".\"max_environment_bytes\" > 0 AND \"temporary_payload_quota_state\".\"max_environment_bytes\" <= 10737418240"
+        },
+        "temporary_payload_quota_package_limit_check": {
+          "name": "temporary_payload_quota_package_limit_check",
+          "value": "\"temporary_payload_quota_state\".\"max_package_bytes\" > 0 AND \"temporary_payload_quota_state\".\"max_package_bytes\" <= 2147483648"
+        },
+        "temporary_payload_quota_reserved_bytes_check": {
+          "name": "temporary_payload_quota_reserved_bytes_check",
+          "value": "\"temporary_payload_quota_state\".\"reserved_bytes\" >= 0 AND \"temporary_payload_quota_state\".\"reserved_bytes\" <= \"temporary_payload_quota_state\".\"max_environment_bytes\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.temporary_payload_reservations": {
+      "name": "temporary_payload_reservations",
+      "schema": "",
+      "columns": {
+        "storage_ref": {
+          "name": "storage_ref",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "quota_state_id": {
+          "name": "quota_state_id",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "study_ref_id": {
+          "name": "study_ref_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "package_id": {
+          "name": "package_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "writer_id": {
+          "name": "writer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reserved_bytes": {
+          "name": "reserved_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "settled": {
+          "name": "settled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "temporary_payload_reservations_tenant_package_idx": {
+          "name": "temporary_payload_reservations_tenant_package_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "temporary_payload_reservations_tenant_study_idx": {
+          "name": "temporary_payload_reservations_tenant_study_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "study_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "temporary_payload_reservations_quota_state_id_temporary_payload_quota_state_singleton_id_fk": {
+          "name": "temporary_payload_reservations_quota_state_id_temporary_payload_quota_state_singleton_id_fk",
+          "tableFrom": "temporary_payload_reservations",
+          "tableTo": "temporary_payload_quota_state",
+          "columnsFrom": [
+            "quota_state_id"
+          ],
+          "columnsTo": [
+            "singleton_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "temporary_payload_reservations_tenant_id_tenants_tenant_id_fk": {
+          "name": "temporary_payload_reservations_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "temporary_payload_reservations",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "temporary_payload_reservations_study_ref_id_study_references_study_ref_id_fk": {
+          "name": "temporary_payload_reservations_study_ref_id_study_references_study_ref_id_fk",
+          "tableFrom": "temporary_payload_reservations",
+          "tableTo": "study_references",
+          "columnsFrom": [
+            "study_ref_id"
+          ],
+          "columnsTo": [
+            "study_ref_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "temporary_payload_reservations_package_id_imaging_packages_package_id_fk": {
+          "name": "temporary_payload_reservations_package_id_imaging_packages_package_id_fk",
+          "tableFrom": "temporary_payload_reservations",
+          "tableTo": "imaging_packages",
+          "columnsFrom": [
+            "package_id"
+          ],
+          "columnsTo": [
+            "package_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "temporary_payload_reservations_mediq_quota_owner_scope": {
+          "name": "temporary_payload_reservations_mediq_quota_owner_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_quota_owner"
+          ],
+          "using": "\"temporary_payload_reservations\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n",
+          "withCheck": "\"temporary_payload_reservations\".\"tenant_id\" = \n  NULLIF(current_setting('mediq.tenant_id', true), '')::uuid\n"
+        },
+        "temporary_payload_reservations_mediq_migrator_scope": {
+          "name": "temporary_payload_reservations_mediq_migrator_scope",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "mediq_migrator"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "temporary_payload_reservations_bytes_check": {
+          "name": "temporary_payload_reservations_bytes_check",
+          "value": "\"temporary_payload_reservations\".\"reserved_bytes\" >= 0 AND \"temporary_payload_reservations\".\"reserved_bytes\" <= 2147483648"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

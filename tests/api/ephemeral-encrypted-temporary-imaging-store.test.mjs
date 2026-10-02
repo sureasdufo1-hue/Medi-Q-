@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -249,6 +249,144 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     })));
     await Promise.all(retryWriters.map((writer) => writer.write(Buffer.alloc(4, 0x2b))));
     await Promise.all(retryWriters.map((writer) => writer.abort()));
+  });
+
+  it("requires shared quota for a reserved package and reserves database blocks before ciphertext writes", async () => {
+    const { store } = await setup();
+    await expect(store.beginReservedPackage(packageBinding, randomUUID())).rejects.toMatchObject({
+      code: "QUOTA_UNAVAILABLE",
+    });
+
+    let releaseReservation;
+    let notifyReserve;
+    const reserveStarted = new Promise((resolve) => { notifyReserve = resolve; });
+    const calls = [];
+    const sharedQuota = {
+      reserve: async (input) => {
+        calls.push({ kind: "reserve", ...input });
+        notifyReserve();
+        await new Promise((resolve) => { releaseReservation = resolve; });
+      },
+      settle: async (input) => calls.push({ kind: "settle", ...input }),
+    };
+    const root = await mkdtemp(join(tmpdir(), "mediq-shared-quota-"));
+    roots.push(root);
+    const storageRoot = join(root, "private-store");
+    const reservedStore = new EphemeralEncryptedTemporaryImagingStore({
+      rootDirectory: storageRoot,
+      sharedQuota,
+    });
+    const storageRef = randomUUID();
+    const handle = await reservedStore.beginReservedPackage(packageBinding, storageRef);
+    const writer = await reservedStore.beginInstance({
+      storageRef,
+      packageBinding,
+      instanceBinding,
+    });
+    const bytes = Buffer.from("SYNTHETIC-QUOTA-BLOCK");
+    const pendingWrite = writer.write(bytes);
+    await reserveStarted;
+    const [objectFile] = await readdir(join(storageRoot, storageRef));
+    expect((await stat(join(storageRoot, storageRef, objectFile))).size).toBe(0);
+    expect(calls[0]).toMatchObject({
+      kind: "reserve",
+      tenantId: packageBinding.tenantId,
+      studyRefId: instanceBinding.studyRefId,
+      storageRef,
+      deltaBytes: 16 * 1024 * 1024,
+    });
+
+    releaseReservation();
+    await pendingWrite;
+    const receipt = await writer.complete({
+      byteLength: bytes.byteLength,
+      sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    });
+    await reservedStore.sealPackage({ storageRef, binding: packageBinding });
+    expect(calls.at(-1)).toMatchObject({
+      kind: "settle",
+      storageRef,
+      actualBytes: bytes.byteLength,
+    });
+    expect(await reservedStore.readInstance({
+      storageRef,
+      objectRef: receipt.objectRef,
+      packageBinding,
+      instanceBinding,
+      expectedByteLength: receipt.byteLength,
+      expectedSha256: receipt.sha256,
+    })).toEqual(bytes);
+  });
+
+  it("reserves additional 16 MiB blocks and fails closed if quota admission fails", async () => {
+    const reservations = [];
+    let settleInput;
+    const sharedQuota = {
+      reserve: async (input) => reservations.push(input),
+      settle: async (input) => { settleInput = input; },
+    };
+    const root = await mkdtemp(join(tmpdir(), "mediq-shared-quota-blocks-"));
+    roots.push(root);
+    const storageRoot = join(root, "private-store");
+    const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, sharedQuota });
+    const storageRef = randomUUID();
+    const handle = await store.beginReservedPackage(packageBinding, storageRef);
+    const bytes = Buffer.alloc(16 * 1024 * 1024 + 1, 0x61);
+    const writer = await store.beginInstance({
+      storageRef,
+      packageBinding,
+      instanceBinding,
+    });
+    await writer.write(bytes);
+    const receipt = await writer.complete({
+      byteLength: bytes.byteLength,
+      sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    });
+    expect(reservations.map((reservation) => reservation.deltaBytes)).toEqual([
+      16 * 1024 * 1024,
+      16 * 1024 * 1024,
+    ]);
+    await store.sealPackage({ storageRef, binding: packageBinding });
+    expect(settleInput).toMatchObject({ storageRef, actualBytes: bytes.byteLength });
+    expect(receipt.byteLength).toBe(bytes.byteLength);
+
+    const failingRoot = await mkdtemp(join(tmpdir(), "mediq-shared-quota-deny-"));
+    roots.push(failingRoot);
+    const failingStore = new EphemeralEncryptedTemporaryImagingStore({
+      rootDirectory: join(failingRoot, "private-store"),
+      sharedQuota: {
+        reserve: async () => { throw new Error("database details must not escape"); },
+        settle: async () => { throw new Error("not expected"); },
+      },
+    });
+    const failedRef = randomUUID();
+    const failedHandle = await failingStore.beginReservedPackage(packageBinding, failedRef);
+    await expect(stage(failingStore, failedHandle, Buffer.from("deny-before-write"))).rejects.toMatchObject({
+      code: "QUOTA_UNAVAILABLE",
+    });
+    expect(await readdir(join(failingRoot, "private-store", failedRef))).toEqual([]);
+  }, 20_000);
+
+  it("does not allow another StudyReference in one reserved package", async () => {
+    const sharedQuota = { reserve: async () => {}, settle: async () => {} };
+    const root = await mkdtemp(join(tmpdir(), "mediq-shared-quota-study-"));
+    roots.push(root);
+    const store = new EphemeralEncryptedTemporaryImagingStore({
+      rootDirectory: join(root, "private-store"),
+      sharedQuota,
+    });
+    const storageRef = randomUUID();
+    await store.beginReservedPackage(packageBinding, storageRef);
+    await store.beginInstance({
+      storageRef,
+      packageBinding,
+      instanceBinding: { ...instanceBinding, studyRefId: randomUUID() },
+    });
+    await expect(store.beginInstance({
+      storageRef,
+      packageBinding,
+      instanceBinding: { ...instanceBinding, sopInstanceUid: "2.25.21" },
+    })).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
   });
 
   it("does not decrypt after restart and permits only purge-only recovery by opaque ref", async () => {

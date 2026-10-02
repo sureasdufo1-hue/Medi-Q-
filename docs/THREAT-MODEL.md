@@ -1645,6 +1645,7 @@ PACS-001-DEC-009: internal PURGE_PENDING → physical unlink → PURGED+Audit sa
 30-minute P0 TTL / immediate expiry denial / Tenant-RLS purge Audit
 one Study purge cannot mutate a shared ImagingPackage or sibling Study
 `STAGE-001` and scoped `STAGE-007/008/013/014` PASS only in synthetic/local filesystem + disposable PostgreSQL/RLS tests; `STAGE-005/009/010/011/012` remain unverified; no runtime staging path may be enabled
+DEC-010 reserve-before-write / seal-settle / post-unlink release code is wired; migration and purge/RLS compatibility were exercised in scratch, but quota edge limits and independent-session contention are NOT RUN
 ```
 
 ### Requirements
@@ -1657,7 +1658,7 @@ SEC-CACHE-001
 
 ### Residual Risk
 
-MEDIUM — Physical purge/restart sub-gates have scoped synthetic and disposable PostgreSQL/RLS evidence, but runtime lifecycle, cleanup scheduling, shared quota, privacy and no-side-effect Acceptance remain incomplete.
+MEDIUM — Physical purge/restart sub-gates have scoped synthetic and disposable PostgreSQL/RLS evidence. Shared quota wiring exists but size/contention Acceptance is incomplete; runtime lifecycle, cleanup scheduling, privacy and no-side-effect Acceptance remain incomplete.
 
 이유:
 

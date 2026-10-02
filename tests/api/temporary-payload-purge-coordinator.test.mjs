@@ -34,14 +34,17 @@ function createRunner(options = {}) {
   const { events } = options;
   let state = "AVAILABLE";
   let auditCount = 0;
+  let reservedBytes = 100;
   let runCount = 0;
   return {
     get state() { return state; },
     get auditCount() { return auditCount; },
+    get reservedBytes() { return reservedBytes; },
     async run(_principal, tenantId, work) {
       runCount += 1;
       const beforeState = state;
       const beforeAuditCount = auditCount;
+      const beforeReservedBytes = reservedBytes;
       events?.push(`transaction-${runCount}:begin`);
       const client = {
         async query(query) {
@@ -60,6 +63,12 @@ function createRunner(options = {}) {
             if (state !== "PURGE_PENDING") return { rowCount: 0, rows: [] };
             state = "PURGED";
             return { rowCount: 1, rows: [] };
+          }
+          if (text.includes("release_temporary_payload_quota")) {
+            events?.push("quota:release");
+            if (state !== "PURGED") throw new Error("quota release must follow PURGED metadata");
+            reservedBytes = 0;
+            return { rowCount: 1, rows: [{ release_temporary_payload_quota: 100 }] };
           }
           if (text.includes("SELECT sr.temporary_payload_state")) {
             return { rowCount: 1, rows: [{ temporary_payload_state: state, temporary_storage_ref: ids.storageRef }] };
@@ -92,6 +101,7 @@ function createRunner(options = {}) {
         if (!(options.ambiguousFinalCommit && runCount === 2 && state === "PURGED" && auditCount > beforeAuditCount)) {
           state = beforeState;
           auditCount = beforeAuditCount;
+          reservedBytes = beforeReservedBytes;
           events?.push(`transaction-${runCount}:rollback`);
         }
         throw error;
@@ -149,11 +159,13 @@ describe("PACS-001 DEC-009 temporary payload purge coordinator", () => {
       "filesystem:purge",
       "transaction-2:begin",
       "metadata:purged",
+      "quota:release",
       "audit:success",
       "transaction-2:commit",
     ]);
     expect(runner.state).toBe("PURGED");
     expect(runner.auditCount).toBe(1);
+    expect(runner.reservedBytes).toBe(0);
   });
 
   it("does not touch storage if the pending metadata transaction fails", async () => {
@@ -201,10 +213,12 @@ describe("PACS-001 DEC-009 temporary payload purge coordinator", () => {
     });
     expect(runner.state).toBe("PURGE_PENDING");
     expect(runner.auditCount).toBe(0);
+    expect(runner.reservedBytes).toBe(100);
     failAudit = false;
     await expect(coordinator.purge(command())).resolves.toEqual({ kind: "PURGED" });
     expect(runner.state).toBe("PURGED");
     expect(runner.auditCount).toBe(1);
+    expect(runner.reservedBytes).toBe(0);
   });
 
   it("does not duplicate Audit after an ambiguous final commit and a retry", async () => {
@@ -220,6 +234,7 @@ describe("PACS-001 DEC-009 temporary payload purge coordinator", () => {
     });
     expect(runner.state).toBe("PURGED");
     expect(runner.auditCount).toBe(1);
+    expect(runner.reservedBytes).toBe(0);
     ambiguous = false;
     await expect(coordinator.purge(command())).resolves.toEqual({ kind: "ALREADY_PURGED" });
     expect(runner.auditCount).toBe(1);
