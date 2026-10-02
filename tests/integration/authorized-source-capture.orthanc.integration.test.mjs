@@ -88,6 +88,9 @@ const fixture = Object.freeze({
   operationNotCreatedId: "1b000000-0000-4000-8000-000000000013",
   operationMissingCountId: "1b000000-0000-4000-8000-000000000014",
   operationInFlightRevocationId: "1b000000-0000-4000-8000-000000000015",
+  cap012StartOperationId: "1b000000-0000-4000-8000-000000000021",
+  cap012EvidenceOperationId: "1b000000-0000-4000-8000-000000000022",
+  cap012SuccessAuditOperationId: "1b000000-0000-4000-8000-000000000023",
   correlationDenied: "1d000000-0000-4000-8000-000000000001",
   correlationFailure: "1d000000-0000-4000-8000-000000000002",
   correlationSuccess: "1d000000-0000-4000-8000-000000000003",
@@ -116,6 +119,9 @@ const fixture = Object.freeze({
   correlationPatientIdMismatch: "1d000000-0000-4000-8000-000000000026",
   correlationInFlightRevocation: "1d000000-0000-4000-8000-000000000027",
   correlationGrantRevocation: "1d000000-0000-4000-8000-000000000028",
+  cap012StartCorrelation: "1d000000-0000-4000-8000-000000000029",
+  cap012EvidenceCorrelation: "1d000000-0000-4000-8000-000000000030",
+  cap012SuccessAuditCorrelation: "1d000000-0000-4000-8000-000000000031",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -125,6 +131,38 @@ const fixture = Object.freeze({
   expiredConsentGrantId: "1a000000-0000-4000-8000-000000000015",
   issuer: "https://synthetic-issuer.test",
 });
+const cap012Scenarios = Object.freeze([
+  Object.freeze({
+    name: "start Audit INSERT failure prevents all source WADO",
+    operationId: fixture.cap012StartOperationId,
+    correlationId: fixture.cap012StartCorrelation,
+    consentId: "19000000-0000-4000-8000-000000000041",
+    grantId: "1a000000-0000-4000-8000-000000000041",
+    failingQuery: "AUDIT_INSERT_SQLSTATE_P0001_",
+    expectedSourceRequests: [],
+    expectedInstanceCount: 0,
+  }),
+  Object.freeze({
+    name: "pending-evidence INSERT failure rolls back after consuming A streams",
+    operationId: fixture.cap012EvidenceOperationId,
+    correlationId: fixture.cap012EvidenceCorrelation,
+    consentId: "19000000-0000-4000-8000-000000000042",
+    grantId: "1a000000-0000-4000-8000-000000000042",
+    failingQuery: "EVIDENCE_INSERT_SQLSTATE_P0001_",
+    expectedSourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"],
+    expectedInstanceCount: manifest.instanceCount,
+  }),
+  Object.freeze({
+    name: "success Audit INSERT failure rolls back the pending-evidence INSERT",
+    operationId: fixture.cap012SuccessAuditOperationId,
+    correlationId: fixture.cap012SuccessAuditCorrelation,
+    consentId: "19000000-0000-4000-8000-000000000043",
+    grantId: "1a000000-0000-4000-8000-000000000043",
+    failingQuery: "AUDIT_INSERT_SQLSTATE_P0001_",
+    expectedSourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"],
+    expectedInstanceCount: manifest.instanceCount,
+  }),
+]);
 const principal = Object.freeze({
   issuer: fixture.issuer,
   subject: fixture.subject,
@@ -249,6 +287,8 @@ function createHarness({
                       ? "SOURCE_SCOPE"
                       : statement.includes("INSERT INTO audit_events")
                         ? "AUDIT_INSERT"
+                        : statement.includes("INSERT INTO integrity_evidence")
+                          ? "EVIDENCE_INSERT"
                         : statement.startsWith("RESET ")
                         ? "TENANT_RESET"
                           : statement === "BEGIN"
@@ -1073,6 +1113,55 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       await harness.database.onModuleDestroy();
     }
   });
+
+  for (const scenario of cap012Scenarios) {
+    await t.test(`TC-INT-001-CAP-012 ${scenario.name}`, async () => {
+      const postWado = scenario.expectedInstanceCount > 0;
+      const harness = createHarness({ observeInstanceStreams: postWado });
+      try {
+        await assert.rejects(
+          harness.service.capture(captureCommand(
+            scenario.correlationId,
+            scenario.operationId,
+            { consentId: scenario.consentId, grantId: scenario.grantId },
+          )),
+          (error) => {
+            assert.ok(error instanceof AuthorizedSourceCaptureUnavailableError);
+            assert.equal(error.message, "SOURCE_CAPTURE_UNAVAILABLE");
+            assert.doesNotMatch(error.message, /P0001|INT001|PostgreSQL|audit_events|integrity_evidence/i);
+            return true;
+          },
+        );
+
+        const counters = harness.counters();
+        assert.deepEqual(counters.sourceRequests, scenario.expectedSourceRequests);
+        assert.equal(counters.metadataCalls, postWado ? 1 : 0);
+        assert.equal(counters.instanceCalls, scenario.expectedInstanceCount);
+        assert.equal(counters.activeTenantTransactions, 0);
+        assert.equal(counters.activeInstanceStreams, 0, "CAP012_ALL_SOURCE_STREAMS_CLOSED");
+        assert.equal(counters.stowCalls, 0);
+        assert.equal(counters.destinationVerificationCalls, 0);
+        assert.equal(counters.forbiddenEndpointAttempts, 0);
+        assert.ok(
+          counters.databaseFailures.some((failure) => failure.startsWith(scenario.failingQuery)),
+          "CAP012_EXPECTED_OPERATION_BOUND_TEST_TRIGGER_FIRED",
+        );
+        if (postWado) {
+          assert.equal(counters.initialAuthorizationCommitted, true);
+          assert.equal(counters.instanceStreamCompletionOrder.length, manifest.instanceCount);
+          assert.equal(counters.maximumActiveInstanceStreams, 1);
+        } else {
+          assert.equal(counters.initialAuthorizationCommitted, false);
+        }
+
+        const state = await readOperationState(harness, scenario.operationId);
+        assert.equal(state.operationState, "CREATED", "CAP012_OPERATION_STATE_UNCHANGED");
+        assert.deepEqual(state.evidence, [], "CAP012_NO_PENDING_EVIDENCE_AFTER_FAILURE");
+      } finally {
+        await harness.database.onModuleDestroy();
+      }
+    });
+  }
 
   await t.test("TC-INT-001-CAP-010/014 commits one operation-bound pending baseline and success Audit", async () => {
     const harness = createHarness({ observeInstanceStreams: true });

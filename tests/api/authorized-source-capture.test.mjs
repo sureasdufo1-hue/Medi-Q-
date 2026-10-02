@@ -217,6 +217,9 @@ function makeHarness(options = {}) {
             return { rowCount: 1, rows: [] };
           }
           if (sql.includes("INSERT INTO integrity_evidence")) {
+            if (options.failEvidenceInsert === true) {
+              throw new Error("synthetic evidence sink failure");
+            }
             const row = {
               integrity_id: values[0],
               operation_id: values[5],
@@ -846,6 +849,34 @@ describe("AuthorizedSourceCaptureService", () => {
     });
   });
 
+  it("TC-INT-001-CAP-012 start Audit failure returns fixed unavailable and prevents all WADO", async () => {
+    const harness = makeHarness({ failAuditAction: "PACS_SOURCE_CAPTURE_STARTED" });
+    await expect(harness.service.capture(command())).rejects.toMatchObject({
+      message: "SOURCE_CAPTURE_UNAVAILABLE",
+    });
+
+    expect(harness.dicomCalls).toMatchObject({ metadata: 0, instances: 0, destinationWrites: 0 });
+    expect(harness.committedAudits).toHaveLength(0);
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(harness.operationState).toBe("CREATED");
+  });
+
+  it("TC-INT-001-CAP-012 evidence INSERT failure leaves no evidence or success Audit", async () => {
+    const harness = makeHarness({ failEvidenceInsert: true });
+    await expect(harness.service.capture(command())).rejects.toMatchObject({
+      message: "SOURCE_CAPTURE_UNAVAILABLE",
+    });
+
+    expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_CAPTURE_PERSISTENCE_FAILED" },
+    ]);
+    expect(harness.operationState).toBe("CREATED");
+    expect(harness.rollbackReasons.length).toBeGreaterThan(0);
+  });
+
   it("TC-INT-001-CAP-012 rolls back evidence if the final success Audit fails", async () => {
     const harness = makeHarness({ failAuditAction: "PACS_SOURCE_CAPTURED" });
     await expect(harness.service.capture(command())).rejects.toMatchObject({
@@ -858,6 +889,8 @@ describe("AuthorizedSourceCaptureService", () => {
       { action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_CAPTURE_PERSISTENCE_FAILED" },
     ]);
     expect(harness.rollbackReasons.length).toBeGreaterThan(0);
+    expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
+    expect(harness.operationState).toBe("CREATED");
   });
 
   it("TC-INT-001-CAP-001/004 rejects caller-supplied scope, endpoint and credentials before authorization; no browser controller", async () => {

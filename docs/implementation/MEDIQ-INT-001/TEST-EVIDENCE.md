@@ -6,7 +6,7 @@
 | 제목 | Bounded source integrity and authorized synthetic source-capture sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-02` |
-| 결과 | `PARTIAL` — CAP-001~011, CAP-013~014 pass only within recorded synthetic scopes; CAP-005/007/008 passed their recorded 3×31/31 and CAP-009/010/011 each passed 3×32/32 isolated gates; CAP-012, destination/transfer workflow and full P0 remain open |
+| 결과 | `PARTIAL` — CAP-001~014 pass only within their recorded synthetic scopes; CAP-005/007/008 passed 3×31/31, CAP-009/010/011 passed 3×32/32, and CAP-012 passed 3×35/35 isolated gates; destination/transfer workflow and full P0 remain open |
 
 ## 1. 검증 환경
 
@@ -14,7 +14,7 @@
 |---|---|
 | OS | Windows local development workspace |
 | Runtime·Toolchain | Node.js 24.18.0; npm 11; TypeScript 6.0.3; Vitest 5.0.2 |
-| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/005/006/009/010/011/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
+| 대상 환경 | Local synthetic unit/build checks; disposable DB-008 PostgreSQL/RLS scratch; isolated CAP-001/002/003/004/005/006/009/010/011/012/014 PostgreSQL + HTTPS Test Orthanc A/B Compose project |
 | 데이터 | Synthetic/Test only |
 
 ## 2. 검증 매트릭스
@@ -212,7 +212,7 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 ### Current boundary
 
 - New application-service tests exercise mocked authorization, operation scope, PatientMapping, metadata/count checks, source errors, in-flight revocation/mapping changes, and audit/evidence rollback behavior. They do not prove PostgreSQL grants/RLS or real PACS endpoint behavior.
-- `TC-INT-001-CAP-001~011` and `CAP-013~014` are `PASS` for their recorded scopes. CAP-005/007/008 each passed three consecutive fresh isolated runs (31/31); CAP-009/010/011 each passed three consecutive fresh isolated runs (32/32). The historical pre-metadata Tenant-context failure root cause remains unknown. CAP-012 remains open.
+- `TC-INT-001-CAP-001~014` are `PASS` only for their recorded scopes. CAP-005/007/008 each passed three consecutive fresh isolated runs (31/31); CAP-009/010/011 each passed three fresh isolated runs (32/32); CAP-012 passed three fresh isolated runs (35/35). The historical pre-metadata Tenant-context failure root cause remains unknown.
 - The exact permanent runtime grant migration is present and validated. The service remains internal-only and is not reachable through HTTP; CAP-014 proves only the isolated synthetic source-capture boundary, not destination import or B-side product behavior.
 - No STOW, B write, destination verification or full A→B E2E was run or claimed.
 
@@ -360,4 +360,23 @@ The row above is a historical pre-CAP-014 checkpoint and is superseded by sectio
 ```
 
 - Each run: exit 0; 32/32 Node tests; independent read-only observer PASS for exact 12-column `audit_events` schema and raw source-capture Audit row allowlist/context, fixed 11-tuple catalog, Study-reference UUID binding, valid timestamps and sensitive-value absence. A streams/previous runner guarantees remained; B EMPTY before/after; STOW/destination calls 0; cleanup PASS; existing stack unchanged.
-- `git diff --check` passed. Judgment: `TC-INT-001-CAP-011` is `PASS (scoped)` for the enumerated source-capture Audit paths only. Global Audit completeness, retention/tamper resistance, other Audit producers, production PACS and full A→B remain outside this Acceptance; CAP-012 remains open.
+- `git diff --check` passed. Judgment: `TC-INT-001-CAP-011` is `PASS (scoped)` for the enumerated source-capture Audit paths only. Global Audit completeness, retention/tamper resistance, other Audit producers, production PACS and full A→B remain outside this Acceptance; CAP-012 is separately closed only within the scoped INSERT-failure Acceptance below.
+
+## 18. CAP-012 — Source-capture persistence failure and atomic rollback (PASS, scoped)
+
+- Decision/Acceptance: `INT-001-CAP-012-REC-001` and the detailed `TC-INT-001-CAP-012` were recorded before CAP-012 fixture, test or runner changes. Fault injection is authorized only inside each fresh disposable PostgreSQL project.
+- Unit command: `npx vitest run tests/api/authorized-source-capture.test.mjs --reporter=dot`; exit 0; 1 file / 40 tests passed. The mocked service tests prove fixed unavailable results, no WADO/no persisted start Audit on start-Audit failure, no evidence/success Audit on evidence-write failure, and a fixed failure Audit when the separate sink is available.
+- Full API build/regression: `npm run test:api -- --reporter=dot`; exit 0; build passed; 35 files / 642 tests passed.
+- Isolated command, run three consecutive times in unique fresh PostgreSQL/RLS + HTTPS Test Orthanc A/B Compose projects without in-run retries:
+
+```powershell
+./scripts/test-int001-source-capture.ps1
+```
+
+- Every run exited 0 with 35/35 Node tests. Disposable seeder installed narrowly bound PostgreSQL `BEFORE INSERT` triggers for: (1) the fixed start-Audit correlation/action; (2) one operation-bound `SOURCE_CAPTURE/PENDING` evidence insert; and (3) one final success-Audit correlation/action. Trigger errors used fixed SQLSTATE `P0001` and a fixed test message; caller-visible result remained `SOURCE_CAPTURE_UNAVAILABLE` with no raw DB details.
+- Start-Audit failure: the real runtime-role attempt hit the trigger; zero A metadata/instance requests; no source-capture Audit, evidence or state transition; operation stayed `CREATED`.
+- Pending-evidence insert failure after WADO: A metadata plus all three instance streams were read and closed; final transaction left no evidence or success Audit; committed start Audit and exactly one separate fixed `SOURCE_CAPTURE_PERSISTENCE_FAILED` Audit remained; operation stayed `CREATED`.
+- Final success-Audit insert failure after evidence insert: the transaction rolled back both the evidence and success Audit; only the committed start Audit plus one separate fixed persistence-failure Audit remained; operation stayed `CREATED`.
+- Independent read-only DB observer verified exact per-correlation Audit outcomes and Session/Study-reference bindings, zero evidence for all three operations, and `CREATED` state. B was EMPTY before and after; STOW/destination calls were zero; post-WADO A streams closed; disposable containers/volumes/networks were removed; existing `mediq` stack unchanged.
+- `node --check` passed for the modified seeder, observer and integration suite; `git diff --check` passed. No production runtime code, public route, schema, migration, persistent database, production PACS or real patient data was changed.
+- Judgment: `TC-INT-001-CAP-012` is `PASS (scoped)` for the three deterministic INSERT-failure points only. Disk-full, DB crash, network partition, deadlock, ambiguous COMMIT, global Audit completeness, destination verification, STOW, product route and full A→B transfer remain unproven/out of scope.

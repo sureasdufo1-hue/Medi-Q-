@@ -10,11 +10,17 @@ const ids = Object.freeze({
   session: "16000000-0000-4000-8000-000000000001",
   sessionOther: "16000000-0000-4000-8000-000000000011",
   sessionInFlightRevocation: "16000000-0000-4000-8000-000000000021",
+  cap012StartSession: "16000000-0000-4000-8000-000000000031",
+  cap012EvidenceSession: "16000000-0000-4000-8000-000000000032",
+  cap012SuccessAuditSession: "16000000-0000-4000-8000-000000000033",
   study: "18000000-0000-4000-8000-000000000001",
   studyOther: "18000000-0000-4000-8000-000000000011",
   studySourceMismatch: "18000000-0000-4000-8000-000000000012",
   studyMissingCount: "18000000-0000-4000-8000-000000000013",
   studyInFlightRevocation: "18000000-0000-4000-8000-000000000021",
+  cap012StartStudy: "18000000-0000-4000-8000-000000000031",
+  cap012EvidenceStudy: "18000000-0000-4000-8000-000000000032",
+  cap012SuccessAuditStudy: "18000000-0000-4000-8000-000000000033",
   operation: "1b000000-0000-4000-8000-000000000001",
   denied: "1d000000-0000-4000-8000-000000000001",
   failure: "1d000000-0000-4000-8000-000000000002",
@@ -49,6 +55,12 @@ const ids = Object.freeze({
   operationNotCreated: "1b000000-0000-4000-8000-000000000013",
   operationMissingCount: "1b000000-0000-4000-8000-000000000014",
   operationInFlightRevocation: "1b000000-0000-4000-8000-000000000015",
+  cap012StartOperation: "1b000000-0000-4000-8000-000000000021",
+  cap012EvidenceOperation: "1b000000-0000-4000-8000-000000000022",
+  cap012SuccessAuditOperation: "1b000000-0000-4000-8000-000000000023",
+  cap012StartAuditFailure: "1d000000-0000-4000-8000-000000000029",
+  cap012EvidenceInsertFailure: "1d000000-0000-4000-8000-000000000030",
+  cap012SuccessAuditFailure: "1d000000-0000-4000-8000-000000000031",
 });
 const correlationIds = [
   ids.denied,
@@ -79,6 +91,9 @@ const correlationIds = [
   ids.patientIdMismatch,
   ids.inFlightRevocation,
   ids.grantRevocation,
+  ids.cap012StartAuditFailure,
+  ids.cap012EvidenceInsertFailure,
+  ids.cap012SuccessAuditFailure,
 ];
 const sourceAuditScopes = new Map(
   correlationIds.map((correlationId) => [correlationId, {
@@ -91,6 +106,18 @@ sourceAuditScopes.set(ids.missingCount, { sessionId: ids.session, studyRefId: id
 sourceAuditScopes.set(ids.inFlightRevocation, {
   sessionId: ids.sessionInFlightRevocation,
   studyRefId: ids.studyInFlightRevocation,
+});
+sourceAuditScopes.set(ids.cap012StartAuditFailure, {
+  sessionId: ids.cap012StartSession,
+  studyRefId: ids.cap012StartStudy,
+});
+sourceAuditScopes.set(ids.cap012EvidenceInsertFailure, {
+  sessionId: ids.cap012EvidenceSession,
+  studyRefId: ids.cap012EvidenceStudy,
+});
+sourceAuditScopes.set(ids.cap012SuccessAuditFailure, {
+  sessionId: ids.cap012SuccessAuditSession,
+  studyRefId: ids.cap012SuccessAuditStudy,
 });
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 try {
@@ -147,6 +174,10 @@ try {
     [`${ids.inFlightRevocation}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.inFlightRevocation}|PACS_SOURCE_CAPTURE_DENIED|DENY|AUTHORIZATION_DENIED`, 1],
     [`${ids.grantRevocation}|GRANT_REVOKED|SUCCESS|<NULL>`, 1],
+    [`${ids.cap012EvidenceInsertFailure}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.cap012EvidenceInsertFailure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED`, 1],
+    [`${ids.cap012SuccessAuditFailure}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.cap012SuccessAuditFailure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED`, 1],
   ]);
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 
@@ -276,7 +307,7 @@ try {
       WHERE op.operation_id = ANY($1::uuid[])
       GROUP BY op.operation_id, op.state
       ORDER BY op.operation_id`,
-    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated, ids.operationMissingCount, ids.operationInFlightRevocation]],
+    [[ids.operationBindingMismatch, ids.operationSourceMismatch, ids.operationNotCreated, ids.operationMissingCount, ids.operationInFlightRevocation, ids.cap012StartOperation, ids.cap012EvidenceOperation, ids.cap012SuccessAuditOperation]],
   );
   assert.deepEqual(operationMatrix.rows, [
     { operation_id: ids.operationBindingMismatch, operation_state: "CREATED", evidence_count: 0 },
@@ -284,10 +315,14 @@ try {
     { operation_id: ids.operationNotCreated, operation_state: "FAILED", evidence_count: 0 },
     { operation_id: ids.operationMissingCount, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.operationInFlightRevocation, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.cap012StartOperation, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.cap012EvidenceOperation, operation_state: "CREATED", evidence_count: 0 },
+    { operation_id: ids.cap012SuccessAuditOperation, operation_state: "CREATED", evidence_count: 0 },
   ]);
-  console.log(`int001_capture_audit=PASS denied=13 unresolved=4 failed=7 started=12 capture_success=1 grant_revoked=1 source_rows=${sourceAuditResult.rows.length} metadata_allowlist=PASS`);
+  console.log(`int001_capture_audit=PASS denied=13 unresolved=4 failed=9 started=14 capture_success=1 grant_revoked=1 source_rows=${sourceAuditResult.rows.length} metadata_allowlist=PASS`);
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_cap010_success_capture=PASS evidence=pending_one success_audit=one operation_state=CREATED response_allowlist=true");
+  console.log("int001_cap012_insert_failures=PASS start_no_wado=true final_transaction_rollback=true operation_state=CREATED evidence=none");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code
