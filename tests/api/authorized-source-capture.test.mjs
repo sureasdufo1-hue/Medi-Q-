@@ -181,7 +181,13 @@ function makeHarness(options = {}) {
   const committedAudits = [];
   const committedEvidence = [];
   const rollbackReasons = [];
-  const dicomCalls = { metadata: 0, instances: 0, destinationWrites: 0, hospitalIds: [] };
+  const dicomCalls = {
+    metadata: 0,
+    instances: 0,
+    destinationWrites: 0,
+    hospitalIds: [],
+    instanceIdentities: [],
+  };
 
   const actorTenantContext = {
     run: async (_principal, tenantCandidate, work) => {
@@ -246,6 +252,12 @@ function makeHarness(options = {}) {
 
       try {
         const result = await work(identity, client);
+        if (
+          options.failFinalCommit === true &&
+          txAudits.some((values) => values[7] === "PACS_SOURCE_CAPTURED")
+        ) {
+          throw new Error("synthetic transaction commit failure");
+        }
         committedAudits.push(...txAudits);
         committedEvidence.push(...txEvidence);
         activeTransactions -= 1;
@@ -312,6 +324,10 @@ function makeHarness(options = {}) {
       expect(activeTransactions).toBe(0);
       dicomCalls.instances += 1;
       dicomCalls.hospitalIds.push(request.context.hospitalId);
+      dicomCalls.instanceIdentities.push({
+        seriesInstanceUid: request.seriesInstanceUid,
+        sopInstanceUid: request.sopInstanceUid,
+      });
       const item = instanceFixture.find((entry) => entry.sopInstanceUid === request.sopInstanceUid);
       if (!item) throw new Error("SYNTHETIC_INSTANCE_NOT_FOUND");
       options.onInstanceStreamOpen?.(item, request);
@@ -458,6 +474,126 @@ describe("AuthorizedSourceCaptureService", () => {
     const persistedAudit = JSON.stringify(harness.committedAudits);
     expect(persistedAudit).not.toMatch(/TEST-PATIENT|2\.25\.(100|101|111|112|113)|password|credential/i);
     expect(JSON.stringify(result)).not.toMatch(/TEST-PATIENT|2\.25\./);
+  });
+
+  it("TC-PACS-001-HANDOFF-001/004/006 emits only the committed exact hashed source inventory on the dedicated internal path", async () => {
+    const harness = makeHarness();
+    const result = await harness.service.captureForCoordinator(command());
+
+    expect(result.kind).toBe("CAPTURED_FOR_COORDINATOR");
+    if (result.kind !== "CAPTURED_FOR_COORDINATOR") return;
+    const { handoff } = result;
+    expect(handoff).toMatchObject({
+      operationId: ids.operation,
+      tenantId: ids.tenant,
+      actorId: ids.actor,
+      exchangeSessionId: ids.session,
+      packageId: ids.package,
+      studyRefId: ids.studyRef,
+      studyInstanceUid: "2.25.100",
+      sourceHospitalId: TEST_HOSPITAL_A_ID,
+      destinationHospitalId: TEST_HOSPITAL_B_ID,
+      sourceEvidence: {
+        evidenceId: harness.committedEvidence[0]?.integrity_id,
+        status: "PENDING",
+        algorithm: "SHA256-MANIFEST-V1",
+        objectCount: 3,
+        totalBytes: 12,
+      },
+      expectedInstances: [
+        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.111" },
+        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.112" },
+        { seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.113" },
+      ],
+    });
+    expect(handoff.sourceEvidence.aggregateDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(harness.committedEvidence[0]?.source_digest).toBe(handoff.sourceEvidence.aggregateDigest);
+    expect(harness.dicomCalls.instanceIdentities).toEqual(handoff.expectedInstances);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(handoff)).toBe(true);
+    expect(Object.isFrozen(handoff.sourceEvidence)).toBe(true);
+    expect(Object.isFrozen(handoff.expectedInstances)).toBe(true);
+    expect(handoff.expectedInstances.every(Object.isFrozen)).toBe(true);
+    expect(JSON.stringify(handoff)).not.toMatch(/TEST-PATIENT|LOCAL-PATIENT|patientId|localPatientId|password|credential/i);
+    expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
+    expect(harness.operationState).toBe("CREATED");
+    expect(harness.activeTransactions).toBe(0);
+    expect(auditActions(harness)).toEqual([
+      { action: "PACS_SOURCE_CAPTURE_STARTED", result: "ALLOW", reason: null },
+      { action: "PACS_SOURCE_CAPTURED", result: "SUCCESS", reason: null },
+    ]);
+  });
+
+  it("TC-PACS-001-HANDOFF-002 rejects caller-provided inventory or authority bindings before Authorization and DICOM I/O", async () => {
+    const harness = makeHarness();
+    for (const override of [
+      { expectedInstances: [{ seriesInstanceUid: "2.25.101", sopInstanceUid: "2.25.111" }] },
+      { patientId: "TEST-PATIENT-007" },
+      { sourceHospitalId: TEST_HOSPITAL_A_ID },
+      { destinationHospitalId: TEST_HOSPITAL_B_ID },
+      { aggregateDigest: `sha256:${"a".repeat(64)}` },
+      { mappingId: ids.mapping },
+      { authorizationEvidence: true },
+      { endpointUrl: "https://caller.invalid/dicom-web/" },
+      { password: "caller-controlled" },
+    ]) {
+      await expect(harness.service.captureForCoordinator(command(override))).rejects.toMatchObject({
+        message: "SOURCE_CAPTURE_REQUEST_INVALID",
+      });
+    }
+    expect(harness.authorizationCalls).toBe(0);
+    expect(harness.dicomCalls).toMatchObject({ metadata: 0, instances: 0, destinationWrites: 0 });
+    expect(harness.committedEvidence).toHaveLength(0);
+  });
+
+  it.each([
+    { name: "withdrawn Consent", options: { consentStatus: "WITHDRAWN" }, mode: "denied", expectedState: "CREATED" },
+    { name: "revoked Grant", options: { authorizationInitial: { grantStatus: "REVOKED" } }, mode: "denied", expectedState: "CREATED" },
+    { name: "Consent withdrawn during source reads", options: { revokeAfterStreams: true }, mode: "denied", expectedState: "CREATED" },
+    { name: "invalid destination PatientMapping", options: { mapping: null }, mode: "denied", expectedState: "CREATED" },
+    { name: "source PatientID mismatch", options: { metadataPatientId: "TEST-PATIENT-OTHER" }, mode: "denied", expectedState: "CREATED" },
+    { name: "malformed source metadata", options: { metadataShape: "DUPLICATE_SOP" }, mode: "denied", expectedState: "CREATED" },
+    {
+      name: "source stream/hash failure",
+      options: { instanceStreamFactory: async () => { throw new Error("synthetic source read failure"); } },
+      mode: "unavailable",
+    },
+    { name: "changed mapping after WADO", options: { changeMappingAfterStreams: true }, mode: "denied", expectedState: "CREATED" },
+    { name: "changed operation after WADO", options: { changeOperationAfterStreams: true }, mode: "denied", expectedState: "FAILED" },
+    { name: "evidence persistence failure", options: { failEvidenceInsert: true }, mode: "unavailable", expectRollback: true },
+    { name: "success Audit failure", options: { failAuditAction: "PACS_SOURCE_CAPTURED" }, mode: "unavailable", expectRollback: true },
+    { name: "final transaction commit failure", options: { failFinalCommit: true }, mode: "unavailable", expectRollback: true },
+  ])("TC-PACS-001-HANDOFF-003/007 returns no handoff for $name", async ({ options, mode, expectedState = "CREATED", expectRollback = false }) => {
+    const harness = makeHarness(options);
+    if (mode === "denied") {
+      const result = await harness.service.captureForCoordinator(command());
+      expect(result.kind).toBe("DENIED");
+    } else {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({
+        message: "SOURCE_CAPTURE_UNAVAILABLE",
+      });
+    }
+    expect(harness.committedEvidence).toHaveLength(0);
+    expect(auditActions(harness)).not.toContainEqual({
+      action: "PACS_SOURCE_CAPTURED",
+      result: "SUCCESS",
+      reason: null,
+    });
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
+    expect(harness.operationState).toBe(expectedState);
+    expect(harness.activeTransactions).toBe(0);
+    if (expectRollback) {
+      expect(harness.rollbackReasons.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("TC-PACS-001-HANDOFF-005 keeps the handoff retrieval-only, internal and non-transitioning", async () => {
+    const harness = makeHarness();
+    const result = await harness.service.captureForCoordinator(command());
+    expect(result.kind).toBe("CAPTURED_FOR_COORDINATOR");
+    expect(harness.dicomCalls.destinationWrites).toBe(0);
+    expect(harness.operationState).toBe("CREATED");
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, PacsImportModule) ?? []).toEqual([]);
   });
 
   it("TC-INT-001-CAP-002 denies a withdrawn Consent before any DICOM call", async () => {

@@ -24,6 +24,7 @@ import {
 } from "../../dicom/infrastructure/test-orthanc-endpoint-resolver.js";
 import {
   SOURCE_INTEGRITY_LIMITS,
+  SOURCE_INTEGRITY_ALGORITHM,
   SourceIntegrityInputError,
   buildSourceIntegrityManifest,
   type SourceIntegrityManifest,
@@ -31,6 +32,7 @@ import {
 import {
   PostgresSourceIntegrityEvidenceRepository,
 } from "../persistence/postgres-source-integrity-evidence.repository.js";
+import type { SourceIntegrityEvidenceRecord } from "../persistence/source-integrity-evidence.repository.js";
 import {
   PostgresSourceCaptureScopeRepository,
   SourceCaptureScopePersistenceError,
@@ -95,6 +97,37 @@ export type AuthorizedSourceCaptureResult =
         | "SOURCE_PATIENT_ID_MISMATCH"
         | "SOURCE_METADATA_INVALID";
     }>;
+
+export interface AuthorizedSourceCaptureCoordinatorHandoff {
+  readonly operationId: string;
+  readonly tenantId: string;
+  readonly actorId: string;
+  readonly exchangeSessionId: string;
+  readonly packageId: string;
+  readonly studyRefId: string;
+  readonly studyInstanceUid: string;
+  readonly sourceHospitalId: string;
+  readonly destinationHospitalId: string;
+  readonly sourceEvidence: Readonly<{
+    evidenceId: string;
+    status: "PENDING";
+    algorithm: typeof SOURCE_INTEGRITY_ALGORITHM;
+    aggregateDigest: `sha256:${string}`;
+    objectCount: number;
+    totalBytes: number;
+  }>;
+  readonly expectedInstances: readonly Readonly<{
+    seriesInstanceUid: string;
+    sopInstanceUid: string;
+  }>[];
+}
+
+export type AuthorizedSourceCaptureCoordinatorResult =
+  | Readonly<{
+      kind: "CAPTURED_FOR_COORDINATOR";
+      handoff: AuthorizedSourceCaptureCoordinatorHandoff;
+    }>
+  | Extract<AuthorizedSourceCaptureResult, { kind: "DENIED" }>;
 
 interface CaptureCommand {
   readonly principal: VerifiedAuthenticationPrincipal;
@@ -342,6 +375,73 @@ function validateMetadata(
   return Object.freeze(descriptors);
 }
 
+function createCoordinatorHandoff(input: {
+  readonly identity: VerifiedActorTenantContext;
+  readonly scope: SourceCaptureScope;
+  readonly evidence: SourceIntegrityEvidenceRecord;
+  readonly manifest: SourceIntegrityManifest;
+  readonly descriptors: readonly ValidatedSourceInstance[];
+}): AuthorizedSourceCaptureCoordinatorHandoff {
+  const { identity, scope, evidence, manifest, descriptors } = input;
+  if (
+    identity.tenantId.toLowerCase() !== scope.tenantId ||
+    evidence.operationId !== scope.operationId ||
+    evidence.exchangeSessionId !== scope.exchangeSessionId ||
+    evidence.packageId !== scope.packageId ||
+    evidence.studyRefId !== scope.studyRefId ||
+    evidence.verificationStage !== "SOURCE_CAPTURE" ||
+    evidence.algorithm !== manifest.algorithm ||
+    evidence.sourceDigest !== manifest.aggregateDigest ||
+    evidence.sourceObjectCount !== manifest.objectCount ||
+    evidence.status !== "PENDING" ||
+    descriptors.length !== manifest.objectCount
+  ) {
+    throw new AuthorizedSourceCaptureUnavailableError();
+  }
+
+  const expectedInstances = Object.freeze(
+    [...descriptors]
+      .sort((left, right) =>
+        left.seriesInstanceUid < right.seriesInstanceUid
+          ? -1
+          : left.seriesInstanceUid > right.seriesInstanceUid
+            ? 1
+            : left.sopInstanceUid < right.sopInstanceUid
+              ? -1
+              : left.sopInstanceUid > right.sopInstanceUid
+                ? 1
+                : 0,
+      )
+      .map((descriptor) =>
+        Object.freeze({
+          seriesInstanceUid: descriptor.seriesInstanceUid,
+          sopInstanceUid: descriptor.sopInstanceUid,
+        }),
+      ),
+  );
+
+  return Object.freeze({
+    operationId: scope.operationId,
+    tenantId: identity.tenantId.toLowerCase(),
+    actorId: identity.actorId.toLowerCase(),
+    exchangeSessionId: scope.exchangeSessionId,
+    packageId: scope.packageId,
+    studyRefId: scope.studyRefId,
+    studyInstanceUid: scope.studyInstanceUid,
+    sourceHospitalId: scope.sourceHospitalId,
+    destinationHospitalId: scope.destinationHospitalId,
+    sourceEvidence: Object.freeze({
+      evidenceId: evidence.integrityId,
+      status: evidence.status,
+      algorithm: evidence.algorithm,
+      aggregateDigest: evidence.sourceDigest,
+      objectCount: evidence.sourceObjectCount,
+      totalBytes: manifest.totalBytes,
+    }),
+    expectedInstances,
+  });
+}
+
 function createAudit(input: {
   readonly actorId: string;
   readonly tenantId: string;
@@ -392,7 +492,26 @@ export class AuthorizedSourceCaptureService {
     private readonly createId: () => string = randomUUID,
   ) {}
 
-  async capture(input: unknown): Promise<AuthorizedSourceCaptureResult> {
+  capture(input: unknown): Promise<AuthorizedSourceCaptureResult> {
+    return this.captureInternal(input, false);
+  }
+
+  captureForCoordinator(input: unknown): Promise<AuthorizedSourceCaptureCoordinatorResult> {
+    return this.captureInternal(input, true);
+  }
+
+  private captureInternal(
+    input: unknown,
+    coordinatorHandoff: false,
+  ): Promise<AuthorizedSourceCaptureResult>;
+  private captureInternal(
+    input: unknown,
+    coordinatorHandoff: true,
+  ): Promise<AuthorizedSourceCaptureCoordinatorResult>;
+  private async captureInternal(
+    input: unknown,
+    coordinatorHandoff: boolean,
+  ): Promise<AuthorizedSourceCaptureResult | AuthorizedSourceCaptureCoordinatorResult> {
     const command = exactCommand(input);
     const deadline = captureDeadline(command.signal);
     let started = false;
@@ -600,7 +719,7 @@ export class AuthorizedSourceCaptureService {
       }
 
       assertNotAborted(deadline);
-      let completion: AuthorizedSourceCaptureResult;
+      let completion: AuthorizedSourceCaptureResult | AuthorizedSourceCaptureCoordinatorResult;
       try {
         completion = await this.operationExecutor.executeWithResolvedSessionFence(
           command.principal,
@@ -694,6 +813,18 @@ export class AuthorizedSourceCaptureService {
               now: this.clock(),
               createId: this.createId,
             });
+            if (coordinatorHandoff) {
+              return Object.freeze({
+                kind: "CAPTURED_FOR_COORDINATOR",
+                handoff: createCoordinatorHandoff({
+                  identity: authorizationContext,
+                  scope: current,
+                  evidence: evidence.record,
+                  manifest,
+                  descriptors,
+                }),
+              } as const);
+            }
             return Object.freeze({
               kind: "CAPTURED",
               evidenceId: evidence.record.integrityId,

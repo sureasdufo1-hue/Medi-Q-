@@ -1120,7 +1120,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       const harness = createHarness({ observeInstanceStreams: postWado });
       try {
         await assert.rejects(
-          harness.service.capture(captureCommand(
+          harness.service.captureForCoordinator(captureCommand(
             scenario.correlationId,
             scenario.operationId,
             { consentId: scenario.consentId, grantId: scenario.grantId },
@@ -1163,10 +1163,10 @@ test("authorized source capture uses only A WADO after database-backed authoriza
     });
   }
 
-  await t.test("TC-INT-001-CAP-010/014 commits one operation-bound pending baseline and success Audit", async () => {
+  await t.test("TC-INT-001-CAP-010/014 and TC-PACS-001-HANDOFF-001/005/006 commit the exact hashed A inventory without writing B", async () => {
     const harness = createHarness({ observeInstanceStreams: true });
     try {
-      const result = await harness.service.capture({
+      const result = await harness.service.captureForCoordinator({
         principal,
         tenantCandidate: fixture.tenantId,
         correlationId: fixture.correlationSuccess,
@@ -1174,14 +1174,9 @@ test("authorized source capture uses only A WADO after database-backed authoriza
         consentId: fixture.consentId,
         grantId: fixture.grantId,
       });
-      assert.equal(result.kind, "CAPTURED");
-      if (result.kind !== "CAPTURED") return;
-      assert.equal(result.status, "PENDING");
-      assert.equal(result.objectCount, manifest.instanceCount);
-      assert.deepEqual(Object.keys(result).sort(), ["evidenceId", "kind", "objectCount", "status"]);
-      assert.match(result.evidenceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-      assert.equal(JSON.stringify(result).includes(manifest.studyInstanceUID), false);
-      assert.equal(JSON.stringify(result).includes(manifest.patient.patientId), false);
+      assert.equal(result.kind, "CAPTURED_FOR_COORDINATOR");
+      if (result.kind !== "CAPTURED_FOR_COORDINATOR") return;
+      const { handoff } = result;
       const expectedInstances = [...manifest.instances].sort((left, right) =>
         left.sopInstanceUID < right.sopInstanceUID
           ? -1
@@ -1191,6 +1186,40 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       );
       const expectedUids = expectedInstances.map((instance) => instance.sopInstanceUID);
       const expectedDigest = expectedSourceManifestDigest(manifest);
+      assert.deepEqual(handoff.expectedInstances, expectedInstances.map((instance) => ({
+        seriesInstanceUid: manifest.seriesInstanceUID,
+        sopInstanceUid: instance.sopInstanceUID,
+      })));
+      assert.deepEqual(handoff, {
+        operationId: fixture.operationId,
+        tenantId: fixture.tenantId,
+        actorId: fixture.actorId,
+        exchangeSessionId: fixture.sessionId,
+        packageId: fixture.packageId,
+        studyRefId: fixture.studyRefId,
+        studyInstanceUid: manifest.studyInstanceUID,
+        sourceHospitalId: TEST_HOSPITAL_A_ID,
+        destinationHospitalId: TEST_HOSPITAL_B_ID,
+        sourceEvidence: {
+          evidenceId: handoff.sourceEvidence.evidenceId,
+          status: "PENDING",
+          algorithm: "SHA256-MANIFEST-V1",
+          aggregateDigest: expectedDigest,
+          objectCount: manifest.instanceCount,
+          totalBytes: manifest.totalBytes,
+        },
+        expectedInstances: expectedInstances.map((instance) => ({
+          seriesInstanceUid: manifest.seriesInstanceUID,
+          sopInstanceUid: instance.sopInstanceUID,
+        })),
+      });
+      assert.match(handoff.sourceEvidence.evidenceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      assert.equal(JSON.stringify(handoff).includes(manifest.patient.patientId), false);
+      assert.equal(Object.isFrozen(result), true);
+      assert.equal(Object.isFrozen(handoff), true);
+      assert.equal(Object.isFrozen(handoff.sourceEvidence), true);
+      assert.equal(Object.isFrozen(handoff.expectedInstances), true);
+      assert.ok(handoff.expectedInstances.every(Object.isFrozen));
       const captureCounters = harness.counters();
       assert.equal(captureCounters.tenantContextRuns, 2, "CAP010_INITIAL_AND_FINAL_FENCED_TRANSACTIONS");
       assert.equal(harness.counters().initialAuthorizationCommitted, true);
@@ -1234,7 +1263,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
         manifest.totalBytes,
         "CAP007_TOTAL_FIXTURE_BYTES",
       );
-      assert.equal(JSON.stringify(result).includes(expectedDigest), false, "CAP007_NO_DIGEST_IN_RESPONSE");
+      assert.equal(handoff.sourceEvidence.aggregateDigest, expectedDigest, "HANDOFF_PENDING_EVIDENCE_DIGEST_MATCHES_HASHED_SOURCE");
       assert.equal(harness.counters().forbiddenEndpointAttempts, 0);
       const observations = harness.counters().sourceRequestObservations;
       assert.equal(observations.length, manifest.instanceCount + 1);

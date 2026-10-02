@@ -134,6 +134,7 @@ git diff --check
 |---|---|---|
 | Focused and regression tests | `tests/api/pacs-patient-id-binding.test.mjs`; `tests/api/orthanc-dicomweb.adapter.test.mjs` | Only synthetic values; result tests verify values are not reflected |
 | Orthanc integration | `tests/integration/orthanc-dicomweb.orthanc.integration.test.mjs` | Synthetic manifest; no PatientID printed; no raw DICOM or credentials included |
+| Source handoff tests | `tests/api/authorized-source-capture.test.mjs`; `tests/integration/authorized-source-capture.orthanc.integration.test.mjs` | Synthetic fixture only; identity inventory exists only in the test process; no raw payload, patient identity, or credential is written to reports/logs |
 | Implementation report | `docs/implementation/MEDIQ-PACS-001/IMPLEMENTATION-REPORT.md` | No actual IDs, PHI, credentials, payload or secret |
 | Runtime state | Local Compose Test Orthanc | Read-only QIDO/WADO; B synthetic fixture remained at 0 matching SOP instances |
 
@@ -145,3 +146,36 @@ git diff --check
 - NOT RUN: effect-capable coordinator invocation, actual product no-STOW/B-unchanged, live STOW, full Mandatory Preflight/atomic `STOW_STARTED`, positive production mTLS/PKI, Integrity/Provenance/Audit completion, reconciliation, destination verification and complete P0 E2E.
 - `IDENTITY_MATCHED` is identity eligibility only; it does not authorize viewing, transfer or PACS import.
 - No real patient information, production PACS credential, production DICOM or DICOM payload was recorded.
+
+## 8. PACS-001-DEC-005 — Ephemeral source identity handoff
+
+| Acceptance | Actual evidence | Judgment |
+|---|---|---|
+| `TC-PACS-001-HANDOFF-001/006` | Unit test binds the exact deterministic Series/SOP pairs observed by the instance retrieval calls to operation/Tenant/actor/Session/Package/Study/source/destination and pending evidence ID/algorithm/digest/count/total bytes. Isolated HTTPS Test Orthanc A run compares the handoff inventory to the synthetic manifest and independently observed exact instance byte hashes/lengths. The handoff and nested values are frozen; PatientID/Local Patient ID and payload are absent. | PASS — internal source-capture handoff only |
+| `TC-PACS-001-HANDOFF-002` | `captureForCoordinator()` rejects caller-supplied inventory, patient/hospital/study identity, endpoint, credential, digest, mapping or Authorization evidence before Authorization and DICOM calls. | PASS |
+| `TC-PACS-001-HANDOFF-003` | Unit matrix covers withdrawn Consent, revoked Grant, Consent withdrawn during WADO/final fence, invalid mapping, changed operation, malformed/duplicate source metadata and source stream/hash failure. No case yields a partial handoff; existing sanitized denial/unavailable behavior is retained. | PASS — synthetic failures |
+| `TC-PACS-001-HANDOFF-004` | Existing ordinary `capture()` success regression still asserts exact keys `evidenceId`, `kind`, `objectCount`, `status`; handoff inventory/digest are available only via the distinct internal method. Full API regression passed. | PASS |
+| `TC-PACS-001-HANDOFF-005` | Type boundary is retrieval-only (`retrieveStudyMetadata`, `retrieveInstanceStream`); no PACS controller is registered. Unit and isolated integration assert no destination write/verification, no STOW/POST, operation remains `CREATED`; A is read-only and B is EMPTY before/after. | PASS — handoff sub-gate only; not the full product no-STOW gate |
+| `TC-PACS-001-HANDOFF-007` | Unit fault injection covers evidence insert, success Audit and outer commit failure; no handoff escapes and the operation remains at its pre-dispatch state. The isolated runtime-role PostgreSQL run exercises actual pending-evidence and success-Audit INSERT trigger failures through `captureForCoordinator()`; evidence/Audit transaction rolls back, independent observer confirms no pending evidence/success Audit for the failed operations, and operation remains `CREATED`. | PASS — isolated synthetic persistence failures; outer commit failure simulated at the unit transaction boundary |
+
+### Commands and results
+
+```powershell
+npm run build:api
+npx vitest run tests/api/authorized-source-capture.test.mjs --reporter=dot
+npm run test:api -- --reporter=dot
+npm run typecheck:api
+npm run test:dicom-port-contract
+./scripts/test-int001-source-capture.ps1 -EnvFile .env
+```
+
+- `npm run build:api`: exit `0`.
+- Focused source-capture suite: final run `1` file / `55` tests passed. Intermediate test-only assertions incorrectly expected an operation changed to `FAILED` to remain `CREATED` and expected database rollback after a source-stream failure that occurs outside a transaction; both expectations were corrected to reflect the intended transaction/state boundaries. Final suite passed all 55 without weakening product behavior.
+- Full API build/regression: `35` files / `667` tests passed.
+- `npm run typecheck:api` and `npm run test:dicom-port-contract`: both exit `0`.
+- Isolated live source-capture runner: exit `0`; `authorized_capture_test=PASS tests=35 failed=0`; independent Audit/evidence observer PASS; `orthanc_b_before=EMPTY` and `orthanc_b_after=EMPTY`; `temporary_project_cleanup=PASS existing_mediq_stack=UNCHANGED`.
+- The live isolated success case uses synthetic DICOM on configured HTTPS Hospital A. It compares every returned Series/SOP identity to the same synthetic manifest identities whose exact bytes were streamed and hashed. The success operation remains `CREATED`; no `storeInstanceStream`, destination verification, STOW or POST occurred. Actual runtime-role evidence/Audit INSERT failure triggers were exercised through the handoff method; no failed operation acquired persisted pending evidence or a success Audit.
+- No public route, worker, schema, migration, persistent UID inventory, PACS destination content or operation state was added or changed. The handoff remains transient application memory; process-crash recovery/zeroization is not claimed.
+- `git diff --check`: exit `0` after final implementation and documentation synchronization; no whitespace errors.
+
+**Judgment:** `TC-PACS-001-HANDOFF-001~007` PASS only for the internal ephemeral source-identity handoff. This does not prove full Mandatory Preflight, operation dispatch, destination verification invocation, product-level no-STOW/security gates, STOW, full PACS coordinator or A→B transfer.
