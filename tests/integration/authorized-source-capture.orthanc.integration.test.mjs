@@ -28,7 +28,10 @@ assert.ok(manifestPath, "Synthetic Test Orthanc manifest is required");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
 const fixture = Object.freeze({
+  otherTenantId: "02000000-0000-4000-8000-000000000001",
   tenantId: "02000000-0000-4000-8000-000000000002",
+  otherTenantActorId: "0a000000-0000-4000-8000-000000000002",
+  otherTenantSubject: "synthetic-int001-cross-tenant-actor",
   actorId: "0a000000-0000-4000-8000-000000000001",
   subject: "synthetic-int001-source-capture-actor",
   patientRefId: "15000000-0000-4000-8000-000000000001",
@@ -42,15 +45,37 @@ const fixture = Object.freeze({
   correlationDenied: "1d000000-0000-4000-8000-000000000001",
   correlationFailure: "1d000000-0000-4000-8000-000000000002",
   correlationSuccess: "1d000000-0000-4000-8000-000000000003",
+  correlationMissingConsent: "1d000000-0000-4000-8000-000000000004",
+  correlationWithdrawnConsent: "1d000000-0000-4000-8000-000000000005",
+  correlationExpiredConsent: "1d000000-0000-4000-8000-000000000006",
+  correlationRevokedGrant: "1d000000-0000-4000-8000-000000000007",
+  correlationExpiredGrant: "1d000000-0000-4000-8000-000000000008",
+  correlationWrongScope: "1d000000-0000-4000-8000-000000000009",
+  correlationCrossTenant: "1d000000-0000-4000-8000-000000000010",
+  correlationUnavailable: "1d000000-0000-4000-8000-000000000011",
+  withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
+  expiredConsentId: "19000000-0000-4000-8000-000000000012",
+  revokedGrantId: "1a000000-0000-4000-8000-000000000011",
+  expiredGrantId: "1a000000-0000-4000-8000-000000000012",
+  wrongScopeGrantId: "1a000000-0000-4000-8000-000000000013",
+  withdrawnConsentGrantId: "1a000000-0000-4000-8000-000000000014",
+  expiredConsentGrantId: "1a000000-0000-4000-8000-000000000015",
   issuer: "https://synthetic-issuer.test",
 });
 const principal = Object.freeze({
   issuer: fixture.issuer,
   subject: fixture.subject,
 });
+const otherTenantPrincipal = Object.freeze({
+  issuer: fixture.issuer,
+  subject: fixture.otherTenantSubject,
+});
 
-function createHarness({ failFirstInstance = false } = {}) {
-  const config = parseAppConfig(process.env);
+function createHarness({ failFirstInstance = false, databaseUrl } = {}) {
+  const parsedConfig = parseAppConfig(process.env);
+  const config = databaseUrl
+    ? Object.freeze({ ...parsedConfig, databaseUrl })
+    : parsedConfig;
   const database = new RuntimeDatabaseService(config);
   const rawActorContext = new ActorTenantContextService(
     config,
@@ -64,6 +89,8 @@ function createHarness({ failFirstInstance = false } = {}) {
   let bNetworkAttempts = 0;
   let stowCalls = 0;
   let destinationVerificationCalls = 0;
+  let metadataCalls = 0;
+  let instanceCalls = 0;
   const sourceRequests = [];
   const sourcePaths = [];
 
@@ -152,8 +179,14 @@ function createHarness({ failFirstInstance = false } = {}) {
   );
 
   const dicomGateway = Object.freeze({
-    retrieveStudyMetadata: (request) => adapter.retrieveStudyMetadata(request),
-    retrieveInstanceStream: (request) => adapter.retrieveInstanceStream(request),
+    retrieveStudyMetadata: (request) => {
+      metadataCalls += 1;
+      return adapter.retrieveStudyMetadata(request);
+    },
+    retrieveInstanceStream: (request) => {
+      instanceCalls += 1;
+      return adapter.retrieveInstanceStream(request);
+    },
     storeInstanceStream: async () => {
       stowCalls += 1;
       throw new Error("SOURCE_CAPTURE_TEST_STOW_FORBIDDEN");
@@ -190,6 +223,8 @@ function createHarness({ failFirstInstance = false } = {}) {
       bNetworkAttempts,
       stowCalls,
       destinationVerificationCalls,
+      metadataCalls,
+      instanceCalls,
     }),
   });
 }
@@ -256,23 +291,136 @@ test("authorized source capture uses only A WADO after database-backed authoriza
     }
   });
 
-  await t.test("an invalid Grant is denied before any A WADO request", async () => {
+  await t.test("CAP-002 denies missing, withdrawn, expired, revoked and wrong-scope authorization before DICOM", async (matrix) => {
+    const cases = [
+      {
+        name: "missing Consent",
+        correlationId: fixture.correlationMissingConsent,
+        consentId: "19000000-0000-4000-8000-000000000099",
+        grantId: fixture.grantId,
+      },
+      {
+        name: "missing Grant",
+        correlationId: fixture.correlationDenied,
+        consentId: fixture.consentId,
+        grantId: "1a000000-0000-4000-8000-000000000099",
+      },
+      {
+        name: "withdrawn Consent with matching active Grant",
+        correlationId: fixture.correlationWithdrawnConsent,
+        consentId: fixture.withdrawnConsentId,
+        grantId: fixture.withdrawnConsentGrantId,
+      },
+      {
+        name: "expired Consent with matching active Grant",
+        correlationId: fixture.correlationExpiredConsent,
+        consentId: fixture.expiredConsentId,
+        grantId: fixture.expiredConsentGrantId,
+      },
+      {
+        name: "revoked Grant",
+        correlationId: fixture.correlationRevokedGrant,
+        consentId: fixture.consentId,
+        grantId: fixture.revokedGrantId,
+      },
+      {
+        name: "expired Grant",
+        correlationId: fixture.correlationExpiredGrant,
+        consentId: fixture.consentId,
+        grantId: fixture.expiredGrantId,
+      },
+      {
+        name: "wrong Grant scope",
+        correlationId: fixture.correlationWrongScope,
+        consentId: fixture.consentId,
+        grantId: fixture.wrongScopeGrantId,
+      },
+    ];
+
+    for (const scenario of cases) {
+      await matrix.test(scenario.name, async () => {
+        const harness = createHarness();
+        try {
+          const result = await harness.service.capture({
+            principal,
+            tenantCandidate: fixture.tenantId,
+            correlationId: scenario.correlationId,
+            operationId: fixture.operationId,
+            consentId: scenario.consentId,
+            grantId: scenario.grantId,
+          });
+          assert.deepEqual(result, { kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+          const counters = harness.counters();
+          assert.equal(counters.metadataCalls, 0);
+          assert.equal(counters.instanceCalls, 0);
+          assert.deepEqual(counters.sourceRequests, []);
+          assert.deepEqual(counters.sourcePaths, []);
+          assert.equal(counters.bNetworkAttempts, 0);
+          assert.equal(counters.stowCalls, 0);
+          assert.equal(counters.destinationVerificationCalls, 0);
+          assert.equal(counters.activeTenantTransactions, 0);
+          const state = await readOperationState(harness);
+          assert.equal(state.operationState, "CREATED");
+          assert.deepEqual(state.evidence, []);
+        } finally {
+          await harness.database.onModuleDestroy();
+        }
+      });
+    }
+  });
+
+  await t.test("CAP-002 denies a Tenant-A actor resolving the Tenant-B operation without Audit disclosure", async () => {
     const harness = createHarness();
     try {
       const result = await harness.service.capture({
-        principal,
-        tenantCandidate: fixture.tenantId,
-        correlationId: fixture.correlationDenied,
+        principal: otherTenantPrincipal,
+        tenantCandidate: fixture.otherTenantId,
+        correlationId: fixture.correlationCrossTenant,
         operationId: fixture.operationId,
         consentId: fixture.consentId,
-        grantId: "1a000000-0000-4000-8000-000000000099",
+        grantId: fixture.grantId,
       });
       assert.deepEqual(result, { kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
-      assert.deepEqual(harness.counters().sourceRequests, []);
-      assert.equal(harness.counters().bNetworkAttempts, 0);
-      assert.equal(harness.counters().stowCalls, 0);
-      assert.equal(harness.counters().destinationVerificationCalls, 0);
-      assert.equal(harness.counters().activeTenantTransactions, 0);
+      const counters = harness.counters();
+      assert.equal(counters.metadataCalls, 0);
+      assert.equal(counters.instanceCalls, 0);
+      assert.deepEqual(counters.sourceRequests, []);
+      assert.deepEqual(counters.sourcePaths, []);
+      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.stowCalls, 0);
+      assert.equal(counters.destinationVerificationCalls, 0);
+      const state = await readOperationState(harness);
+      assert.equal(state.operationState, "CREATED");
+      assert.deepEqual(state.evidence, []);
+    } finally {
+      await harness.database.onModuleDestroy();
+    }
+  });
+
+  await t.test("CAP-002 maps database connection failure to fixed unavailable without DICOM or Audit", async () => {
+    const harness = createHarness({
+      databaseUrl: "postgresql://mediq_runtime:synthetic-unavailable@127.0.0.1:1/mediq",
+    });
+    try {
+      await assert.rejects(
+        harness.service.capture({
+          principal,
+          tenantCandidate: fixture.tenantId,
+          correlationId: fixture.correlationUnavailable,
+          operationId: fixture.operationId,
+          consentId: fixture.consentId,
+          grantId: fixture.grantId,
+        }),
+        (error) => error instanceof AuthorizedSourceCaptureUnavailableError,
+      );
+      const counters = harness.counters();
+      assert.equal(counters.metadataCalls, 0);
+      assert.equal(counters.instanceCalls, 0);
+      assert.deepEqual(counters.sourceRequests, []);
+      assert.deepEqual(counters.sourcePaths, []);
+      assert.equal(counters.bNetworkAttempts, 0);
+      assert.equal(counters.stowCalls, 0);
+      assert.equal(counters.destinationVerificationCalls, 0);
     } finally {
       await harness.database.onModuleDestroy();
     }

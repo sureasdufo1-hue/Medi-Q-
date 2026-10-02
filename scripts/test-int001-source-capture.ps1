@@ -93,7 +93,16 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode) {
         $safeCode = if ($fixtureFailure.Success) { "$($fixtureFailure.Groups[1].Value):$($fixtureFailure.Groups[2].Value):$($fixtureFailure.Groups[3].Value)" }
             else { [regex]::Match($joined, '\b(INT001_[A-Z0-9_]+|MEDIQ_[A-Z0-9_]+|APP_CONFIG_[A-Z0-9_:]+|DICOM_[A-Z0-9_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23503|23505|23514|ASSERTION_FAILED)\b').Value }
         if (-not $safeCode) { $safeCode = "UNCLASSIFIED" }
-        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode); raw output suppressed."
+        $failedTestNames = @()
+        if ($FailureCode -eq "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED") {
+            $failedTestNames = @(
+                [regex]::Matches($joined, '(?m)^not ok \d+ - ([^\r\n]{1,160})$') |
+                    ForEach-Object { $_.Groups[1].Value }
+            )
+            if ($failedTestNames.Count -gt 0) { $safeCode = "NODE_TEST_FAILURE" }
+        }
+        $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_tests=$($failedTestNames -join ',')" } else { "" }
+        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary); raw output suppressed."
     }
     return ,$output
 }
@@ -223,8 +232,8 @@ COMMIT;
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "5" -or $testFail -ne "0") {
-        throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID"
+    if ($testPass -ne "14" -or $testFail -ne "0") {
+        throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED"
@@ -258,4 +267,4 @@ finally {
 
 if ($cleanupFailure) { throw $cleanupFailure }
 if ($failure) { throw $failure }
-Write-Output "TC-INT-001-CAP-014=PASS scoped_authorized_source_capture_only=true"
+Write-Output "TC-INT-001-CAP-001/002/014=PASS scoped_authorized_source_capture=true"

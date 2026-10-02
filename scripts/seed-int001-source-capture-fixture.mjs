@@ -58,6 +58,14 @@ try {
     [ids.actorB, ids.tenantB, ids.hospitalB],
   );
   await client.query(
+    `INSERT INTO actors
+      (actor_id, tenant_id, hospital_id, actor_type, external_subject, display_name, status, created_at, updated_at)
+     VALUES ('0a000000-0000-4000-8000-000000000002', $1, $2, 'USER',
+             'synthetic-int001-cross-tenant-actor', 'Synthetic Cross-Tenant Clinician',
+             'ACTIVE', now(), now())`,
+    [ids.tenantA, ids.hospitalA],
+  );
+  await client.query(
     `INSERT INTO patient_refs
       (patient_ref_id, patient_ref_code, status, created_at, updated_at)
      VALUES ($1, 'MQ-TEST-INT001-SYNTHETIC-PATIENT', 'ACTIVE', now(), now())`,
@@ -104,6 +112,23 @@ try {
     ["19000000-0000-4000-8000-000000000002", ids.consent],
   );
   await client.query(
+    `INSERT INTO consents
+      (consent_id, exchange_session_id, patient_ref_id, source_hospital_id,
+       destination_hospital_id, imaging_package_id, status, consent_version,
+       issued_at, expires_at, withdrawn_at, created_at, updated_at)
+     VALUES
+       ('19000000-0000-4000-8000-000000000011', $1, $2, $3, $4, $5, 'WITHDRAWN', 2,
+        now() - interval '2 hours', now() + interval '1 hour', now(), now(), now()),
+       ('19000000-0000-4000-8000-000000000012', $1, $2, $3, $4, $5, 'EXPIRED', 3,
+        now() - interval '2 hours', now() - interval '1 hour', NULL, now(), now())`,
+    [ids.session, ids.patient, ids.hospitalA, ids.hospitalB, ids.imagingPackage],
+  );
+  await client.query(
+    `INSERT INTO consent_actions (consent_action_id, consent_id, action)
+     VALUES ('19000000-0000-4000-8000-000000000021', '19000000-0000-4000-8000-000000000011', 'PACS_IMPORT'),
+            ('19000000-0000-4000-8000-000000000022', '19000000-0000-4000-8000-000000000012', 'PACS_IMPORT')`,
+  );
+  await client.query(
     `INSERT INTO transfer_grants
       (grant_id, exchange_session_id, consent_id, recipient_tenant_id,
        recipient_hospital_id, recipient_actor_id, imaging_package_id, idempotency_key,
@@ -118,6 +143,82 @@ try {
      VALUES ($1, $2, 'study:pacs-transfer')`,
     ["1a000000-0000-4000-8000-000000000003", ids.grant],
   );
+  const deniedGrants = [
+    {
+      grantId: "1a000000-0000-4000-8000-000000000011",
+      idempotencyKey: "1a000000-0000-4000-8000-000000000111",
+      consentId: ids.consent,
+      status: "REVOKED",
+      issuedOffset: "-1 minute",
+      expiresOffset: "+1 hour",
+      revoked: true,
+      grantScopeId: "1a000000-0000-4000-8000-000000000101",
+      scope: "study:pacs-transfer",
+    },
+    {
+      grantId: "1a000000-0000-4000-8000-000000000012",
+      idempotencyKey: "1a000000-0000-4000-8000-000000000112",
+      consentId: ids.consent,
+      status: "ACTIVE",
+      issuedOffset: "-2 hours",
+      expiresOffset: "-1 hour",
+      revoked: false,
+      grantScopeId: "1a000000-0000-4000-8000-000000000102",
+      scope: "study:pacs-transfer",
+    },
+    {
+      grantId: "1a000000-0000-4000-8000-000000000013",
+      idempotencyKey: "1a000000-0000-4000-8000-000000000113",
+      consentId: ids.consent,
+      status: "ACTIVE",
+      issuedOffset: "-1 minute",
+      expiresOffset: "+1 hour",
+      revoked: false,
+      grantScopeId: "1a000000-0000-4000-8000-000000000103",
+      scope: "study:view",
+    },
+    {
+      grantId: "1a000000-0000-4000-8000-000000000014",
+      idempotencyKey: "1a000000-0000-4000-8000-000000000114",
+      consentId: "19000000-0000-4000-8000-000000000011",
+      status: "ACTIVE",
+      issuedOffset: "-1 minute",
+      expiresOffset: "+1 hour",
+      revoked: false,
+      grantScopeId: "1a000000-0000-4000-8000-000000000104",
+      scope: "study:pacs-transfer",
+    },
+    {
+      grantId: "1a000000-0000-4000-8000-000000000015",
+      idempotencyKey: "1a000000-0000-4000-8000-000000000115",
+      consentId: "19000000-0000-4000-8000-000000000012",
+      status: "ACTIVE",
+      issuedOffset: "-1 minute",
+      expiresOffset: "+1 hour",
+      revoked: false,
+      grantScopeId: "1a000000-0000-4000-8000-000000000105",
+      scope: "study:pacs-transfer",
+    },
+  ];
+  for (const grant of deniedGrants) {
+    await client.query(
+      `INSERT INTO transfer_grants
+        (grant_id, exchange_session_id, consent_id, recipient_tenant_id,
+         recipient_hospital_id, recipient_actor_id, imaging_package_id, idempotency_key,
+         status, issued_at, expires_at, revoked_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+               now() + $10::interval, now() + $11::interval,
+               CASE WHEN $12::boolean THEN now() ELSE NULL END, now())`,
+      [grant.grantId, ids.session, grant.consentId, ids.tenantB, ids.hospitalB,
+        ids.actorB, ids.imagingPackage, grant.idempotencyKey, grant.status,
+        grant.issuedOffset, grant.expiresOffset, grant.revoked],
+    );
+    await client.query(
+      `INSERT INTO transfer_grant_scopes (grant_scope_id, grant_id, scope)
+       VALUES ($1, $2, $3)`,
+      [grant.grantScopeId, grant.grantId, grant.scope],
+    );
+  }
   await client.query(
     `INSERT INTO pacs_transfer_operations
       (operation_id, tenant_id, exchange_session_id, study_ref_id, actor_id,
