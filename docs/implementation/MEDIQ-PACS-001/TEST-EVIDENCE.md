@@ -247,24 +247,50 @@ git diff --check
 
 ## 11. PACS-001-DEC-008 — StudyReference temporary payload metadata checkpoint
 
-### 실행한 명령과 결과
+**Execution date/environment:** 2026-10-03 Asia/Seoul; local Docker Desktop, uniquely named disposable Compose project, PostgreSQL 18.6. Synthetic IDs/rows only. The persistent `mediq` Compose project remained running and was not accessed by this command.
 
-| 명령 | 실제 결과 | 판정 범위 |
+### Commands and results
+
+```powershell
+npm run build:api
+npm run test:api -- --reporter=dot
+npm run typecheck:api
+npm run test:dicom-port-contract
+npm run db:migrations:check
+npm run test:db-migrations
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+node --check tests/database/postgres-authorization-evidence-runtime.integration.test.mjs
+node --check tests/database/exchange-session-creation-runtime.integration.test.mjs
+node --check tests/database/consent-request-api-runtime.integration.test.mjs
+node --check tests/database/consent-approval-api-runtime.integration.test.mjs
+node --check tests/database/grant-issue-api-runtime.integration.test.mjs
+node --check tests/database/transfer-grant-persistence-runtime.integration.test.mjs
+node --check tests/database/provenance-repository-runtime.integration.test.mjs
+node --check tests/database/consent-persistence-runtime.integration.test.mjs
+node --check tests/database/source-integrity-evidence-runtime.integration.test.mjs
+# PowerShell parser check for scripts/test-db-008-full-schema.ps1
+git diff --check
+```
+
+- Final DB-008 scratch invocation exited `0`. It reported `db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED`; clean/repeat/reset/reapply passed, with 18 product tables, 24 migration ledger entries, and catalog `18|50|17|42`.
+- Final API build exited `0`; API regression passed 36 files / 678 tests; strict API typecheck and DICOM Port contract exited `0`; Drizzle migration consistency printed `Everything's fine`; migration-runner passed 6/6 tests.
+- `pacs001_dec008_runtime=PASS`: exact grants, forced RLS, sibling Study isolation, same-operation reservation race denial, binding checks, purge-Audit transaction rollback, retry before `STOW_STARTED`, denial after `STOW_STARTED`, and unchanged ImagingPackage metadata.
+- DB-009 reported `column_privileges=244`, `study_references=exact_10_select_4_update`, 17 forced-RLS tables, cross-Tenant denial, and runtime-role DDL/ownership denial. Existing AUT-005, EXC-002/003, Consent, Grant, PACS session-fence, Provenance, and Integrity PostgreSQL/RLS regressions passed against this catalog.
+- `db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED` is intentional: DB-002~007 regression scripts were not run because those legacy scripts apply pending migrations to the persistent development DB. This result is therefore the scratch schema/runtime acceptance scope, not a claim that the entire non-scratch DB-008 command ran.
+- `db008_ephemeral_cleanup=PASS`; `docker ps --filter "name=mediq-db008"` returned no remaining scratch container. `docker compose --env-file .env -f infra/docker-compose.yml ps` confirmed persistent `api`, `orthanc-a`, `orthanc-b`, and `postgres` remained running.
+- Node syntax checks for the added/updated integration tests passed; PowerShell script parsing passed; `git diff --check` exited `0` (only configured LF→CRLF warnings).
+- During validation, the first test draft attempted to read Audit rows as `mediq_runtime`; PostgreSQL correctly denied that unauthorized read (`42501`). The test now uses the existing migration observer connection for evidence inspection only; runtime Audit read grants were not widened. A subsequent full-gate attempt found stale `236`/old StudyReference-update expectations in existing regression tests; those assertions were synchronized to the approved 244-column inventory and exact four metadata UPDATE columns. The final run passed without relaxing database grants or RLS.
+
+### Acceptance and remaining boundary
+
+| Acceptance | Evidence | Judgment |
 |---|---|---|
-| `npm run build:api` | 종료 코드 `0` | API TypeScript build |
-| `npm run test:api -- --reporter=dot` | 36 files / 678 tests passed | Existing API regression; no new repository-specific persistence test was added |
-| `npm run typecheck:api` | 종료 코드 `0` | Strict API typecheck |
-| `npm run test:dicom-port-contract` | 종료 코드 `0` | DICOM Port type contract |
-| `npm run db:migrations:check` | `Everything's fine` | Drizzle journal/schema migration consistency; not database application |
-| `npm run test:db-migrations` | 6 passed / 0 failed | Migration runner unit tests only |
-| PowerShell parser check for `scripts/test-db-008-full-schema.ps1` | `PowerShell syntax PASS` | Script syntax only; no script execution |
-| `git diff --check` | 종료 코드 `0` | Whitespace integrity; Git emitted configured LF→CRLF warnings only |
+| DEC-008 exact runtime grants and forced Tenant RLS | 244 column grants; StudyReference SELECT 10 / UPDATE 4; no StudyReference INSERT/DELETE, no table-wide privilege, forced RLS; no-context and unrelated-Tenant denial | PASS — PostgreSQL scratch scope |
+| Two StudyReferences sharing one ImagingPackage | Each Study reserved an independent reference; sibling reservation remained independent; same-operation racing reservation was denied after row-lock contention | PASS — metadata scope |
+| Binding/state/constraint boundary | Invalid `PURGED` shape and duplicate storage reference rejected; wrong Tenant and wrong Package binding denied; re-fetch rejected after `STOW_STARTED`; package state/deleted_at unchanged | PASS — metadata scope |
+| Purge Audit transaction behavior | Injected duplicate Audit ID caused transaction rollback and preserved `PURGE_PENDING` plus storage reference; subsequent valid Audit finalized metadata; replay was idempotent and sibling remained `AVAILABLE` | PASS — DB metadata/Audit transaction only |
+| DB-008 scratch schema lifecycle | Clean/repeat/reset/re-UP, exact catalog and owned scratch cleanup | PASS — `-ScratchOnly`; DB-002~007 persistent regressions skipped intentionally |
+| Physical temporary-storage lifecycle | Ciphertext deletion-before-success-Audit, DEK destruction, filesystem/DB saga/restart recovery, SERVICE cleanup, shared quota | NOT RUN — no physical purge orchestrator or runtime registration exists |
 
-### 미실행·잔여 위험
-
-- `scripts/test-db-008-full-schema.ps1` was **not** run. Therefore migration `0023`, the updated exact runtime privileges (`244` total; `study_references` SELECT 10 / UPDATE 4), 18-table/24-migration/`18|50|17|42` catalog, and post-amendment clean/repeat/reset/reapply have not been verified against PostgreSQL.
-- No PostgreSQL/RLS repository Acceptance was run. Same-package sibling-Study isolation, wrong-Tenant denial, operation-state fencing, restart cleanup, ciphertext deletion ordering, purge Audit atomicity and idempotent recovery are all **NOT RUN**.
-- The new repository has compile evidence only. It is not wired to the encrypted store, source capture, Nest module, worker or runtime volume. Do not treat it as an active or verified temporary storage lifecycle.
-- No database was migrated by this checkpoint; no Orthanc endpoint, PACS, STOW, real patient information, production credential or DICOM payload was used.
-
-**Judgment:** build/API regression/migration consistency checks PASS at their stated scopes. DEC-008 database and lifecycle Acceptance remain NOT RUN; ticket remains `PARTIAL` and no persistent storage runtime activation is authorized by this evidence.
+The repository primitive is verified against real PostgreSQL/RLS but remains unwired to the encrypted store, source capture, Nest module, worker, or runtime volume. No filesystem/payload, Orthanc endpoint, DICOM transfer, STOW, real patient information, or production credential was used. `STAGE-006` passes for the metadata persistence scope and `STAGE-013` passes only for its metadata isolation/race/state-fence slice; `STAGE-007/008/010` and the physical lifecycle remain NOT RUN. `MEDIQ-PACS-001` remains `PARTIAL`; runtime activation, public route, Mandatory Preflight, `STOW_STARTED` dispatch, destination call, STOW, and product A→B E2E remain unauthorized/unproven.

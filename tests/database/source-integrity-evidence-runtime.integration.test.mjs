@@ -95,18 +95,24 @@ test("INT-001 operation-bound pending source Integrity PostgreSQL/RLS Acceptance
         count(*) FILTER (WHERE table_name='study_references' AND privilege_type='SELECT')::int AS study_select,
         count(*) FILTER (WHERE table_name='study_references' AND privilege_type='SELECT'
           AND column_name IN ('study_instance_uid','series_count','instance_count'))::int AS capture_scope_select,
+        count(*) FILTER (WHERE table_name='study_references' AND privilege_type='UPDATE')::int AS study_update,
+        count(*) FILTER (WHERE table_name='study_references' AND privilege_type='UPDATE'
+          AND column_name IN ('temporary_storage_ref','temporary_payload_state',
+                              'temporary_payload_expires_at','temporary_payload_purged_at'))::int AS temporary_metadata_update,
         count(*) FILTER (WHERE table_name='study_references' AND privilege_type IN ('INSERT','UPDATE','DELETE'))::int AS study_write
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 236,
+      total: 244,
       evidence_select: 12,
       evidence_insert: 12,
       evidence_update: 0,
       evidence_delete: 0,
-      study_select: 6,
+      study_select: 10,
       capture_scope_select: 3,
-      study_write: 0,
+      study_update: 4,
+      temporary_metadata_update: 4,
+      study_write: 4,
     });
     const tablePrivileges = await client.query(`
       SELECT count(*)::int AS total FROM information_schema.table_privileges

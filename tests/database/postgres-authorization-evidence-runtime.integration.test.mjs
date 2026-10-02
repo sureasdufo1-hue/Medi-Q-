@@ -27,7 +27,7 @@ function expectedRuntimePrivileges() {
     transfer_grants: ["consent_id", "created_at", "exchange_session_id", "expires_at", "grant_id", "idempotency_key", "imaging_package_id", "issued_at", "recipient_actor_id", "recipient_hospital_id", "recipient_tenant_id", "revoked_at", "status"],
     transfer_grant_scopes: ["grant_id", "scope"],
     imaging_packages: ["deleted_at", "exchange_session_id", "package_id", "patient_ref_id", "retention_expires_at", "source_hospital_id", "state"],
-    study_references: ["instance_count", "package_id", "series_count", "source_hospital_id", "study_instance_uid", "study_ref_id"],
+    study_references: ["instance_count", "package_id", "series_count", "source_hospital_id", "study_instance_uid", "study_ref_id", "temporary_payload_expires_at", "temporary_payload_purged_at", "temporary_payload_state", "temporary_storage_ref"],
     integrity_evidence: ["algorithm", "created_at", "exchange_session_id", "integrity_id", "operation_id", "package_id", "source_digest", "source_object_count", "status", "study_ref_id", "verification_stage", "verified_at"],
     pacs_transfer_operations: ["actor_id", "created_at", "destination_object_count", "exchange_session_id", "idempotency_key", "operation_id", "reason_code", "request_digest", "source_object_count", "state", "stow_started_at", "study_ref_id", "tenant_id", "updated_at", "version"],
     provenance_records: ["created_at", "destination_hospital_id", "exchange_session_id", "ingested_at", "integrity_id", "operation_id", "package_id", "provenance_id", "source_hospital_id", "study_ref_id", "transfer_status", "transfer_type", "transferred_at"],
@@ -45,6 +45,12 @@ function expectedRuntimePrivileges() {
   privileges.push("exchange_sessions.state:UPDATE", "exchange_sessions.updated_at:UPDATE");
   privileges.push("consents.status:UPDATE", "consents.issued_at:UPDATE", "consents.updated_at:UPDATE", "consents.withdrawn_at:UPDATE");
   privileges.push("transfer_grants.status:UPDATE", "transfer_grants.revoked_at:UPDATE");
+  privileges.push(
+    "study_references.temporary_storage_ref:UPDATE",
+    "study_references.temporary_payload_state:UPDATE",
+    "study_references.temporary_payload_expires_at:UPDATE",
+    "study_references.temporary_payload_purged_at:UPDATE",
+  );
   privileges.push(
     "pacs_transfer_operations.state:UPDATE",
     "pacs_transfer_operations.version:UPDATE",
@@ -169,7 +175,7 @@ test("AUT-005 resolves exact Study evidence under runtime grants, verified Tenan
       }
       assert.deepEqual(actual, expected, "AUT005_RUNTIME_PRIVILEGE_SET_MISMATCH");
       console.error("AUT005_STAGE=CATALOG_PRIVILEGES_OK");
-      assert.equal(actual.length, 236, "AUT005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+      assert.equal(actual.length, 244, "AUT005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
       const broad = await catalogClient.query(`
         SELECT
           (SELECT count(*) FROM information_schema.table_privileges

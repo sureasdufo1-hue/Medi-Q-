@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env",
-    [string]$ComposeFile = "infra/docker-compose.yml"
+    [string]$ComposeFile = "infra/docker-compose.yml",
+    [switch]$ScratchOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -370,6 +371,7 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsFenceSessionId = [guid]::NewGuid().ToString()
     $pacsFencePackageId = [guid]::NewGuid().ToString()
     $pacsFenceStudyRefId = [guid]::NewGuid().ToString()
+    $pacsTempSiblingStudyRefId = [guid]::NewGuid().ToString()
     $pacsFenceConsentId = [guid]::NewGuid().ToString()
     $pacsFenceGrantId = [guid]::NewGuid().ToString()
     $provenanceSessionId = [guid]::NewGuid().ToString()
@@ -382,6 +384,7 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $integrityLateStudyRefId = [guid]::NewGuid().ToString()
     $syntheticStudyUid = "2.25.309.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
     $pacsFenceStudyUid = "2.25.310.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
+    $pacsTempSiblingStudyUid = "2.25.315.$([Convert]::ToUInt64($token.Substring(18, 12), 16))"
     $provenanceStudyUid = "2.25.311.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
     $provenanceLateStudyUid = "2.25.312.$([Convert]::ToUInt64($token.Substring(16, 15), 16))"
     $integrityStudyUid = "2.25.313.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
@@ -454,10 +457,12 @@ INSERT INTO exchange_sessions
 VALUES ('$pacsFenceSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic PACS authorization fence test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
 INSERT INTO imaging_packages
  (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
-VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now(),now()+interval '1 day',NULL);
+VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,2,now(),now(),now()+interval '1 day',NULL);
 INSERT INTO study_references
  (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
-VALUES ('$pacsFenceStudyRefId','$pacsFencePackageId','$hospitalA','$pacsFenceStudyUid','CT',1,1,now());
+VALUES
+ ('$pacsFenceStudyRefId','$pacsFencePackageId','$hospitalA','$pacsFenceStudyUid','CT',1,1,now()),
+ ('$pacsTempSiblingStudyRefId','$pacsFencePackageId','$hospitalA','$pacsTempSiblingStudyUid','MR',1,1,now());
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
 VALUES ('$provenanceSessionId','$patientRefId','$hospitalA','$hospitalB','$actorB','Synthetic Provenance persistence test','AUTHORIZED',now(),now(),gen_random_uuid());
@@ -636,6 +641,12 @@ ROLLBACK;
         withdrawnStudyRefId = $studyRefId; withdrawnConsentId = $withdrawnConsentId
         withdrawnGrantId = $withdrawnConsentGrantId
     } | ConvertTo-Json -Compress
+    $temporaryPayloadFixture = [ordered]@{
+        tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
+        sessionId = $pacsFenceSessionId; packageId = $pacsFencePackageId
+        studyRefId = $pacsFenceStudyRefId; siblingStudyRefId = $pacsTempSiblingStudyRefId
+        sourceHospitalId = $hospitalA
+    } | ConvertTo-Json -Compress
     $provenanceFixture = [ordered]@{
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $actorB
         sessionId = $provenanceSessionId; studyRefId = $provenanceStudyRefId
@@ -688,6 +699,29 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
 "@
         $null = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $dropAuditFailureTriggerSql -Label "PACS-007 isolated Audit failure probe cleanup"
     }
+
+    $migrationInspectUrl = $Settings["MEDIQ_MIGRATION_DATABASE_URL"]
+    $temporaryPayloadArgs = $ComposeArgs + @(
+        "--profile", "test", "run", "--build", "--rm", "--no-deps",
+        "--env", "MEDIQ_TEMP_PAYLOAD_TEST_FIXTURE=$temporaryPayloadFixture",
+        "--env", "MEDIQ_TEST_INSPECT_DATABASE_URL=$migrationInspectUrl",
+        "api-db-integration-test",
+        "node", "--test", "tests/database/temporary-payload-metadata-runtime.integration.test.mjs"
+    )
+    $temporaryPayloadOutput = @(& docker @temporaryPayloadArgs 2>&1 | ForEach-Object { $_.ToString() })
+    $temporaryPayloadExitCode = $LASTEXITCODE
+    $temporaryPayloadSummary = [string]::Join("`n", [string[]]@($temporaryPayloadOutput))
+    if ($temporaryPayloadExitCode -ne 0 -or $temporaryPayloadSummary -notmatch '(?m)^(?:#|ℹ) pass 1$') {
+        $safeFailureCode = [regex]::Match($temporaryPayloadSummary, '\b(23514|23505|42501|25P02|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|AssertionError)\b').Groups[1].Value
+        if (-not $safeFailureCode) {
+            $safeFailureCode = [regex]::Match($temporaryPayloadSummary, '\b(TEMP_PAYLOAD_[A-Z_]+|TEMPORARY_PAYLOAD_[A-Z_]+)\b').Groups[1].Value
+        }
+        if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
+        $safeFailureStage = [regex]::Match($temporaryPayloadSummary, 'TEMP_PAYLOAD_STAGE=([A-Z_]+)').Groups[1].Value
+        if (-not $safeFailureStage) { $safeFailureStage = "unknown" }
+        throw "PACS-001 DEC-008 temporary-payload PostgreSQL/RLS Acceptance failed (exit=$temporaryPayloadExitCode, stage=$safeFailureStage, safe_error=$safeFailureCode); raw output suppressed."
+    }
+    Write-Output "pacs001_dec008_runtime=PASS exact_grants=PASS forced_rls=PASS sibling_study_isolation=PASS same_operation_race=PASS binding=PASS purge_audit_rollback=PASS retry_before_stow=PASS deny_after_stow=PASS package_unchanged=PASS"
 
     $integrationArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1160,18 +1194,28 @@ try {
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
     Write-Output "db008_reset_reapply=PASS product_tables=18 ledger=24"
 
-    foreach ($scriptName in @("test-db-002-registry.ps1", "test-db-003-patient.ps1", "test-db-004-exchange.ps1", "test-db-005-consent-grant.ps1", "test-db-006-imaging.ps1", "test-db-007-evidence.ps1")) {
-        $scriptPath = Join-Path $PSScriptRoot $scriptName
-        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Required regression script is missing: $scriptName" }
-        & $scriptPath -EnvFile $EnvFile -ComposeFile $ComposeFile
-        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "DB-008 regression failed: $scriptName" }
+    if ($ScratchOnly) {
+        Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"
     }
-    Write-Output "db008_prior_schema_regressions=PASS tickets=DB-002,DB-003,DB-004,DB-005,DB-006,DB-007"
+    else {
+        foreach ($scriptName in @("test-db-002-registry.ps1", "test-db-003-patient.ps1", "test-db-004-exchange.ps1", "test-db-005-consent-grant.ps1", "test-db-006-imaging.ps1", "test-db-007-evidence.ps1")) {
+            $scriptPath = Join-Path $PSScriptRoot $scriptName
+            if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Required regression script is missing: $scriptName" }
+            & $scriptPath -EnvFile $EnvFile -ComposeFile $ComposeFile
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "DB-008 regression failed: $scriptName" }
+        }
+        Write-Output "db008_prior_schema_regressions=PASS tickets=DB-002,DB-003,DB-004,DB-005,DB-006,DB-007"
+    }
 
     Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
     $scratchCreated = $false
     Write-Output "db008_ephemeral_cleanup=PASS"
-    Write-Output "db008_schema_validation=PASS complete_gate=GATE-IMP-02 baseline_decisions_pending=false"
+    if ($ScratchOnly) {
+        Write-Output "db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED"
+    }
+    else {
+        Write-Output "db008_schema_validation=PASS complete_gate=GATE-IMP-02 baseline_decisions_pending=false"
+    }
 }
 finally {
     try {

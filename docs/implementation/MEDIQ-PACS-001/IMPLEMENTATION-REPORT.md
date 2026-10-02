@@ -5,8 +5,8 @@
 | Ticket | `MEDIQ-PACS-001` |
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool primitive sub-gates |
 | 분류 | `CAPSTONE-P0` |
-| 작성일 | `2026-10-01` |
-| 상태 | `PARTIAL` — identity/fence and source handoffs pass in scoped boundaries; `DEC-007` spool core/`STAGE-001` pass only in synthetic unit harnesses; `DEC-008` adds StudyReference lifecycle metadata and an unintegrated persistence repository, but DB/RLS Acceptance and runtime lifecycle remain unverified |
+| 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
+| 상태 | `PARTIAL` — identity/fence and source handoffs pass in scoped boundaries; `DEC-007` spool core/`STAGE-001` pass only in synthetic unit harnesses; `DEC-008` schema/repository passes PostgreSQL/RLS metadata Acceptance, while physical storage lifecycle and runtime integration remain unimplemented |
 
 ## 1. 목표 및 판정 범위
 
@@ -53,7 +53,7 @@
 | Acceptance | `TC-PACS-001-PID-001/002`, `FENCE-001~005` | pure exact-match gate, metadata extraction and session-fenced fresh Authorization/denial/no-side-effect boundary | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) |
 | 정책 및 Acceptance | `PACS-001-DEC-005/006`, `TC-PACS-001-HANDOFF-001~007`, `TC-PACS-001-DIGEST-001~006` | ordinary capture allowlist 유지; hash에 사용한 exact inventory와 per-instance byte digest/length만 evidence/Audit commit 이후 in-memory coordinator result로 전달; denial/transaction failure 시 반환 없음; no route/state/STOW | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §§8–9 |
 | 정책 및 Acceptance | `PACS-001-DEC-007`, `TC-PACS-001-STORE-CORE-001~007`, `TC-PACS-001-STAGE-001~012` | per-instance AES-256-GCM spool core and optional exact-source capture seam; `STAGE-001` PASS only in local synthetic harness; Tenant-RLS metadata, shared lifecycle, service cleanup and purge Audit remain NOT RUN | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §10 |
-| 정책 및 Acceptance | `PACS-001-DEC-008`, `TC-PACS-001-STAGE-006~008/010/013`, `TC-DB-008-REG-001/002/006` | StudyReference-scoped durable metadata schema/repository; migration and TypeScript compile are checked, but DB/RLS, sibling isolation, cleanup/Audit and DB-008 post-migration acceptance remain NOT RUN | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §11 |
+| 정책 및 Acceptance | `PACS-001-DEC-008`, `TC-PACS-001-STAGE-006~008/010/013`, `TC-DB-008-REG-001/002/006/011` | StudyReference metadata schema/repository and runtime-role PostgreSQL/RLS Acceptance pass in isolated `-ScratchOnly`; STAGE-006 metadata and STAGE-013 metadata/race/state-fence slice pass. Physical deletion/DEK destruction, SERVICE cleanup, purge saga and runtime activation remain NOT RUN | [TEST-EVIDENCE.md](TEST-EVIDENCE.md) §11 |
 
 ### 3.1 현 구현 단계 권고안 — exact WADO stream과 encrypted spool 연결
 
@@ -79,6 +79,17 @@
 | 잔여 위험 | per-Study metadata만으로 cross-process 10 GiB quota, 실제 scheduling/service principal, restart cleanup, encrypted volume operation 또는 physical erasure를 입증하지 못한다. 이들은 후속 `STAGE` gate다. |
 | 적용 권한 | 사용자 상시 지침에 따른 recommendation-first 진행. `PACS-001-DEC-007`의 명시적 Schema Change Gate를 충족하는 현 모델 cardinality 증거이며 제품 범위·보안 불변조건은 확장하거나 약화하지 않는다. |
 
+### 3.3 DEC-008 PostgreSQL Acceptance 실행 경계
+
+| 항목 | 권고안 |
+|---|---|
+| 확인 근거 | `scripts/test-db-008-full-schema.ps1`은 disposable scratch DB의 clean/repeat/reset/re-apply 뒤에 DB-002~007 회귀를 실행하며, 해당 회귀가 실행 중인 영구 개발용 `mediq` DB에 pending migration을 적용한다. 이번 Acceptance는 새 migration의 runtime role/RLS를 확인하는 것이므로 persistent fixture DB 변경은 필요하지 않다. |
+| 채택 권고안 | DB-008에 `-ScratchOnly` 실행 모드를 추가한다. 고유 Compose project와 폐기 가능한 PostgreSQL volume 안에서만 migration·catalog·runtime-role integration을 수행하고, DB-002~007 persistent regression 단계는 명시적으로 건너뛴다. 기존 `mediq` Compose project, 그 데이터 volume, Orthanc A/B는 시작·변경·삭제하지 않는다. |
+| 고려한 대안 | 전체 DB-008을 바로 실행하면 기존 회귀도 검증되지만, 이번 스코프에 필요하지 않은 persistent development DB migration side effect가 동반된다. 별도 수동 SQL 검사는 재현성 및 runtime role/RLS 증거가 약해 채택하지 않는다. |
+| Acceptance 및 경계 | `-ScratchOnly`는 fresh UP, repeat apply, reset/re-UP, exact 18-table/24-migration/catalog/grant inventory, StudyReference repository positive/negative/RLS/concurrency/Audit rollback cases 후 owned scratch resource cleanup을 모두 입증해야 한다. 실행 스크립트는 migration 이후 persistent `mediq` DB에 접속하지 않아야 한다. |
+| 보안·운영 영향 | 이 모드는 test-harness 경계만 변경한다. `.env`는 Git-ignored인지 확인한 후 scratch 컨테이너 생성에만 쓰고, secret을 출력하지 않는다. 신규 test rows, triggers, grants 및 migration history는 disposable volume 밖에 남기지 않는다. PACS/Orthanc/실제 환자정보는 사용하지 않는다. |
+| 적용 권한 | `PACS-001-DEC-008` 승인된 isolated PostgreSQL/RLS Acceptance와 `AGENTS.md`의 synthetic-only/test evidence 요건 안의 검증 구현 세부 선택. 제품 scope나 보안 invariant 변경은 없다. |
+
 ## 4. 구현 결과
 
 - `validatePacsPatientIdBinding`는 empty input, non-canonical destination/source ID, 64자 초과 및 어떤 instance라도 destination과 다른 경우 fail closed한다.
@@ -97,6 +108,7 @@
 - 이는 service 내부 handoff 경계다. public route/controller/worker, Mandatory Preflight, durable dispatch/`STOW_STARTED`, `RESULT_UNKNOWN` handling 또는 STOW를 추가하지 않았다.
 - `PACS-001-DEC-007` adds a per-instance AES-256-GCM spool writer and an optional internal `AuthorizedSourceCaptureService` seam. When explicitly injected in an isolated harness, the integrity reader awaits each chunk's encrypted file write, compares the exact source SHA-256/length, and returns only opaque object refs in the post-commit internal coordinator handoff. The Nest module/Compose/runtime does not supply/register a store; ordinary `capture()` remains unchanged and there is no route or downstream byte consumer.
 - `STORE-CORE-001~007` and `STAGE-001` pass only as local synthetic unit cases. They do not pass `STAGE-002~012`, prove shared quota across processes, DB/RLS cleanup, or authorize a downstream byte consumer.
+- `PACS-001-DEC-008` PostgreSQL/RLS acceptance passed in a disposable DB-008 scratch project: exact 244 runtime column grants, forced Tenant RLS, exact 10 StudyReference SELECT / 4 metadata UPDATE grants, sibling-Study isolation, reservation race denial, wrong-Tenant/binding denial, invalid-shape/duplicate-reference constraints, Audit-failure rollback, idempotent metadata purge, pre-`STOW_STARTED` retry and post-`STOW_STARTED` denial. The final scratch clean/repeat/reset/reapply catalog was 18 tables / 24 migrations / `18|50|17|42`; scratch cleanup passed. Persistent `mediq` DB was not accessed; DB-002~007 persistent regressions were skipped by design.
 - No DICOM payload was changed; no STOW request was sent.
 
 ## 5. 변경 파일
@@ -113,6 +125,10 @@
 | `tests/api/authorization-gated-operation.test.mjs`, `tests/api/pacs-import-mapping-gate.test.mjs` | Fence ordering/failure and PACS gate ordering assertions |
 | `tests/database/pacs-import-authorization-fence.integration.test.mjs` | Scratch-only real PostgreSQL concurrency, post-revoke/withdrawal denial and no-operation-state test |
 | `services/api/Dockerfile`, `infra/docker-compose.yml`, `scripts/validate-compose-baseline.ps1`, `scripts/test-db-008-full-schema.ps1` | Integration-test packaging, fixture, allowlist and DB-008 isolated acceptance wiring |
+| `services/api/src/database/migrations/0023_illegal_marvel_zombies.sql` | Four StudyReference metadata columns, state/shape constraints, partial indexes and exact runtime column grants |
+| `services/api/src/imaging-storage/persistence/postgres-temporary-payload-metadata.repository.ts` | Exact operation/resource-bound temporary payload metadata persistence primitive |
+| `tests/database/temporary-payload-metadata-runtime.integration.test.mjs` | Scratch PostgreSQL/RLS sibling isolation, race, binding, purge-Audit transaction and state-fence Acceptance |
+| Existing DB runtime integration tests | Updated exact runtime privilege inventory expectations from 236 to 244 and StudyReference update allowlist to the four DEC-008 metadata columns |
 | `services/api/src/database/migrations/0018_smiling_shooting_star.sql` | Restored four historical trailing spaces so source bytes match the already-applied immutable migration checksum; no SQL/schema semantic change |
 | `tests/api/pacs-patient-id-binding.test.mjs` | Exact match, empty/malformed/overlength/mismatch/invalid destination tests |
 | `tests/api/orthanc-dicomweb.adapter.test.mjs` | Projection minimization 및 missing/multivalue/wrong-VR tests |
@@ -137,7 +153,7 @@
 
 ### API·Data
 
-- No database migration, schema, privilege, OpenAPI, or durable-data change.
+- Additive migration `0023` adds only four `study_references` temporary-payload metadata columns, lifecycle CHECKs/indexes and exact metadata-column SELECT/UPDATE grants. No public OpenAPI/API schema or runtime store/worker wiring changed; the repository is a persistence primitive, not an enabled storage path.
 - Per-instance PatientID exists only in the internal metadata result while the application performs the identity check. No DICOM payload attribute is changed.
 
 ### Security·Privacy
@@ -155,6 +171,7 @@
 - `./scripts/test-int001-source-capture.ps1 -EnvFile .env`: 35/35 isolated synthetic integration tests PASS; independent Audit/evidence observer PASS; exact per-instance digest/length matched the synthetic source fixture; B EMPTY before/after; scratch cleanup and existing `mediq` stack preservation PASS.
 - PACS-001 fence integration: PASS in the isolated PostgreSQL scratch DB, including revoke/fence concurrency and operation-row non-change.
 - The first aggregate run failed at the local migration smoke because four trailing spaces in already-applied migration `0018` had been stripped from the source file. A retained migrator image confirmed the exact historical bytes; those bytes were restored without editing the DB ledger or changing SQL semantics. The direct migration smoke and subsequent complete `scripts/test-db-008-full-schema.ps1 -EnvFile .env` rerun both exited `0`. DB-008 clean/reset/reapply, 18-table/20-migration catalog, DB-002~007 regressions, PACS-007, PACS-001 fence, exact RLS/privilege probes and scratch cleanup passed. See [TEST-EVIDENCE.md](TEST-EVIDENCE.md).
+- Final DEC-008 post-amendment `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` exited `0`. The disposable project verified clean/repeat/reset/reapply, 18 tables/24 migrations/catalog `18|50|17|42`, 244 exact runtime grants, the new metadata PostgreSQL/RLS test, and existing DB-009/EXC/Consent/Grant/PACS-fence/Provenance/Integrity integrations. It explicitly skipped DB-002~007 scripts that would access the persistent development DB; output confirmed `persistent_mediq_database=NOT_ACCESSED` and `db008_ephemeral_cleanup=PASS`.
 - Isolated Test Orthanc read-only integration: 5/5 PASS; no STOW or PACS mutation.
 - The new staging tests do not use Orthanc, PostgreSQL/RLS, actual configured service volumes or a downstream PACS port. `STAGE-001` is PASS only in the injected synthetic unit harness; `STAGE-002~012` remain NOT RUN.
 - Ticket result: **PARTIAL**.
@@ -165,7 +182,7 @@
 - `PACS-001-DEC-005` ephemeral handoff is PASS only for its internal scope; no persistent UID inventory is stored, and the ordinary source-capture result remains minimized. The exact inventory is transient application memory and cannot survive a process crash; no JavaScript zeroization guarantee is claimed. This is not the PACS coordinator or a dispatch capability.
 - `PACS-001-DEC-006` per-instance digests are transient and non-authorizing. The optional internal test seam stages the same checked WADO bytes, but the production Nest module does not inject the store and therefore still discards source bytes after hashing.
 - `PACS-001-DEC-007` runtime remains unregistered. A non-empty directory after restart intentionally fails with `RECOVERY_REQUIRED`; Tenant-RLS metadata persistence, shared quota, SERVICE cleanup/recovery, purge saga and Audit remain unimplemented. No persistent storage path may be activated before `STAGE-002~012` and the broader runtime/Orthanc no-side-effect gates pass.
-- `PACS-001-DEC-008` now supplies a migration and repository primitive, but no new repository-specific unit/integration tests were added in this checkpoint and no PostgreSQL migration was applied. Runtime SELECT/UPDATE privileges, forced RLS, two-Study isolation, `PURGE_PENDING` recovery, filesystem deletion ordering, and same-transaction purge Audit are therefore NOT RUN; the repository must not be described as verified lifecycle behavior.
+- `PACS-001-DEC-008` schema/repository metadata Acceptance is verified only against disposable PostgreSQL/RLS. The Audit observer uses the migration role solely for test evidence because `mediq_runtime` intentionally has no Audit SELECT grant. The database test proves Audit-row transaction rollback and metadata state transitions, not physical ciphertext deletion, DEK destruction, filesystem/DB saga recovery, restart orphan cleanup, SERVICE identity, shared quota, or runtime storage wiring. Do not describe it as an active or end-to-end verified storage lifecycle.
 - The fence has only been proven for internal paths using the shared helper and same database; full coordinator's atomic authorization + durable `STOW_STARTED` dispatch boundary remains open.
 - Endpoint/TLS preflight integration, Integrity/Provenance/Audit gates, STOW result parsing, destination verification/reconciliation, and product-level zero-STOW/B-unchanged negative tests remain open.
 - Exact equality of synthetic PatientID strings is not real-patient identity proof or cross-hospital identity matching.
@@ -178,9 +195,9 @@ Ticket: MEDIQ-PACS-001
 Scope: Internal identity/fence sub-gates, `DEC-005/006` source handoffs, `DEC-007` optional exact-source spool integration, and `DEC-008` StudyReference metadata/schema persistence primitive
 Changed: Added immutable `captureForCoordinator()` identity/digest handoffs, bounded AES-256-GCM spool primitive, four StudyReference lifecycle metadata columns with constraints/indexes and column-level grants, plus an unintegrated exact-binding Postgres repository and fixed purge Audit rule; ordinary `capture()` allowlist remains unchanged
 Not changed: Full coordinator/source-storage wiring, cleanup worker, runtime volume, shared quota, end-to-end purge/recovery saga, operation transition/`STOW_STARTED`, HTTP route, destination verifier invocation, STOW, PACS write or reconciliation
-Security impact: The migration grants runtime access only to the four metadata columns (SELECT/UPDATE; no INSERT/DELETE grant); repository assumes a verified Tenant transaction and checks operation/resource binding; neither has been verified against PostgreSQL/RLS in this checkpoint. No route, worker, destination write or STOW capability was added; process-only DEK best-effort zeroization remains the explicit limit
-Tests executed: API 36 files/678 tests; API build and typecheck; Drizzle migration check; migration-runner 6/6; DICOM Port contract and `git diff --check` as recorded in TEST-EVIDENCE. Prior isolated source-capture/Test Orthanc/PostgreSQL 35/35, independent Audit observer, B EMPTY/zero STOW, fence and pre-DEC-008 DB-008 evidence remain separately scoped
-Tests not executed: DEC-008 PostgreSQL/RLS migration and repository Acceptance, post-amendment DB-008 clean/reset/reapply, `STAGE-002~013` lifecycle Acceptance, runtime module/volume, Tenant SERVICE cleanup/purge Audit/recovery saga, shared-volume/multi-process quota, maximum-study memory/performance, full coordinator no-STOW/B-unchanged, Mandatory Preflight/dispatch/`STOW_STARTED`, live STOW, unknown-outcome reconciliation, terminal Integrity/Provenance/Audit, production TLS/PKI and P0 E2E
+Security impact: The migration grants runtime SELECT/UPDATE only on the four temporary-payload metadata columns; no INSERT/DELETE/table-wide grant was added. Real PostgreSQL verified exact grants and forced Tenant RLS; repository binding is tested in that role boundary. No route, worker, runtime volume, destination write or STOW capability was added; physical DEK destruction is unproven
+Tests executed: API 36 files/678 tests plus prior focused build/typecheck/migration checks; final DB-008 `-ScratchOnly` exit 0 with 18/24/18|50|17|42, 244 exact grants, DEC-008 PostgreSQL/RLS cases, DB-009/EXC/Consent/Grant/PACS-fence/Provenance/Integrity regressions, scratch cleanup and persistent DB NOT ACCESSED; syntax checks and diff check PASS. Exact commands and boundaries are in TEST-EVIDENCE
+Tests not executed: Physical ciphertext deletion ordering, DEK destruction, end-to-end filesystem/DB/Audit purge saga, restart cleanup, SERVICE cleanup, shared-volume/multi-process quota, maximum-study memory/performance, runtime module/volume registration, full coordinator no-STOW/B-unchanged, Mandatory Preflight/dispatch/`STOW_STARTED`, live STOW, unknown-outcome reconciliation, product destination verification and P0 E2E. Non-scratch DB-002~007 persistent regressions were intentionally skipped by `-ScratchOnly`
 Evidence: TEST-EVIDENCE.md
 Implementation record: docs/implementation/MEDIQ-PACS-001/
 Remaining risks: The optional seam is unregistered and not a product storage path; source bytes are discarded in the current Nest runtime. Persistent ciphertext lifecycle, atomic shared quota, Tenant-RLS purge discovery, SERVICE identity, durable purge Audit/recovery and maximum-study performance remain open; no effect-capable coordinator consumes the handoff; full Mandatory Preflight, endpoint/TLS, destination-byte verification and terminal Integrity/Provenance/Audit remain open
@@ -197,4 +214,4 @@ Status: PARTIAL
 | 2026-10-02 | `PARTIAL` | `PACS-001-DEC-005` handoff internal sub-gate PASS; `HANDOFF-001~007` scoped Acceptance, API and isolated Test Orthanc/PostgreSQL evidence recorded. Full coordinator remains unimplemented |
 | 2026-10-02 | `PARTIAL` | Initial `PACS-001-DEC-007` recommendation/Acceptance checkpoint: six unregistered encrypted-spool primitive unit cases pass; source integration, DB/RLS, shared quota, cleanup worker and purge Audit were then NOT RUN |
 | 2026-10-02 | `PARTIAL` | Added optional exact-source observer integration and atomic in-process quota reservation; `STORE-CORE-001~007` + `STAGE-001` scoped unit PASS; `STAGE-002~012`, runtime registration, DB/RLS lifecycle and full coordinator remain NOT RUN |
-| 2026-10-03 | `PARTIAL` | `PACS-001-DEC-008` StudyReference metadata schema/repository primitive added after recommendation and Acceptance update; build/API/migration consistency checks pass, but no repository tests or PostgreSQL/RLS/DB-008 runtime acceptance; no store/worker registration |
+| 2026-10-03 | `PARTIAL` | `PACS-001-DEC-008` exact StudyReference metadata grants/RLS, sibling isolation, race, purge-Audit transaction, operation-state fence and DB-008 scratch clean/repeat/reset/reapply PASS. Physical storage purge saga, runtime registration, SERVICE cleanup/quota and full coordinator remain open |

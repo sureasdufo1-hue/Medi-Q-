@@ -350,7 +350,7 @@ test("GRT-003 signed destination requester issues actor/package-bound idempotent
       SELECT table_name, column_name, privilege_type FROM information_schema.column_privileges
        WHERE grantee=current_user AND table_schema='public'
     `);
-    assert.equal(catalog.rows.length, 236, "GRT004_EXACT_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 244, "GRT004_EXACT_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     const tablePrivileges = await pool.query(
       "SELECT count(*)::int AS n FROM information_schema.table_privileges WHERE grantee IN ('PUBLIC',current_user) AND table_schema='public'",
     );
