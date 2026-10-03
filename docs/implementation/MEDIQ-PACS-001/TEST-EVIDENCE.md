@@ -640,10 +640,6 @@ FLOW-001 is a known failing regression in this commit. Apply the recorded DEC-01
 
 ## 26. DEC-014 implementation and integrated workload
 
-## 27. DEC-016 verified SERVICE expiry cleanup
-
-**Pre-implementation (2026-10-03):** Previous goal turn made concrete progress: STAGE-005/009 scoped PASS with final API 732 and integrated workload evidence. Current worktree contains those uncommitted changes and is preserved. DEC-016 and CLEAN-001~008 precede implementation. Reuse existing runtime identity/RLS and purge saga; add no grant/schema or runtime registration. Tests will use mocked transactions for narrow unit assertions and a dedicated disposable DB-008 integration with signed synthetic OIDC, active SERVICE registry resolution, two Tenants and actual generated ciphertext. Privileged fixture setup/inspection is not worker behavior. No current test PASS is claimed yet.
-
 **Pre-implementation checkpoint (2026-10-03):** Work resumes from clean commit `cc44fdb`. The previous turn made progress by recording DEC-013 completed workload and the actual FLOW-001 failure. The same DB-008 scratch handle is confirmed live; no restart. DEC-014 already authorizes removing only the multipart library's optional non-backpressured counter and adding the unchanged 64 MiB check before each adapter enqueue. Header/count/transfer-syntax, terminal iterator failure, cancellation and semaphore release behavior must remain intact. No dependency, endpoint permission, STOW, schema or runtime activation change is allowed.
 
 FLOW-002 will directly verify exact 64 MiB success, +1-byte rejection, cancellation and permit reuse, plus existing malformed/timeout/abort regressions. FLOW-003 will route the unchanged maximum workload through the real multipart adapter using injected synthetic HTTP only. Bounded adapter prefetch may legitimately overlap an awaited encrypted write: measure produced-minus-acknowledged bytes at every source pull and require at most 512 KiB, instead of asserting zero upstream pull across internal stream buffers. Keep sequential source instances, one active write, exact bytes/digests/objects, one authenticated consumer buffer, unchanged memory/deadline limits and cleanup. This refines the integration measurement; it does not relax the source-consumer backpressure requirement. Results pending.
@@ -682,6 +678,10 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
 
 **Judgment:** STAGE-005 is **PASS (scoped)** by the completed DEC-011 fault matrix plus prior exact quota/bounds evidence. STAGE-009 is **PASS (scoped, unregistered single-process boundary)** from the combined actual-adapter FLOW-001~003, default two-permit/eight-waiter CONC-001~003, production-intended borrowed lifetime LIFE-001~008 and exact workload evidence. The workload's own `full_stage009=NOT_PROVEN` marker is intentionally conservative: it alone does not prove concurrency/lifetime; those have separate recorded tests. No cross-process/global memory ceiling, clinical DICOM conformance, actual downstream STOW consumer, active runtime Authorization or product E2E is claimed. MEDIQ-PACS-001 remains **PARTIAL**. Next: STAGE-010 verified per-Tenant SERVICE cleanup, followed by privacy/no-side-effect and runtime/coordinator gates. No new commit/push was performed in this goal continuation.
 
+## 27. DEC-016 verified SERVICE expiry cleanup
+
+**Pre-implementation (2026-10-03):** Previous goal turn made concrete progress: STAGE-005/009 scoped PASS with final API 732 and integrated workload evidence. Current worktree contains those uncommitted changes and is preserved. DEC-016 and CLEAN-001~008 precede implementation. Reuse existing runtime identity/RLS and purge saga; add no grant/schema or runtime registration. Tests will use mocked transactions for narrow unit assertions and a dedicated disposable DB-008 integration with signed synthetic OIDC, active SERVICE registry resolution, two Tenants and actual generated ciphertext. Privileged fixture setup/inspection is not worker behavior. No current test PASS is claimed yet.
+
 ## 28. User-requested Git checkpoint
 
 **Date:** 2026-10-03 Asia/Seoul. The user requested saving the current state with commit and push. Existing DEC-014/015 implementation, tests and scoped evidence are preserved. DEC-016 is recommendation/Acceptance only, with no cleanup-runner implementation or test PASS. No further feature work or runtime activation is performed for this checkpoint.
@@ -697,3 +697,47 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
 | `git fetch origin` | Exit 0; remote points to the user-requested Medi-Q- repository |
 
 No new disposable PostgreSQL, exact 2 GiB workload, Docker image, real Orthanc or product E2E run was performed for this Git-only task. Earlier results remain historical evidence in section 26 and are not represented as reruns. No patient data, runtime credentials or generated imaging payload is intentionally included. Full Ticket status remains **PARTIAL**; successful commit/push is a repository checkpoint, not product completion.
+
+## 29. DEC-016 implementation and verification
+
+**2026-10-03, started from clean commit `3b04e3c`.** The preceding turn made progress by committing the validated streaming work and pre-implementation DEC-016 decision. Recommendation and CLEAN-001~008 were already recorded. This continuation implements bounded expired-target discovery, immutable input snapshots, exact Tenant-level SERVICE guards in discovery and both TTL purge transactions, atomic expiry revalidation before physical deletion, and aggregate-only sequential batch results. No runtime registration, schema/grants, endpoint or STOW change.
+
+| Command | Observed result |
+|---|---|
+| `npm run build:api` then `npx vitest run tests/api/temporary-payload-expiry.test.mjs tests/api/temporary-payload-purge-coordinator.test.mjs --maxWorkers=1` | Exit 0; 2 files/38 tests PASS (32 new expiry cases plus six prior saga cases), 13:31:43 KST, 862 ms |
+| `npm run test:api -- --maxWorkers=1` | Build and 41 files/764 tests PASS, exit 0; 13:37:59 KST, 24.45 s |
+| `npm run typecheck:api`; `npm run test:dicom-port-contract` | Both exit 0 |
+| `node --check tests/database/temporary-payload-expiry-runtime.integration.test.mjs` | Exit 0, including the final transaction-observer correction |
+| PowerShell parser of `scripts/test-db-008-full-schema.ps1` | No parse errors; `db008_powershell_syntax=PASS` |
+| `git diff --check` | Exit 0; LF/CRLF warnings only |
+| `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` | Live process session 42314, owned project `mediq-db008-bafd5c1a87ca`; observed `db008_scratch_postgres=PASS role_bootstrap=PASS`. No final integration/wrapper/cleanup verdict yet; not restarted |
+
+Unit/model results cover bounded queries and immutable/aggregate output, SERVICE/context/clock denials, stale ref/expiry, before/after-admission identity changes, partial failure and idempotent retry. SQL modeling is not PostgreSQL/RLS evidence. The dedicated real integration test uses fresh signed synthetic OIDC, actual ActorTenantContextService/registry and mediq_runtime only for discovery/purge. A separate migrator connection seeds/observes or deliberately alters synthetic test rows; it never runs worker discovery or purge. Its physical-effect observer checks no current task's transaction via AsyncLocalStorage and, during sequential cases, independently verifies zero runtime transactions in pg_stat_activity. Concurrent batches may legitimately have another batch's metadata transaction active; the observer does not confuse that with a transaction spanning its own filesystem call.
+
+Pending: dedicated real DB/ciphertext result and existing wrapper clean/repeat/reset/reapply/owned cleanup. No real PACS, runtime scheduler, clinical DICOM or product E2E is tested. STAGE-010 and MEDIQ-PACS-001 remain PARTIAL. The misplaced DEC-016 pre-implementation heading and P0/P1 architecture/Acceptance paragraphs were moved back to their correct sections without changing their requirements. No commit/push in this continuation.
+
+**First real integration result (supersedes live-run notes above):** Session 42314 exited **1**. PACS-007 regression passed, then DEC-016 failed at `TENANT_ISOLATED_DISCOVERY_AND_PARTIAL_FAILURE`, safe code `ASSERTION`; raw output remained suppressed. Read-only Docker inventories confirmed zero containers, volumes and networks for `mediq-db008-bafd5c1a87ca` after the wrapper's finally cleanup. No full STAGE-010 or DB wrapper PASS. Static inspection does not establish the failed assertion's cause. Record the diagnostic refinement before adding fixed substage/aggregate/SQLSTATE categories; preserve all checks and rerun in a fresh disposable stack only after the original terminal status is confirmed.
+
+**Observer defect and corrected rerun:** Comparison with migration 0024 and the existing payload-runtime observer showed that quota reservations remain FORCE RLS protected under `mediq_quota_owner`; the new observer omitted the transaction-local Tenant setting and therefore cannot see the retained row. DEC-016 records the recommendation before adding exact target-Tenant context in that read-only observer. No-/wrong-Tenant observer reads must still return zero, while the correct Tenant must see one retained reservation before successful purge and zero afterward. No runtime privileges, policy, production implementation or original assertion count is weakened. This explains a concrete test defect consistent with the failure; the rerun must determine whether it is the only cause.
+
+The first process was confirmed terminal before launching the unchanged full command `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` again. Replacement session **77695**, owned project **mediq-db008-84a48ffac0f8**: observed bootstrap PASS and healthy scratch PostgreSQL. Safe diagnostic/substage changes and the observer correction were saved while this replacement run was still in bootstrap/SQL setup, before its expiry integration build. `node --check` and `git diff --check` passed for the corrected test. Fixed diagnostics include only stage names, aggregate counts and SQLSTATE/observer categories; raw errors, selectors, paths and secrets remain suppressed. Final test/image provenance, integration, clean/repeat/reset/reapply and owned cleanup are still pending; do not reuse session 42314 or restart the live replacement merely for delayed output.
+
+**Verified wait / next-gate inspection (14:04 KST):** The same session 77695 remains live; the owned PostgreSQL is healthy and an owned Docker psql subprocess was observed executing. No timeout was treated as terminal, no replacement was launched and no integration PASS inferred. Read-only inspection found the still-unconnected source-capture primitive `beginPackage`/`purgePackage` seam, completed-capture TTL coordination and ordinary-response privacy boundaries. Report §14 records these concrete next-gate prerequisites; they are not implementation or acceptance of STAGE-002/003/004/011/012. Existing source/runtime behavior and current test inputs are unchanged by that inspection.
+
+## 30. DEC-016 user-requested commit checkpoint
+
+**Date:** 2026-10-03, approximately 14:15 KST. The user requested committing and pushing the current state. This checkpoint supersedes earlier pending observations, not historical failed attempts. No product code, permissions, runtime activation or test assertions were changed for this checkpoint.
+
+| Command / observation | Actual result |
+|---|---|
+| `npm run test:api` | Exit 0; build and **41 files / 764 tests PASS**; start 14:14:15 KST, Vitest duration 17.48 seconds |
+| `npm run typecheck:api` | Exit 0 |
+| `npm run test:dicom-port-contract` | Exit 0 |
+| `node --check tests/api/temporary-payload-expiry.test.mjs` and `node --check tests/database/temporary-payload-expiry-runtime.integration.test.mjs` | Both exit 0 |
+| PowerShell parser for `scripts/test-db-008-full-schema.ps1` | Zero syntax errors |
+| Existing session 77695, unchanged `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` | First `pacs001_expiry_runtime=PASS` observed: signed OIDC, active SERVICE, Tenant RLS, stale denial, partial retry, concurrent idempotency, ciphertext cleanup and quota/Audit. Existing PACS-007, payload-runtime, DB-009 and EXC-002 sentinels also observed. Process remains live; full repeat/reset/reapply, final exit and owned-project cleanup **not yet confirmed** |
+| `git diff --check` | Exit 0; LF/CRLF normalization warnings only |
+| Changed-file credential-pattern and artifact-path review | Zero matches for inspected private-key/token/credential-URL patterns; no `.env`, DICOM, ciphertext, runtime logs or build outputs selected. This limited review is not a comprehensive secret-detection guarantee |
+| `git fetch origin`; `git rev-list --left-right --count HEAD...origin/main` | Fetch exit 0; `0 0` before the new checkpoint commit |
+
+**Judgment:** Preserve **PARTIAL** for STAGE-010 and MEDIQ-PACS-001. The first real integration round now passes, but it does not replace the whole-wrapper completion/cleanup gate. Leave the existing test running without restarting it. Runtime storage/scheduler, source lifecycle integration, privacy/no-side-effect gates, Mandatory Preflight/STOW/destination verification and P0 E2E remain open. This commit records an intermediate state, not completion or deployment.

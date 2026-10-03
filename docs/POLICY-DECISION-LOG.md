@@ -1310,6 +1310,12 @@
 
 ## PACS-001-DEC-016 — Verified Tenant SERVICE expiry cleanup
 
+**Diagnostic refinement (before change, 2026-10-03):** The first real scratch run exited 1 in TENANT_ISOLATED_DISCOVERY_AND_PARTIAL_FAILURE with ASSERTION. Its owned containers/volumes/network are confirmed absent. Preserve this failure and add fixed substage labels, aggregate-only batch counts and SQLSTATE/observer-category diagnostics to the test/wrapper; do not expose raw exceptions, identifiers, paths, tokens or payload. Keep all assertions, roles, scope and final full-wrapper criteria unchanged. A fresh scratch rerun is authorized because the original process is terminal, not because a poll timed out. Root cause is not yet established; no production-code workaround or weakened Acceptance is selected.
+
+**Observer correction recommendation (before change):** Schema inspection confirms `temporary_payload_reservations` uses FORCE RLS even for its quota-owner role. The new `quotaCount` test observer switches role but omits transaction-local Tenant context, unlike the existing payload integration observer; it therefore cannot observe the retained reservation it expects. Correct only the test observer by setting the exact synthetic target Tenant in the same transaction. Add explicit no-context/wrong-Tenant zero-row assertions and keep the correct-Tenant retained-row assertion at one. Do not grant privileges, bypass RLS, change runtime purge code or weaken counts. This is an identified observer defect consistent with the initial ASSERTION; rerun evidence must establish whether any other failure remains. The current replacement scratch process is still live and must not be restarted.
+
+**Current execution (2026-10-03):** Internal batch and every-TTL SERVICE/expiry guards are implemented; 32 expiry unit/model cases and API 764 pass. Signed-OIDC/real-RLS/ciphertext integration is pending in the live disposable DB-008 wrapper. No schema/grant, route, provider/scheduler or runtime activation change. See evidence §29, separate from §27's pre-implementation record.
+
 | 항목 | 권고안 및 적용 |
 |---|---|
 | 상태·권한·날짜 | ACCEPTED UNDER STANDING USER INSTRUCTION, 2026-10-03, CAPSTONE-P0. STAGE-005/009 scoped evidence is complete; this recommendation and CLEAN-001~008 precede implementation. |

@@ -1225,7 +1225,7 @@ Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry d
 
 구체적인 Production Retention 기간은 P0에서 고정하지 않는다.
 
-**Acceptance:** `TC-PACS-001-STAGE-007/008` scoped internal filesystem + PostgreSQL/RLS PASS under `PACS-001-DEC-009`; `STAGE-010` verified per-Tenant SERVICE cleanup remains NOT RUN (`ACCEPTANCE-TESTS.md`). This does not authorize runtime storage activation.
+**Acceptance:** `TC-PACS-001-STAGE-007/008` scoped internal filesystem + PostgreSQL/RLS PASS under `PACS-001-DEC-009`; `STAGE-010` is PARTIAL: DEC-016 internal runner and unit/model tests implemented, first real integration failed and the corrected observer rerun remains pending (`ACCEPTANCE-TESTS.md`, PACS-001 evidence §29). No runtime storage/scheduler activation is authorized.
 
 ---
 

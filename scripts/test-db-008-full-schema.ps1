@@ -774,6 +774,28 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
     }
 
     $migrationInspectUrl = $Settings["MEDIQ_MIGRATION_DATABASE_URL"]
+    $expiryArgs = $ComposeArgs + @(
+        "--profile", "test", "run", "--build", "--rm", "--no-deps",
+        "--env", "MEDIQ_TEMP_PAYLOAD_TEST_FIXTURE=$temporaryPayloadFixture",
+        "--env", "MEDIQ_TEST_INSPECT_DATABASE_URL=$migrationInspectUrl",
+        "--env", "MEDIQ_EXPIRY_TEST_SCOPE=DB008_SCRATCH",
+        "api-db-integration-test",
+        "node", "--test", "tests/database/temporary-payload-expiry-runtime.integration.test.mjs"
+    )
+    $expiryOutput = @(& docker @expiryArgs 2>&1 | ForEach-Object { $_.ToString() })
+    $expiryExitCode = $LASTEXITCODE
+    $expirySummary = [string]::Join("`n", [string[]]@($expiryOutput))
+    if ($expiryExitCode -ne 0 -or $expirySummary -notmatch '(?m)^(?:#|ℹ) pass 1$') {
+        $safeStage = [regex]::Match($expirySummary, 'EXPIRY_STAGE=([A-Z_]+)').Groups[1].Value
+        $safeCode = [regex]::Match($expirySummary, 'EXPIRY_STAGE=[A-Z_]+ code=([A-Z0-9_]+)').Groups[1].Value
+        $safeDetails = [regex]::Match($expirySummary, 'EXPIRY_STAGE=[A-Z_]+ code=[A-Z0-9_]+ details=([A-Z0-9_:]{1,256})').Groups[1].Value
+        if (-not $safeStage) { $safeStage = 'unknown' }
+        if (-not $safeCode) { $safeCode = 'unclassified' }
+        if (-not $safeDetails) { $safeDetails = 'unavailable' }
+        throw "PACS-001 DEC-016 expiry integration failed (exit=$expiryExitCode, stage=$safeStage, safe_error=$safeCode, details=$safeDetails); raw output suppressed."
+    }
+    Write-Output "pacs001_expiry_runtime=PASS signed_oidc=PASS active_service=PASS tenant_rls=PASS stale_denial=PASS partial_retry=PASS concurrent_idempotency=PASS ciphertext_cleanup=PASS quota_audit=PASS runtime_activation=false"
+
     $temporaryPayloadArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
         "--env", "MEDIQ_TEMP_PAYLOAD_TEST_FIXTURE=$temporaryPayloadFixture",

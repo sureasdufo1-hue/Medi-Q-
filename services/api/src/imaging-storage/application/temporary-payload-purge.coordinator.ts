@@ -9,6 +9,7 @@ import {
   type TemporaryPayloadPurgeReason,
 } from "../persistence/postgres-temporary-payload-metadata.repository.js";
 import type { EphemeralEncryptedTemporaryImagingStore } from "./ephemeral-encrypted-temporary-imaging-store.js";
+import { assertCleanupServiceContext, snapshotCleanupPrincipal, snapshotCleanupTime } from "./temporary-payload-service-context.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,13 +97,22 @@ export class TemporaryPayloadPurgeCoordinator {
     const storageRef = input.storageRef.toLowerCase();
     const correlationId = input.correlationId.toLowerCase();
     const tenantId = input.tenantCandidate.toLowerCase();
+    const reason = input.reason;
+    let principal: VerifiedAuthenticationPrincipal;
+    try {
+      principal = snapshotCleanupPrincipal(input.principal);
+    } catch {
+      throw new TemporaryPayloadPurgeUnavailableError("VALIDATION");
+    }
 
     try {
-      await this.tenantRunner.run(input.principal, tenantId, async (context, transaction) => {
+      await this.tenantRunner.run(principal, tenantId, async (context, transaction) => {
         this.assertTenant(context, tenantId);
+        if (reason === "TTL_EXPIRED") assertCleanupServiceContext(context, tenantId, principal);
         await new PostgresTemporaryPayloadMetadataRepository(transaction).markPurgePending({
           binding,
           storageRef,
+          ...(reason === "TTL_EXPIRED" ? { expiredAt: snapshotCleanupTime(this.clock) } : {}),
         });
       });
     } catch {
@@ -127,18 +137,19 @@ export class TemporaryPayloadPurgeCoordinator {
 
     try {
       const outcome = await this.tenantRunner.run(
-        input.principal,
+        principal,
         tenantId,
         async (context, transaction) => {
           this.assertTenant(context, tenantId);
+          if (reason === "TTL_EXPIRED") assertCleanupServiceContext(context, tenantId, principal);
           return new PostgresTemporaryPayloadMetadataRepository(transaction).finalizePurgeAndAudit({
             binding,
             storageRef,
             actorId: context.actorId,
             correlationId,
             auditEventId: this.createId(),
-            reason: input.reason,
-            now: this.clock(),
+            reason,
+            now: snapshotCleanupTime(this.clock),
           });
         },
       );

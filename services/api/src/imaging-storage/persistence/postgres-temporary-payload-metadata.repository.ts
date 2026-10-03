@@ -21,6 +21,11 @@ export interface TemporaryPayloadOperationBinding {
   readonly sourceHospitalId: string;
 }
 
+export interface ExpiredTemporaryPayloadCandidate {
+  readonly binding: TemporaryPayloadOperationBinding;
+  readonly storageRef: string;
+}
+
 export class TemporaryPayloadMetadataPersistenceError extends Error {
   constructor() {
     super("TEMPORARY_PAYLOAD_METADATA_UNAVAILABLE");
@@ -72,6 +77,67 @@ function normalizedBinding(binding: TemporaryPayloadOperationBinding) {
  */
 export class PostgresTemporaryPayloadMetadataRepository {
   constructor(private readonly transaction: Pick<PoolClient, "query">) {}
+
+  async findExpired(input: {
+    readonly tenantId: string;
+    readonly now: Date;
+    readonly limit: number;
+  }): Promise<readonly ExpiredTemporaryPayloadCandidate[]> {
+    if (!input || !validUuid(input.tenantId) || !validDate(input.now) ||
+      !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 101) {
+      throw new TemporaryPayloadMetadataPersistenceError();
+    }
+    const tenantId = input.tenantId.toLowerCase();
+    const limit = input.limit;
+    try {
+      // Bilateral Study visibility alone is not cleanup ownership. Require an
+      // exact Tenant-owned operation and the complete Session/Package graph.
+      const result = await this.transaction.query(
+        `SELECT candidate.* FROM (
+           SELECT DISTINCT ON (sr.study_ref_id)
+             op.operation_id::text, op.tenant_id::text,
+             op.exchange_session_id::text, sr.package_id::text,
+             sr.study_ref_id::text, sr.source_hospital_id::text,
+             sr.temporary_storage_ref::text, sr.temporary_payload_expires_at
+           FROM study_references AS sr
+           JOIN imaging_packages AS p ON p.package_id = sr.package_id
+           JOIN exchange_sessions AS e
+             ON e.session_id = p.exchange_session_id
+            AND e.patient_ref_id = p.patient_ref_id
+            AND e.source_hospital_id = p.source_hospital_id
+            AND e.source_hospital_id = sr.source_hospital_id
+           JOIN pacs_transfer_operations AS op
+             ON op.study_ref_id = sr.study_ref_id
+            AND op.exchange_session_id = e.session_id
+            AND op.tenant_id = $1::uuid
+           WHERE NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = $1::uuid
+             AND sr.temporary_storage_ref IS NOT NULL
+             AND sr.temporary_payload_state IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING')
+             AND sr.temporary_payload_expires_at <= $2::timestamptz
+           ORDER BY sr.study_ref_id, op.operation_id
+         ) AS candidate
+         ORDER BY candidate.temporary_payload_expires_at, candidate.study_ref_id
+         LIMIT $3`,
+        [tenantId, new Date(input.now.getTime()), limit],
+      );
+      if (result.rows.length > limit) throw new Error("INVALID_CANDIDATE_COUNT");
+      return Object.freeze(result.rows.map((row): ExpiredTemporaryPayloadCandidate => {
+        const binding = {
+          operationId: row.operation_id, tenantId: row.tenant_id,
+          exchangeSessionId: row.exchange_session_id, packageId: row.package_id,
+          studyRefId: row.study_ref_id, sourceHospitalId: row.source_hospital_id,
+        };
+        if (!validBinding(binding) || binding.tenantId.toLowerCase() !== tenantId ||
+          !validUuid(row.temporary_storage_ref)) throw new Error("INVALID_CANDIDATE");
+        return Object.freeze({
+          binding: Object.freeze(normalizedBinding(binding)),
+          storageRef: row.temporary_storage_ref.toLowerCase(),
+        });
+      }));
+    } catch {
+      throw new TemporaryPayloadMetadataPersistenceError();
+    }
+  }
 
   async reserveStaging(input: {
     readonly binding: TemporaryPayloadOperationBinding;
@@ -198,8 +264,10 @@ export class PostgresTemporaryPayloadMetadataRepository {
   async markPurgePending(input: {
     readonly binding: TemporaryPayloadOperationBinding;
     readonly storageRef: string;
+    readonly expiredAt?: Date;
   }): Promise<void> {
-    if (!input || !validBinding(input.binding) || !validUuid(input.storageRef)) {
+    if (!input || !validBinding(input.binding) || !validUuid(input.storageRef) ||
+      (input.expiredAt !== undefined && !validDate(input.expiredAt))) {
       throw new TemporaryPayloadMetadataPersistenceError();
     }
     const binding = normalizedBinding(input.binding);
@@ -220,6 +288,7 @@ export class PostgresTemporaryPayloadMetadataRepository {
             AND sr.source_hospital_id = $3::uuid
             AND sr.temporary_storage_ref = $4::uuid
             AND sr.temporary_payload_state IN ('STAGING', 'AVAILABLE', 'PURGE_PENDING', 'PURGED')
+            AND ($8::timestamptz IS NULL OR sr.temporary_payload_expires_at <= $8::timestamptz)
             AND NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = $5::uuid
             AND EXISTS (
               SELECT 1
@@ -246,6 +315,7 @@ export class PostgresTemporaryPayloadMetadataRepository {
           binding.tenantId,
           binding.operationId,
           binding.exchangeSessionId,
+          input.expiredAt === undefined ? null : new Date(input.expiredAt.getTime()),
         ],
       );
       if (result.rowCount !== 1) throw new Error("PURGE_RESERVATION_REJECTED");

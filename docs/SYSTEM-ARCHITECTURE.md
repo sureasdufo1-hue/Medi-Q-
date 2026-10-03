@@ -2488,9 +2488,9 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 - DEC-014/015: WADO multipart 소비는 pull 기반 Node async iterator로 backpressure를 전달하고 adapter가 enqueue 전에 64 MiB 한도를 검사한다. 원본 multipart-stream 1.1.0의 선택적 byte counter는 쓰기 backpressure를 무시하므로 사용하지 않는다. HTTP EOF 한 tick 후 parser 종료를 가정하는 라이브러리 결함은 MIT 원본·타입·라이선스와 해시를 보존한 `vendor/multipart-stream` 로컬 패키지의 단일 callback 패치로 수정한다. Parser의 closing-boundary 검증, 오류, idle/total timeout 및 취소는 유지한다. API/lockfile과 Docker build/runtime 모두 같은 로컬 패키지를 사용하며 설치 lifecycle script는 실행하지 않는다. 실제 느린 소비자·잘린 응답·제한·취소·최대 Study 시험이 의존성 교체의 필수 근거다.
 - Source PACS unavailable 시 영구 Cloud Copy로 우회하지 않고 Fail Closed한다.
 
-## P1 Mobile Viewer Path
-
 P0 temporary payload expiry cleanup (DEC-016) is a separate internal per-Tenant batch path: fresh trusted principal → active Tenant-level SERVICE registry/RLS context → bounded expired metadata discovery → committed transaction → sequential existing purge saga with SERVICE/expiry revalidation → aggregate outcome. No DB transaction spans filesystem I/O and no scheduler/provider is activated in this slice. Tenant selection for future scheduling must be server-owned; the helper does not authenticate arbitrary principal objects.
+
+## P1 Mobile Viewer Path
 
 ```text
 MediQ MOBILE_EXPORT

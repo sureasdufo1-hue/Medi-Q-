@@ -10,6 +10,8 @@
 
 ## 1. 목표 및 판정 범위
 
+**Current DEC-016 execution (supersedes design-only notes below):** Internal expiry discovery/batch, exact SERVICE checks in every TTL purge and atomic expiry revalidation are implemented. 32 expiry unit/model cases plus six existing saga cases pass; full API 41 files/764 tests, typecheck and Port contract pass. Dedicated signed-OIDC/real PostgreSQL/ciphertext integration is pending in the live DB-008 ScratchOnly run. STAGE-010/Ticket remain PARTIAL. No runtime scheduler, route, schema/grant or STOW activation. See evidence §29.
+
 **User-requested Git checkpoint (2026-10-03):** Preserve the completed DEC-014/015 work and DEC-016 recommendation/Acceptance only; DEC-016 implementation has not started. Commit-time API build/regression passed 40 files/732 tests, with typecheck and DICOM Port contract passing. See [evidence §28](TEST-EVIDENCE.md#28-user-requested-git-checkpoint). This checkpoint does not close MEDIQ-PACS-001 or enable runtime storage/STOW.
 
 ```text
@@ -336,3 +338,38 @@ Status: PARTIAL (STAGE-005 and STAGE-009 scoped PASS)
 ```
 
 Traceability: DEC-014/015 → FLOW-001~003 and slow-valid/truncated regressions → adapter and local dependency; DEC-013 → LIFE-001~008 → borrowed consumer; DEC-012 → CONC-001~003/MAX-001 → default admission and measured workload; DEC-011 → FAIL-001~004 → completed scratch lifecycle. The 2 GiB result is synthetic byte transport, not DICOM/CT conformance. Next implementation gate is STAGE-010, with a new recommendation and Acceptance before code.
+
+## 13. DEC-016 internal expiry cleanup implementation
+
+**Current user-requested commit checkpoint (2026-10-03, approximately 14:15 KST):** Replacement session 77695 has emitted its first signed-OIDC/SERVICE/Tenant-RLS/ciphertext expiry integration PASS, followed by prior payload and DB-boundary regression sentinels. The whole wrapper is still running; repeat/reset/reapply, final exit and owned cleanup remain unconfirmed. Commit-time API rerun passes **41 files/764 tests**, type/Port checks and Node/PowerShell syntax checks pass. STAGE-010 and Ticket remain **PARTIAL**, with no runtime activation or STOW. Evidence §30 supersedes older live-result wording below; historical failures remain recorded.
+
+**Real-test follow-up (2026-10-03):** The first scratch process exited 1 in partial-failure verification, and all its owned containers/volumes/networks were confirmed removed. Schema/test comparison identified a quota observer defect: switching to the quota-owner role does not bypass forced Tenant RLS, but the new observer omitted Tenant context. Recommendation recorded before fixing that observer and adding missing/wrong-Tenant hidden-row checks. Fixed substage/aggregate/SQLSTATE diagnostics are also added without raw output. Production code/grants are unchanged by this correction. Replacement process 77695 / project `mediq-db008-84a48ffac0f8` is live; no rerun PASS yet. This supersedes earlier live-handle notes, not historical failed evidence.
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: STAGE-010 CLEAN-001~008, internal per-Tenant expiry cleanup
+Changed: Metadata-only bounded discovery; immutable principal/selectors; SERVICE and atomic TTL checks in every TTL_EXPIRED purge; sequential batch with aggregate results; unit/model and dedicated disposable DB integration; test image/wrapper and normative/evidence documents
+Not changed: Schema/migrations/grants/OpenAPI, runtime provider/scheduler/volume/routes, live PACS/STOW or persistent database
+Security impact: Exact Tenant-owned operation graph and active Tenant-level SERVICE required; stale ref/expiry and identity changes deny before deletion; post-admission identity loss keeps finalization retryable without false Audit; no transaction spans physical purge
+Tests executed: Focused expiry/purge 38/38 PASS; API build 41 files/764 tests PASS; typecheck and Port contract PASS; Node/PowerShell syntax and diff checks PASS
+Tests not executed: Final signed-OIDC/real-RLS/ciphertext and whole scratch-wrapper result not yet confirmed; product Orthanc/Preflight/STOW/E2E not run
+Evidence: TEST-EVIDENCE.md section 29; section 27 recommendation precedes code
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Internal trusted principal is not standalone authentication; scheduling fairness, multi-process service deployment and operational cleanup guarantees remain future runtime gates
+Status: PARTIAL
+```
+
+Traceability: CLEAN-001/003/006 → `findExpired` joined Tenant/Session/Package/Study/operation predicates and fixed column grants; CLEAN-002/005 → shared SERVICE context guard plus existing ActorTenantContextService/registry; CLEAN-003/005 → atomic expiredAt predicate and two-transaction purge saga; CLEAN-004/007 → bounded sequential batch, fixed counters and retry; CLEAN-008 → no module/route/provider registration. `temporary-payload-expiry.test.mjs` is a modeled unit boundary only. `temporary-payload-expiry-runtime.integration.test.mjs` uses signed synthetic OIDC, real registry/RLS, independently observed generated ciphertext/quota/Audit and deliberate fixture faults. Privileged fixture seed/inspection is not cleanup behavior. The existing DB-008 disposable wrapper includes this test before the older payload suite in every clean/repeat/reset/reapply round; it must finish with owned cleanup before full scoped acceptance.
+
+## 14. Next-gate readiness inspection (not implementation or Acceptance)
+
+Read-only inspection while DEC-016's replacement scratch process is live identified concrete integration prerequisites for the remaining STAGE-002/003/004/011/012 gates:
+
+- `AuthorizedSourceCaptureService.captureForCoordinator` currently calls the optional store's `beginPackage`, not its DB-reserved `beginReservedPackage`. This is the previously approved unregistered primitive seam, not an actual quota/lifecycle-backed product path. The next implementation must connect server-resolved operation binding and verified Tenant metadata reservation before any ciphertext write; more isolated store tests alone cannot close that gap.
+- Its final evidence/success Audit transaction must be coordinated with the exact Study payload's AVAILABLE transition before returning a usable internal handoff. Ordinary `capture()` must retain its existing four-field success/two-field denial allowlist. Persisted metadata cannot be inferred from an in-memory receipt.
+- Failure cleanup currently calls the primitive's `purgePackage`. A persisted lifecycle requires the existing committed PURGE_PENDING → physical absence → atomic PURGED/quota/Audit saga, including failures before a handle is returned and ambiguous commit/retry. Never lose the only recovery ref or report success after failed cleanup.
+- DEC-007 distinguishes the existing 30-minute source deadline from a completed package's 30-minute TTL after successful capture. Metadata and in-memory expiry must agree; a future reservation/finalization design must not silently use an earlier staging timestamp as the completed package TTL or extend retention without the authorized final transition.
+- Read permission still requires a real trusted operation-time verifier at both borrowed-consumer checks; a unit-test callback returning VERIFIED is not Consent/Grant/RLS evidence. Restart remains purge-only and cannot authorize re-fetch after STOW_STARTED.
+- Privacy verification must reconcile the approved `study_references.study_instance_uid` source-reference field (DATA-MODEL §§33–34) with the prohibition on copying UID/PatientID/payload/key data into temporary lifecycle/quota fields, Audit, logs, diagnostics or ordinary responses. Record an explicit normative interpretation and Acceptance before changing tests; do not remove or weaken a prohibition to get a passing scan.
+
+These observations are preparation only. Record the next recommendation and success/failure/denial Acceptance before implementing this integrated source lifecycle. The live DEC-016 test is not restarted or declared PASS. No API/route/provider, persistent imaging volume, STOW or runtime activation follows from this inspection. The eventual evidence must use actual signed identity/registry/Authorization, real PostgreSQL/RLS and encrypted files; STAGE-012 additionally needs isolated Test Orthanc A/B with independent B-empty/no-destination-write evidence.

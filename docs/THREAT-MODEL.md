@@ -1674,6 +1674,8 @@ Related in-process exposure control (DEC-013, implementation/Acceptance pending)
 
 Current implementation checkpoint (supersedes historical pending labels): DEC-013 lifetime and DEC-014/015 multipart read-ahead/cancellation/EOF fixes pass scoped unit and exact integrated maximum-workload tests. STAGE-005/009 are scoped PASS (PACS-001 evidence §26). Local patched third-party source adds maintenance risk; types/license/source hash and lockfile/container resolution are verified. SERVICE cleanup, privacy/no-side-effect, runtime Authorization and global multi-process guarantees remain open; no storage activation is authorized.
 
+DEC-016 (PARTIAL; real DB proof pending) adds bounded expired-metadata discovery joined to exact Tenant-owned operations, immutable selectors and an active Tenant-level SERVICE check before discovery and in both TTL purge transactions. Atomic graph/ref/expiry revalidation prevents stale discovery from authorizing file deletion. Revocation before admission denies deletion; identity loss after committed admission cannot undo deletion but leaves finalization retryable without success Audit. No transaction spans physical purge. Results expose fixed aggregates only. This neither authenticates arbitrary principal objects nor solves service-process compromise, distributed scheduling, fairness/starvation from permanently failing rows or production retention. No scheduler/provider is activated. CLEAN-001~008 require signed-OIDC/PostgreSQL/ciphertext evidence beyond unit models.
+
 ### Scenario
 
 개발 Host의 Storage에 접근한 공격자가 Temporary DICOM을 읽는다.
