@@ -416,6 +416,8 @@ git diff --check
 
 ## 17. PACS-001-DEC-010 — STAGE-005 quota Acceptance sub-gate
 
+**Follow-up note:** This section records the first boundary-test run. The concurrent distinct-writer same-ref case and source/recipient cross-Tenant Package aggregate initially remained open here; [§18](#18-stage-005-cross-tenant-quota-follow-up) supersedes those two sub-cases with the later verified results. Other partial/open Acceptance items remain unchanged.
+
 **Execution date/environment:** 2026-10-03 Asia/Seoul; local Docker Desktop; uniquely named disposable DB-008 Compose project; PostgreSQL 18.6; synthetic `TEST-*` fixtures only. `-ScratchOnly` did not access the persistent `mediq` database or start/modify Orthanc A/B.
 
 ### Commands and results
@@ -457,3 +459,34 @@ git diff --check
 | Cross-process crash/failover, SERVICE scheduler, runtime volume, maximum-Study throughput, Orthanc no-side-effect and PACS coordinator | Outside this sub-gate | NOT RUN — remain separate later gates |
 
 **Judgment:** `STAGE-005` is **PARTIAL**, not PASS. Keep the store unregistered; do not wire a runtime volume/provider/worker, and do not add `PREFLIGHT_PASSED`, `STOW_STARTED`, destination calls or STOW. `MEDIQ-PACS-001` remains **PARTIAL**. No persistent development database, patient data, production credential or Orthanc A/B was accessed.
+
+## 18. STAGE-005 cross-Tenant quota follow-up
+
+**Execution date/environment:** 2026-10-03 Asia/Seoul; local disposable DB-008 PostgreSQL 18.6 and synthetic-only fixtures. Existing persistent DB and Orthanc A/B were not used.
+
+### Commands and results
+
+```powershell
+node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+npm run test:api
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+```
+
+- Syntax check passed. `npm run test:api` exited `0`: **37 files / 691 tests** passed.
+- The first scratch wrapper attempt reached `QUOTA_SETTLE_TO_SEALED_CIPHERTEXT_BYTES` and failed because the test refactor had removed the default `writerId` from shared inputs but had not added the winning writer ID to the later settlement call. This was a test-harness input omission. The settlement call and wrong-Study/Tenant/expiry probes now explicitly pass the winning writer identity.
+- The first distinct-writer-only scratch wrapper run emitted the cleanup/schema PASS sentinels, but that polling call did not retain a numeric exit code. After adding the source fixture and cross-Tenant assertions, the final full wrapper rerun exited **0**, emitted the clean/repeat/reset/reapply PASS sentinels, and completed owned scratch-project cleanup (see the final wrapper result below).
+
+### Distinct-writer collision evidence
+
+- Two different random writer IDs raced concurrently against the same `StudyReference` and opaque storage reference from two independent `mediq_runtime` PostgreSQL backend sessions. Exactly one reservation fulfilled and one rejected with `TemporaryPayloadQuotaPersistenceError`; the loser did not overwrite the winner's reservation.
+- The environment, Package and ref counters remained exactly at the reduced 16 MiB limit after the race. Subsequent exact 2 GiB Package accounting, actual-byte settlement and Audit-failed/successful physical-purge release all completed in the same scratch integration run using only the winning writer identity.
+- The wrong-writer, wrong-Study, other-Tenant and expired-reference denials all supplied otherwise valid writer context so each probe exercises its intended authorization/binding boundary.
+
+### Source/recipient shared-Package aggregate
+
+- The disposable fixture includes a source-Tenant operation and StudyReference in the same ImagingPackage as the recipient-Tenant StudyReference. The recipient Tenant first reserves one 16 MiB block.
+- To distinguish Package enforcement from environment exhaustion, the scratch caps are then set to a 32 MiB environment limit and a 16 MiB Package limit. The source Tenant attempts to reserve a block for its distinct StudyReference/storage ref; the database function rejects with SQLSTATE `54000` because the Package is already full, while environment headroom remains.
+- Reading quota state under the source Tenant context shows the shared Package counter and global counter both remain at 16 MiB; the source Tenant sees no reservation-ledger row for the recipient Tenant, and its own attempted reservation leaves no row or ref counter. This validates cross-Tenant aggregate enforcement without cross-Tenant ledger visibility.
+- After restoring reduced-cap headroom before the later binding-denial probes, the complete DB-008 `-ScratchOnly` wrapper was rerun. It exited **0**, emitted clean/repeat/reset/reapply PASS sentinels, preserved catalog `21|55|17|48`, and completed owned scratch-project cleanup. Persistent `mediq`, Orthanc A/B and DB-002~007 production-stack regressions were not accessed (`-ScratchOnly` explicitly skipped the latter).
+
+**Judgment:** Concurrent distinct-writer same-ref collision and source/recipient cross-Tenant Package aggregate cases are **PASS** in the disposable scratch scope. `STAGE-005` remains **PARTIAL**: exact 10 GiB exhaustion and the complete injected DB/filesystem/Audit fault matrix remain open. Storage remains unregistered; no route, worker, runtime volume, destination call or STOW was enabled.

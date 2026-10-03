@@ -376,6 +376,7 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsFencePackageId = [guid]::NewGuid().ToString()
     $pacsFenceStudyRefId = [guid]::NewGuid().ToString()
     $pacsTempSiblingStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaSourceTenantStudyRefId = [guid]::NewGuid().ToString()
     $pacsFenceConsentId = [guid]::NewGuid().ToString()
     $pacsFenceGrantId = [guid]::NewGuid().ToString()
     $provenanceSessionId = [guid]::NewGuid().ToString()
@@ -389,6 +390,7 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $syntheticStudyUid = "2.25.309.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
     $pacsFenceStudyUid = "2.25.310.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
     $pacsTempSiblingStudyUid = "2.25.315.$([Convert]::ToUInt64($token.Substring(18, 12), 16))"
+    $pacsQuotaSourceStudyUid = "2.25.316.$([Convert]::ToUInt64($token.Substring(20, 12), 16))"
     $provenanceStudyUid = "2.25.311.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
     $provenanceLateStudyUid = "2.25.312.$([Convert]::ToUInt64($token.Substring(16, 15), 16))"
     $integrityStudyUid = "2.25.313.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
@@ -461,12 +463,13 @@ INSERT INTO exchange_sessions
 VALUES ('$pacsFenceSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic PACS authorization fence test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
 INSERT INTO imaging_packages
  (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
-VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,2,now(),now(),now()+interval '1 day',NULL);
+VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,3,now(),now(),now()+interval '1 day',NULL);
 INSERT INTO study_references
  (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
 VALUES
  ('$pacsFenceStudyRefId','$pacsFencePackageId','$hospitalA','$pacsFenceStudyUid','CT',1,1,now()),
- ('$pacsTempSiblingStudyRefId','$pacsFencePackageId','$hospitalA','$pacsTempSiblingStudyUid','MR',1,1,now());
+ ('$pacsTempSiblingStudyRefId','$pacsFencePackageId','$hospitalA','$pacsTempSiblingStudyUid','MR',1,1,now()),
+ ('$pacsQuotaSourceTenantStudyRefId','$pacsFencePackageId','$hospitalA','$pacsQuotaSourceStudyUid','CT',1,1,now());
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
 VALUES ('$provenanceSessionId','$patientRefId','$hospitalA','$hospitalB','$actorB','Synthetic Provenance persistence test','AUTHORIZED',now(),now(),gen_random_uuid());
@@ -649,6 +652,8 @@ ROLLBACK;
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
         sessionId = $pacsFenceSessionId; packageId = $pacsFencePackageId
         studyRefId = $pacsFenceStudyRefId; siblingStudyRefId = $pacsTempSiblingStudyRefId
+        sourceTenantId = $tenantA; sourceActorId = $actorA
+        sourceStudyRefId = $pacsQuotaSourceTenantStudyRefId
         sourceHospitalId = $hospitalA
     } | ConvertTo-Json -Compress
     $provenanceFixture = [ordered]@{

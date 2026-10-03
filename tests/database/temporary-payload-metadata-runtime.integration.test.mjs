@@ -35,6 +35,7 @@ function fixture() {
   const required = [
     "tenantId", "otherTenantId", "actorId", "sessionId", "packageId",
     "studyRefId", "siblingStudyRefId", "sourceHospitalId",
+    "sourceTenantId", "sourceActorId", "sourceStudyRefId",
   ];
   assert.ok(required.every((key) => typeof value[key] === "string"), "TEMP_PAYLOAD_FIXTURE_INVALID");
   return value;
@@ -246,12 +247,10 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     assert.equal(stateB.temporary_payload_state, "STAGING");
 
     currentStage = "QUOTA_LIMITS_BINDING_AND_INDEPENDENT_SESSION_RACE";
-    const quotaWriterId = randomUUID();
     const quotaInput = {
       tenantId: ids.tenantId,
       studyRefId: ids.siblingStudyRefId,
       storageRef: siblingRef,
-      writerId: quotaWriterId,
     };
     const quotaBackendPids = [];
     const quotaTransactions = {
@@ -294,7 +293,10 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
       }
     }
 
-    async function readQuota(label) {
+    async function readQuota(label, {
+      tenantId = ids.tenantId,
+      storageRef = siblingRef,
+    } = {}) {
       const client = await inspector.connect();
       try {
         currentStage = `QUOTA_READ_${label}_BEGIN`;
@@ -302,7 +304,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
         currentStage = `QUOTA_READ_${label}_SET_OWNER`;
         await client.query("SET LOCAL ROLE mediq_quota_owner");
         currentStage = `QUOTA_READ_${label}_TENANT_CONTEXT`;
-        await client.query("SELECT set_config('mediq.tenant_id',$1,true)", [ids.tenantId]);
+        await client.query("SELECT set_config('mediq.tenant_id',$1,true)", [tenantId]);
         currentStage = `QUOTA_READ_${label}_QUERY`;
         const result = await client.query(
           `SELECT q.max_environment_bytes::text AS max_environment_bytes,
@@ -316,7 +318,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
              LEFT JOIN temporary_payload_package_quotas pq ON pq.package_id=$1::uuid
              LEFT JOIN temporary_payload_reservations r ON r.storage_ref=$3
             WHERE q.singleton_id=true`,
-          [ids.packageId, ids.tenantId, siblingRef],
+          [ids.packageId, tenantId, storageRef],
         );
         currentStage = `QUOTA_READ_${label}_COMMIT`;
         await client.query("COMMIT");
@@ -333,24 +335,113 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     // A deliberately reduced disposable limit makes the two-session race cheap
     // while leaving enough Package headroom to isolate the environment ceiling.
     await setQuotaCaps(reservationBlock, 2 * reservationBlock);
+    const competingWriterIds = [randomUUID(), randomUUID()];
     const independentRace = await Promise.allSettled([
-      quotaRepository.reserve({ ...quotaInput, deltaBytes: reservationBlock }),
-      quotaRepository.reserve({ ...quotaInput, deltaBytes: reservationBlock }),
+      ...competingWriterIds.map((writerId) => quotaRepository.reserve({
+        ...quotaInput,
+        writerId,
+        deltaBytes: reservationBlock,
+      })),
     ]);
     assert.equal(independentRace.filter((result) => result.status === "fulfilled").length, 1);
     assert.equal(independentRace.filter((result) => result.status === "rejected").length, 1);
     assert.equal(new Set(quotaBackendPids).size, 2, "reservations must race on independent mediq_runtime sessions");
+    const winningWriterIndex = independentRace.findIndex((result) => result.status === "fulfilled");
+    const losingWriterResult = independentRace[1 - winningWriterIndex];
+    assert.ok(
+      losingWriterResult.reason instanceof TemporaryPayloadQuotaPersistenceError,
+      "a distinct writer colliding on the same storage reference must be denied",
+    );
+    const quotaWriterId = competingWriterIds[winningWriterIndex];
     let quotaSnapshot = await readQuota("RACE");
     assert.equal(quotaSnapshot.environment_reserved, String(reservationBlock));
     assert.equal(quotaSnapshot.package_reserved, String(reservationBlock));
     assert.equal(quotaSnapshot.ref_reserved, String(reservationBlock));
 
+    currentStage = "SOURCE_RECIPIENT_CROSS_TENANT_PACKAGE_AGGREGATE";
+    const sourceTenantContext = {
+      ...ids,
+      tenantId: ids.sourceTenantId,
+      actorId: ids.sourceActorId,
+    };
+    const sourceOperation = await createOperation(
+      privilegesClient,
+      sourceTenantContext,
+      ids.sourceStudyRefId,
+    );
+    const sourceBinding = operationBinding(
+      sourceTenantContext,
+      sourceOperation,
+      ids.sourceStudyRefId,
+    );
+    const sourceStorageRef = randomUUID();
+    const sourceMetadataClient = await pool.connect();
+    try {
+      await beginTenant(sourceMetadataClient, ids.sourceTenantId);
+      await new PostgresTemporaryPayloadMetadataRepository(sourceMetadataClient)
+        .reserveStaging(reserveInput(sourceBinding, sourceStorageRef));
+      await sourceMetadataClient.query("COMMIT");
+    } catch (error) {
+      await sourceMetadataClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      sourceMetadataClient.release();
+    }
+
+    // Leave global headroom so a denial proves that the Package counter is
+    // shared across participant Tenants, rather than failing at the env cap.
+    await setQuotaCaps(2 * reservationBlock, reservationBlock);
+    const crossTenantPackageError = await (async () => {
+      const client = await pool.connect();
+      try {
+        await beginTenant(client, ids.sourceTenantId);
+        const error = await client.query(
+          "SELECT public.reserve_temporary_payload_quota($1::uuid,$2::uuid,$3::uuid,$4::bigint)",
+          [ids.sourceStudyRefId, sourceStorageRef, randomUUID(), reservationBlock],
+        ).then(() => null, (queryError) => queryError);
+        if (error) await client.query("ROLLBACK");
+        else await client.query("COMMIT");
+        return error;
+      } finally {
+        client.release();
+      }
+    })();
+    assert.equal(
+      crossTenantPackageError?.code,
+      "54000",
+      "source Tenant must see and enforce the Package reservation already made by recipient Tenant",
+    );
+    quotaSnapshot = await readQuota("CROSS_TENANT_PACKAGE_DENIED", {
+      tenantId: ids.sourceTenantId,
+      storageRef: sourceStorageRef,
+    });
+    assert.equal(quotaSnapshot.max_environment_bytes, String(2 * reservationBlock));
+    assert.equal(quotaSnapshot.max_package_bytes, String(reservationBlock));
+    assert.equal(quotaSnapshot.environment_reserved, String(reservationBlock));
+    assert.equal(quotaSnapshot.package_reserved, String(reservationBlock));
+    assert.equal(quotaSnapshot.ref_reserved, "0");
+    assert.equal(quotaSnapshot.reservation_rows, 0);
+
+    // Restore headroom so later scope-denial probes do not pass only because
+    // the shared Package is still at its deliberately reduced test cap.
+    await setQuotaCaps(2 * reservationBlock, 2 * reservationBlock);
+
     const deniedBindings = await Promise.all([
       quotaRepository.reserve({ ...quotaInput, writerId: randomUUID(), deltaBytes: reservationBlock })
         .then(() => false, (error) => error instanceof TemporaryPayloadQuotaPersistenceError),
-      quotaRepository.reserve({ ...quotaInput, studyRefId: ids.studyRefId, deltaBytes: reservationBlock })
+      quotaRepository.reserve({
+        ...quotaInput,
+        writerId: quotaWriterId,
+        studyRefId: ids.studyRefId,
+        deltaBytes: reservationBlock,
+      })
         .then(() => false, (error) => error instanceof TemporaryPayloadQuotaPersistenceError),
-      quotaRepository.reserve({ ...quotaInput, tenantId: ids.otherTenantId, deltaBytes: reservationBlock })
+      quotaRepository.reserve({
+        ...quotaInput,
+        writerId: quotaWriterId,
+        tenantId: ids.otherTenantId,
+        deltaBytes: reservationBlock,
+      })
         .then(() => false, (error) => error instanceof TemporaryPayloadQuotaPersistenceError),
     ]);
     assert.deepEqual(deniedBindings, [true, true, true]);
@@ -362,7 +453,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     );
     await privilegesClient.query("COMMIT");
     await assert.rejects(
-      quotaRepository.reserve({ ...quotaInput, deltaBytes: reservationBlock }),
+      quotaRepository.reserve({ ...quotaInput, writerId: quotaWriterId, deltaBytes: reservationBlock }),
       TemporaryPayloadQuotaPersistenceError,
       "expired StudyReference storage must fail closed",
     );
@@ -564,7 +655,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
 
     currentStage = "QUOTA_SETTLE_TO_SEALED_CIPHERTEXT_BYTES";
     const syntheticPayloadBytes = Buffer.byteLength("SYNTHETIC-PURGE-FIXTURE-NOT-REAL-DICOM-OR-PHI", "utf8");
-    await quotaRepository.settle({ ...quotaInput, actualBytes: syntheticPayloadBytes });
+    await quotaRepository.settle({ ...quotaInput, writerId: quotaWriterId, actualBytes: syntheticPayloadBytes });
     quotaSnapshot = await readQuota("SETTLED");
     assert.equal(quotaSnapshot.environment_reserved, String(syntheticPayloadBytes));
     assert.equal(quotaSnapshot.package_reserved, String(syntheticPayloadBytes));
