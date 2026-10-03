@@ -54,15 +54,37 @@ async function createJwksServer() {
   };
 }
 
+function grantDatabaseFailure(stage, error, elapsed) {
+  const phases = new Set(["CONNECT", "RESET", "BEGIN", "TENANT", "REGISTRY", "COMMIT", "ROLLBACK", "QUERY"]);
+  const phase = phases.has(stage) ? stage : "QUERY";
+  const messages = new Map([["query read timeout", "QUERY_READ_TIMEOUT"],
+    ["connection terminated unexpectedly", "CONNECTION_TERMINATED"],
+    ["connection timeout expired", "CONNECTION_TIMEOUT"],
+    ["timeout exceeded when trying to connect", "CONNECT_TIMEOUT"]]);
+  const nodeCodes = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ERR_QUERY_TIMEOUT"]);
+  const category = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+    ? `SQLSTATE_${error.code}` : nodeCodes.has(error?.code) ? `NODE_${error.code}`
+      : messages.get(typeof error?.message === "string" ? error.message.trim().toLowerCase() : "") ?? "UNCLASSIFIED";
+  const duration = !Number.isFinite(elapsed) || elapsed < 0 ? "INVALID_DURATION"
+    : elapsed < 100 ? "LT100MS" : elapsed < 1000 ? "100TO999MS" : elapsed < 5000 ? "1TO4SEC" : "GTE5SEC";
+  return `GRT003_DB_FAILURE=${phase}_${category}_${duration}`;
+}
+
 function runtimeProxy(pool, failAt = "") {
   let auditCount = 0;
   return {
     async connect() {
-      const client = await pool.connect();
+      const started = performance.now();
+      let client;
+      try { client = await pool.connect(); }
+      catch (error) {
+        console.error(grantDatabaseFailure("CONNECT", error, performance.now() - started));
+        throw error;
+      }
       return new Proxy(client, {
         get(target, property) {
           if (property === "query") {
-            return (query, ...args) => {
+            return async (query, ...args) => {
               const text = typeof query === "string" ? query : query?.text ?? "";
               const values = typeof query === "string" ? args[0] : query?.values;
               if (failAt === "scope" && text.includes("INSERT INTO transfer_grant_scopes")) {
@@ -81,7 +103,16 @@ function runtimeProxy(pool, failAt = "") {
               if (failAt === "commit" && text.trim().toUpperCase() === "COMMIT") {
                 return Promise.reject(new Error("synthetic transaction commit failure"));
               }
-              return target.query(query, ...args);
+              const statement = text.trim().toUpperCase();
+              const phase = ["BEGIN", "COMMIT", "ROLLBACK"].includes(statement) ? statement
+                : statement.startsWith("RESET ") ? "RESET" : statement.includes("SET_CONFIG(") ? "TENANT"
+                  : statement.includes("FROM ACTORS") ? "REGISTRY" : "QUERY";
+              const started = performance.now();
+              try { return await target.query(query, ...args); }
+              catch (error) {
+                console.error(grantDatabaseFailure(phase, error, performance.now() - started));
+                throw error;
+              }
             };
           }
           const value = Reflect.get(target, property, target);
@@ -340,7 +371,7 @@ test("GRT-003 signed destination requester issues actor/package-bound idempotent
   console.error("GRT003_STAGE=OIDC_SERVER");
   const context = new ActorTenantContextService(
     { oidcAuthentication: { issuer: oidc.issuer, audience: AUDIENCE, jwksUri: oidc.jwksUri } },
-    { connect: () => pool.connect() },
+    runtimeProxy(pool),
     new ActorRegistryRepository(),
   );
   context.issuer = oidc.issuer;
@@ -504,7 +535,10 @@ test("GRT-003 signed destination requester issues actor/package-bound idempotent
       await app.close();
       app = undefined;
       for (const failAt of ["audit", "scope", "grant-denial-audit"]) {
+        const mark = step => console.error(`GRT003_ROLLBACK_STAGE=${failAt.replaceAll("-", "_").toUpperCase()}_${step}`);
+        mark("CREATE_SESSION");
         const session = await createSession(context, fixture, `rollback-${failAt}`);
+        mark("SEED");
         const binding = await seedConsentAndPackage(inspector, fixture, session);
         if (failAt === "grant-denial-audit") {
           await withTenant(inspector, fixture.tenantB, (client) => client.query(
@@ -512,12 +546,19 @@ test("GRT-003 signed destination requester issues actor/package-bound idempotent
             [binding.consentId],
           ));
         }
+        mark("APP");
         const failingApp = await createApi(pool, oidc, failAt);
-        const response = await issue(failingApp, headers, session.sessionId, {
-          consentId: binding.consentId, imagingPackageId: binding.packageId, scopes: ["study:view"],
-        });
-        assert.equal(response.statusCode, 503, `GRT003_${failAt.toUpperCase()}_FAILURE_RESPONSE`);
-        await failingApp.close();
+        try {
+          mark("ISSUE");
+          const response = await issue(failingApp, headers, session.sessionId, {
+            consentId: binding.consentId, imagingPackageId: binding.packageId, scopes: ["study:view"],
+          });
+          assert.equal(response.statusCode, 503, `GRT003_${failAt.toUpperCase()}_FAILURE_RESPONSE`);
+        } finally {
+          mark("CLOSE");
+          await failingApp.close();
+        }
+        mark("OBSERVE");
         assert.deepEqual(await sessionEvidence(inspector, fixture.tenantB, session.sessionId), {
           grants: 0, scopes: 0, allowed_audits: 0, created_audits: 0,
           denied_audits: 0, grant_denied_audits: 0, denial_pairs: 0,

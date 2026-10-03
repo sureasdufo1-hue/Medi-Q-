@@ -1061,9 +1061,13 @@ SELECT (
         if (-not $safeTestDiagnostic) { $safeTestDiagnostic = "unavailable" }
         $safePreflightFacts = [regex]::Match($grantIssueSummary, 'GRT003_PREFLIGHT_FACTS=[a-z_:,]{1,300}').Value
         if (-not $safePreflightFacts) { $safePreflightFacts = "unavailable" }
+        $databaseMarkers = @([regex]::Matches($grantIssueSummary, 'GRT003_DB_FAILURE=[A-Z0-9_]{1,140}') | ForEach-Object { $_.Value } | Select-Object -Last 8)
+        $rollbackMarkers = @([regex]::Matches($grantIssueSummary, 'GRT003_ROLLBACK_STAGE=[A-Z_]{1,80}') | ForEach-Object { $_.Value } | Select-Object -Last 8)
+        $safeDatabaseMarkers = if ($databaseMarkers.Count) { [string]::Join(",", [string[]]$databaseMarkers) } else { "unavailable" }
+        $safeRollbackMarkers = if ($rollbackMarkers.Count) { [string]::Join(",", [string[]]$rollbackMarkers) } else { "unavailable" }
         $safeFailureCode = [regex]::Match($grantIssueSummary, '\b(GRT00[34]_(?!STAGE=|FAILURE=)[A-Z_]+|GRANT_[A-Z_]+|CONSENT_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ACTOR_TENANT_[A-Z_]+|ACCESS_DENIED|SERVICE_UNAVAILABLE|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "GRT-003/004 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$grantIssueExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode, diagnostic=$safeTestDiagnostic, preflight=$safePreflightFacts); raw output suppressed."
+        throw "GRT-003/004 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$grantIssueExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode, diagnostic=$safeTestDiagnostic, preflight=$safePreflightFacts, database=$safeDatabaseMarkers, rollback=$safeRollbackMarkers); raw output suppressed."
     }
     Write-Output "grt003_issue_api=PASS signed_oidc=PASS consent_binding=PASS actor_tenant_binding=PASS semantic_idempotency=PASS concurrency=PASS audit_atomicity=PASS cumulative_exact_privileges=244"
     Write-Output "grt004_revoke_api=PASS signed_oidc=PASS exact_recipient=PASS expiry_independent=PASS replay=PASS concurrency=PASS atomic_audit_rollback=PASS denial=PASS offline_and_inflight_nonrecall_boundary=DOCUMENTED exact_grant_update_columns=status,revoked_at"

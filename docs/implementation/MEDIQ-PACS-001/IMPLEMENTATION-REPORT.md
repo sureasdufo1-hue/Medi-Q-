@@ -6,11 +6,15 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — R3 actual lifecycle 50 tests/observer/B EMPTY/cleanup PASS; readiness 10, serial API 893/type/Port PASS; prior failures retained, current full scratch regression in progress; evidence §§40–41 |
+| 상태 | `PARTIAL` — R4 actual lifecycle 51/observer/B EMPTY/cleanup PASS; R5 preparation/unit 64 PASS, actual R5 NOT RUN; combined script 91/readiness 10 PASS; diagnostic DB rerun 51950 live; evidence §§41–46 |
 
 ## 1. 목표 및 판정 범위
 
-**Current status (2026-10-03, supersedes historical checkpoints below):** DEC-017-R3 now has **15 actual signed-OIDC/PostgreSQL/RLS/HTTPS-Orthanc lifecycle scenarios**, **50 Node tests PASS**, independent evidence/Audit/quota observer PASS (16 purge Audits), B EMPTY before/after and zero owned resources after cleanup (§40). TCP readiness: 10 deterministic tests PASS plus recovery of a transient probe in the actual run. Serial API **43 files/893 tests**, typecheck and DICOM Port PASS. Three earlier lifecycle failures did not recur but remain unexplained; the readiness fix does not establish their cause or fix previous parallel timeouts. Current post-edit DB-008 ScratchOnly clean/repeat/reset/reapply is in progress (§41), not accepted. Full mapping/actor-change, independent source-process restart/privacy and remaining lifecycle gates, then runtime/full coordinator/Preflight/STOW/destination verification/P0 E2E remain open. No runtime activation or STOW; Ticket **PARTIAL**. Prior Temp residue remains recorded; no commit/push in this continuation.
+**Latest user-requested checkpoint (2026-10-03, 18:16 KST; supersedes current labels below):** R5 read-only live-state observer, strict projections and source-test wrapper hooks are prepared; privacy unit 64 plus replica/Grant checks total **91 PASS**, readiness **10 PASS**, JS/PowerShell syntax and diff checks PASS. Actual R5 integration has not run; the earlier 51-test R4 result is not R5 evidence. DB rerun 51950 remains live and its inputs are frozen. This checkpoint changes tests/scripts and records only, not product code, permissions, runtime wiring or STOW. Commit/push is explicitly user-requested. Full raw-log privacy, remaining lifecycle and P0 gates remain open. Evidence §§45–46; status **PARTIAL**.
+
+**Current R4 verification (2026-10-03):** Independent replica scenario passed in the actual 51-test source suite, with separate DB/B observers and owned cleanup. It proves a replica has no usable DEK and can perform only authorized purge recovery, not host-crash recovery. Full DB session 6711 failed separately; diagnostic rerun 51950 is live. Full lifecycle/P0 remain open; §43–44.
+
+**Current status (2026-10-03, supersedes historical checkpoints below):** DEC-017-R4 actual signed-OIDC/PostgreSQL/RLS/HTTPS-Orthanc matrix: **51 tests PASS**, 16 lifecycle scenarios, independent observer/17 purge Audits/zero quota, B EMPTY before/after and owned cleanup PASS (§43). A distinct Node replica passed real authorization but had no DEK (RECOVERY_REQUIRED); authorized purge blocked the original handoff afterward. Runner protocol **12**, Grant diagnostic **15**, serial API **43 files/893**, type/Port checks PASS. Full DB run 6711 failed GRT-003 rollback with an unproven inner cause (§41); diagnostic-only rerun **51950** is live, not accepted (§44). Earlier failures remain recorded. Complete mapping/actor mutation/privacy/lifecycle, runtime/full coordinator/Preflight/STOW/destination verification/P0 E2E remain open; no runtime activation or STOW. Ticket **PARTIAL**.
 
 **Historical user-requested Git checkpoint (2026-10-03, superseded):** Preserve the completed DEC-014/015 work and DEC-016 recommendation/Acceptance only; DEC-016 implementation had not started at that checkpoint. Commit-time API build/regression passed 40 files/732 tests, with typecheck and DICOM Port contract passing. See [evidence §28](TEST-EVIDENCE.md#28-user-requested-git-checkpoint). This checkpoint does not close MEDIQ-PACS-001 or enable runtime storage/STOW.
 
@@ -376,6 +380,10 @@ These observations are preparation only. Record the next recommendation and succ
 
 ## 15. DEC-017 implementation-ready design and sequencing
 
+**R5 opened before changes (2026-10-03):** Previous goal turn made progress through real 51-test replica acceptance, API 893/type/Port verification and diagnostic-only correction preparation for the failed full DB run. Current session 51950 is confirmed live; all its DB/product/build inputs remain frozen. R5 recommendation/Acceptance address the remaining live-value privacy gap with a separate read-only fixture observer, exact projections and no runtime credential/grant widening. Only source-test-target files and related records change; evidence §45 must distinguish preparation/unit checks from actual privacy acceptance.
+
+**R4 replica verification opened before changes (2026-10-03):** Starting checkpoint `65084e0` is clean and remotely synchronized. Previous turn made concrete progress by publishing the reviewed R3 implementation/evidence. DB-008 session 6711 remains live and has emitted an additional PACS-007 runtime PASS marker, not a terminal full-regression result. DEC-017-R4 and Acceptance are recorded before adding an independent replica test. Only the source-test target's fixture/harness/observer/wrapper are edited; inspection of the Dockerfile confirms these are not inputs to the running database integration target. No product/schema/build-input change or parallel heavy execution. New evidence and remaining limits belong in §43; Ticket remains PARTIAL.
+
 **R3 matrix opened before changes (2026-10-03):** Clean starting commit `38ce204`; previous goal turn made progress through actual 39-test integration/independent cleanup proof, regression evidence and user-requested commit/push. All previous handles are terminal. Recommendation DEC-017-R3 and Acceptance precede eleven additional actual source-lifecycle fault/replay cases. Preserve product/runtime/schema/grant boundaries and all existing tests; record failures, exact commands, final scope and cleanup in evidence §40. This is continuation of sequence 4, not completion or a new product feature.
 
 **Sequence 4 opened before changes (2026-10-03):** Previous turn is progress (concrete consumer, 893 API/type/Port evidence). Dirty files are that known work and must be preserved. No old test process is live. Extend the existing disposable source harness/seed/observer with four independent lifecycle scenarios and actual signed OIDC; retain all earlier tests. Recommendation/Acceptance above precede fixture changes. Evidence §38 will distinguish test construction, actual execution, cleanup and still-open full lifecycle gates.
@@ -408,7 +416,7 @@ These observations are preparation only. Record the next recommendation and succ
 | 1 — implemented, integration pending | Reserved package quota snapshots, one post-settlement expiry, single in-flight seal/purge denial and mandatory-expiry metadata transition | Focused 82 and full API 787/type/Port PASS, no schema/grant expansion; new real-DB proof remains required |
 | 2 — implemented, integration pending | Source service now uses fresh fenced exact-ref reservation, actor-bound quota, atomic AVAILABLE/evidence/Audit and purge saga; snapshots issuer/subject and preserves ordinary response | 84 source unit/model cases and full API 814/type/Port PASS (§36); actual signed-OIDC/PostgreSQL/RLS/Orthanc proof for LIFECYCLE-001/003/004/005/010/013 still required |
 | 3 — implemented, integration pending | Source-service concrete two-check borrowed consumer with private weak provenance, current graph/mapping/AVAILABLE/evidence and admission Audit; no new handoff fields or caller verifier | 74 added source and 5 Audit-denial cases, full API 893/type/Port PASS; actual LIFECYCLE-006~010/014 integration still required (§37) |
-| 4 — R3 matrix scoped positive evidence; full gates open | Existing 35 tests plus 15 signed-OIDC/real RLS/HTTPS-Orthanc lifecycle cases: 50 PASS; exact observer/16 purge Audits/zero quota, B EMPTY and owned cleanup PASS; TCP readiness 10 PASS | Evidence §§40–41. Earlier three lifecycle failures remain unexplained; full mapping/actor/source-process restart/privacy and current scratch regression remain open |
+| 4 — R4 actual replica slice scoped PASS; full gates open | Existing source cases plus 16 signed lifecycle scenarios: 51 PASS, exact observer/17 purge Audits/zero quota/B EMPTY/owned cleanup; replica key-loss and purge-only behavior verified | Evidence §§41–44. DB regression failed at GRT-003 rollback; diagnostic rerun 51950 live. Full mapping/actor/privacy/lifecycle/runtime/P0 gates remain open |
 | 5 | Reconcile remaining storage gates, then separately implement runtime wiring/full coordinator/Preflight/dispatch/reconciliation/verification and product E2E | Existing IMPLEMENTATION-PLAN and original P0 success condition; no completion inferred from this storage slice |
 
 Concrete privacy reconciliation is recorded in normative Data Model/Security/Acceptance: preserve and compare approved source UID/PatientMapping columns while prohibiting new copies elsewhere. A broad "no UID anywhere in DB" scan would contradict the approved source-reference model and cannot replace this precise inspection. Crash-dump/platform hardening remains explicitly unproven.
@@ -424,5 +432,21 @@ Tests not executed: Remaining full mapping/actor mutation/source-process restart
 Evidence: TEST-EVIDENCE.md sections 40–41; earlier component proof remains in sections 34–39
 Implementation record: docs/implementation/MEDIQ-PACS-001/
 Remaining risks: Fifteen integrated scenarios do not close the full matrix; three first-run lifecycle failures did not recur but their cause is unproven; earlier parallel timeouts/local Temp residue retained; current DB wrapper and original runtime/Preflight/STOW/destination verification/P0 E2E incomplete
+Status: PARTIAL
+```
+
+## 16. R4 verification preparation — current change report
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: DEC-017-R4 independent replica no-DEK/authorized purge-only verification
+Changed: One synthetic graph, child mode and bounded/cancellable runner in the source integration test, exact observer expectations, wrapper expected count, 12 runner protocol tests and decision/Acceptance/evidence records
+Not changed: Product implementation, schema/grants, DB tests/helpers, Dockerfile/Compose/dependencies, OpenAPI, runtime activation, real data or destination writes; no automatic commit/push
+Security impact: Adds tests for fail-closed unknown handoffs and no-key replicas, real authorization before the primitive key-loss probe, identity-gated physical purge and fixed diagnostics; no product verifier override or persisted keys
+Tests executed: R4 actual 51 PASS/observer/17 purge Audits/zero quota/B EMPTY/cleanup; runner protocol 12, Grant diagnostic 15, fixture 16 cases/208 IDs, readiness 10, serial API 43 files/893/type/Port/syntax/diff PASS. Earlier DB run failed; its cause remains unproven
+Tests not executed: Remaining full mapping/actor mutation/privacy/lifecycle, runtime/Preflight/STOW/destination verification/P0 E2E. Full current DB diagnostic rerun 51950 is live and not accepted
+Evidence: TEST-EVIDENCE.md sections 41–44; separate MEDIQ-GRT-003/004 reports and evidence §8 for diagnostic-only DB changes
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Successful replica proof is not killed-origin/host-crash recovery or full lifecycle/P0. DB regression remains unresolved while diagnostic rerun is live; prior unexplained failures/local Temp residue and original runtime/Preflight/STOW/destination gates remain open
 Status: PARTIAL
 ```

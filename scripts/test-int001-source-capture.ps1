@@ -228,6 +228,21 @@ $composeBase = @(
 )
 $failure = $null
 $cleanupFailure = $null
+$previousObservationToken = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", "Process")
+$previousObservationUrl = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", "Process")
+$privacyObserverName = "${projectName}-privacy-observer"
+$observationBytes = [byte[]]::new(32)
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+try { $random.GetBytes($observationBytes) } finally { $random.Dispose() }
+$env:MEDIQ_TEST_OBSERVATION_TOKEN = [BitConverter]::ToString($observationBytes).Replace('-', '').ToLowerInvariant()
+$env:MEDIQ_TEST_OBSERVATION_URL = "http://${privacyObserverName}:8791"
+$privacyProbeScript = @'
+const response = await fetch("http://127.0.0.1:8791/" + process.argv[1], {
+  headers: { "x-mediq-test-observation": process.env.MEDIQ_TEST_OBSERVATION_TOKEN }, signal: AbortSignal.timeout(3000)
+});
+const body = await response.json();
+if (!response.ok || body.status !== (process.argv[1] === "health" ? "READY" : "PRIVACY_OBSERVER_PASS")) process.exitCode = 1;
+'@
 
 try {
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "config", "--quiet")) "INT001_COMPOSE_VALIDATION_FAILED"
@@ -274,14 +289,29 @@ COMMIT;
     Write-Output "database_fixture=PASS synthetic_only=true"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-orthanc-a-seed")) "INT001_ORTHANC_A_FIXTURE_SEED_FAILED"
     Write-Output "orthanc_a_fixture=PASS synthetic_instances=3"
-    $testOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED"
+    $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--detach", "--rm", "--no-deps",
+        "--name", $privacyObserverName, "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "source-capture-db-observer",
+        "node", "scripts/verify-int001-source-capture.mjs", "--serve-privacy")) "INT001_PRIVACY_OBSERVER_START_FAILED"
+    $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $privacyObserverName | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $owner -ne $projectName) { throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID" }
+    $privacyReady = $false
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        $null = @(& docker exec $privacyObserverName node --input-type=module -e $privacyProbeScript health 2>&1)
+        if ($LASTEXITCODE -eq 0) { $privacyReady = $true; break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $privacyReady) { throw "INT001_PRIVACY_OBSERVER_NOT_READY" }
+    $testOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+        "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED"
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "50" -or $testFail -ne "0") {
+    if ($testPass -ne "51" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
+    Invoke-DockerQuiet -DockerArgs @("exec", $privacyObserverName, "node", "--input-type=module", "-e", $privacyProbeScript, "summary") -FailureCode "INT001_PRIVACY_OBSERVER_INCOMPLETE"
+    Write-Output "live_privacy_observer=PASS read_only=true runtime_privileges_unchanged=true"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED"
     Write-Output "audit_and_evidence_observer=PASS"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_AFTER_PROBE_FAILED"
@@ -291,6 +321,9 @@ catch {
     $failure = $_.Exception.Message
 }
 finally {
+    [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", $previousObservationToken, "Process")
+    [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", $previousObservationUrl, "Process")
+    [Array]::Clear($observationBytes, 0, $observationBytes.Length)
     try {
         Assert-OwnedResources $projectName
         $remaining = Get-ProjectResources $projectName

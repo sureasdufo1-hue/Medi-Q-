@@ -1,14 +1,18 @@
 # MEDIQ-GRT-003 Implementation Report
 
+**Current regression follow-up, 2026-10-03:** DB-008 session 6711 failed the current-schema rollback case with ACTOR_TENANT_CONTEXT_UNAVAILABLE; inner cause remains unproven. Exact owned resources were removed and the existing stack is healthy. Under GRT-003-DEC-002, add fixed test-only connection/query/substep diagnostics and failure-safe app cleanup, with unchanged product behavior, assertions, privileges and deadlines. Recommendation and DIAG-001~004 precede edits. The historical implementation PASS below is retained as dated evidence, not current regression acceptance. Actual results are recorded in TEST-EVIDENCE §8.
+
 | Item | Value |
 |---|---|
 | Ticket | `MEDIQ-GRT-003` |
 | Title | Consent-bound idempotent Grant issue API |
 | Classification | `CAPSTONE-P0` |
 | Date | `2026-10-01` |
-| Status | `PASS — scoped issue API and exact runtime DB boundary` |
+| Status | `PARTIAL — current regression diagnosis/reverification; historical scoped issue API PASS retained` |
 
 ## 1. Goal
+
+**Diagnostic change result (2026-10-03):** Unexpected runtime connect/query failures now produce fixed stage/category/coarse-duration markers without raw SQL, parameter or credential data. Fixture context uses the same observed proxy; intentional faults, arguments, error identity and query_timeout are retained. Rollback fault apps close in finally. Fifteen AST/fake-client diagnostic tests, JS syntax/PowerShell parser/diff checks PASS. Real diagnostic DB rerun **51950** is live; root cause/full regression remain unproven. No product, schema, privilege or API change; evidence §8.
 
 Issue a short-lived, exact-resource TransferGrant only to the verified destination Session requester after rechecking Consent, Session and ImagingPackage facts. Make retries safe and persist Grant, scopes and success Audit atomically.
 

@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { readFile, writeFile, mkdtemp, readdir, rm, stat, lstat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { temporaryCaptureLifecycleCases } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
+import { temporaryCaptureLifecycleCases, privacyAssert, assertPublicCaptureProjection,
+  assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 import { RemoteJwksOidcTokenVerifier } from "../../services/api/dist/authentication/oidc-jwt.verifier.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { TemporaryPayloadPurgeCoordinator } from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
@@ -17,6 +20,8 @@ import {
   safeQueryDurationBucket,
 } from "./safe-database-diagnostics.mjs";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
+import { AuthorizationContext } from "../../services/api/dist/authorization/domain/authorization-context.js";
+import { PostgresSourceCaptureScopeRepository } from "../../services/api/dist/integrity/persistence/postgres-source-capture-scope.repository.js";
 import {
   AuthorizationGatedOperationExecutor,
 } from "../../services/api/dist/authorization/application/authorization-gated-operation.executor.js";
@@ -584,10 +589,22 @@ function createHarness({
     temporaryImagingStore,
   );
 
+  const publicProjectionCheckedService = new Proxy(service, { get(target, property) {
+    if (property === "capture") return async input => {
+      let result;
+      try { result = await target.capture(input); }
+      catch (error) { assertPublicCaptureError(error); throw error; }
+      assertPublicCaptureProjection(result);
+      return result;
+    };
+    const value = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
   return Object.freeze({
-    service,
+    service: publicProjectionCheckedService,
     database,
     actorContext,
+    executor,
     counters: () => Object.freeze({
       tenantContextRuns,
       quotaReservations,
@@ -654,7 +671,195 @@ function captureCommand(
   });
 }
 
-async function runTemporaryLifecycleCase(scenario) {
+async function observePrivacy(scenario, phase, signal) {
+  const endpoint = new URL(process.env.MEDIQ_TEST_OBSERVATION_URL);
+  privacyAssert(endpoint.protocol === "http:" && endpoint.port === "8791" && endpoint.pathname === "/" &&
+    !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash &&
+    /^mediq-int001-capture-[0-9a-f]{12}-privacy-observer$/.test(endpoint.hostname), "OBSERVER_ADDRESS");
+  const token = process.env.MEDIQ_TEST_OBSERVATION_TOKEN;
+  privacyAssert(typeof token === "string" && /^[0-9a-f]{64}$/.test(token), "OBSERVER_TOKEN");
+  const timeout = AbortSignal.timeout(10_000);
+  const response = await fetch(new URL("/probe", endpoint), { method: "POST",
+    headers: { "content-type": "application/json", "x-mediq-test-observation": token },
+    body: JSON.stringify({ scenario: scenario.name, phase }), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  let raw = "", size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    privacyAssert(size <= 512, "OBSERVER_RESPONSE_BOUND");
+    raw += Buffer.from(chunk).toString("utf8");
+  }
+  const result = JSON.parse(raw);
+  if (!response.ok || result.status !== "OK") {
+    throw new Error(/^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "") ? result.code : "DEC017_PRIVACY_OBSERVER_REJECTED");
+  }
+}
+
+// Run the already-copied test module as a separate replica, never as a second
+// test suite. Await close (also after kill/error) before parent-owned teardown.
+async function runReplicaProcess(input, signal) {
+  const serialized = JSON.stringify(input);
+  assert.ok(Buffer.byteLength(serialized) <= 65_536, "DEC017_REPLICA_INPUT_BOUND");
+  if (signal?.aborted) throw new Error("DEC017_REPLICA_CANCELLED");
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  delete childEnv.NODE_OPTIONS;
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--mediq-recovery-child"], {
+    env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  });
+  assert.notEqual(child.pid, process.pid, "DEC017_REPLICA_DISTINCT_PID");
+  let stdout = "", stderr = "", outputBytes = 0, failed = false;
+  const stop = () => { failed = true; child.kill("SIGKILL"); };
+  const timer = setTimeout(stop, 60_000);
+  child.on("error", () => { failed = true; });
+  child.stdin.on("error", () => { failed = true; });
+  child.stdout.setEncoding("utf8").on("data", text => {
+    outputBytes += Buffer.byteLength(text);
+    if (outputBytes > 4096) stop(); else stdout += text;
+  });
+  child.stderr.setEncoding("utf8").on("data", text => {
+    outputBytes += Buffer.byteLength(text);
+    if (outputBytes > 4096) stop(); else stderr += text;
+  });
+  const closed = new Promise(resolveClose => child.once("close", (code, signal) => resolveClose({ code, signal })));
+  signal?.addEventListener("abort", stop, { once: true });
+  if (signal?.aborted) stop();
+  child.stdin.end(serialized);
+  const outcome = await closed.finally(() => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", stop);
+  });
+  const marker = /^DEC017_REPLICA_FAILED_[A-Z0-9_]+\n$/.test(stdout) ? stdout.trim() : "DEC017_REPLICA_FAILED";
+  if (failed || outcome.code !== 0 || outcome.signal !== null || stderr !== "") throw new Error(marker);
+  if (stdout !== "DEC017_REPLICA_RECOVERY_PASS\n") throw new Error("DEC017_REPLICA_PROTOCOL");
+}
+
+async function runRecoveryReplica() {
+  let harness;
+  try {
+    let serialized = "", size = 0;
+    for await (const chunk of process.stdin) {
+      size += chunk.length;
+      assert.ok(size <= 65_536, "DEC017_REPLICA_INPUT_BOUND");
+      serialized += chunk.toString("utf8");
+    }
+    const { root, auth, signedToken, crossToken, handoff } = JSON.parse(serialized);
+    const scenario = temporaryCaptureLifecycleCases.find(item => item.name === "replica_recovery");
+    assert.equal(resolve(dirname(root)), resolve(tmpdir()));
+    assert.ok(/^mediq-orthanc-lifecycle-[A-Za-z0-9]+$/.test(basename(root)));
+    assert.ok((await lstat(root)).isDirectory());
+    const storageRoot = join(root, "ciphertext");
+    assert.ok((await lstat(storageRoot)).isDirectory());
+    assert.equal(process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, undefined);
+    assert.equal(process.env.MEDIQ_MIGRATION_DATABASE_URL, undefined);
+    const verifier = new RemoteJwksOidcTokenVerifier(auth);
+    const signedPrincipal = await verifier.verify(signedToken);
+    const crossPrincipal = await verifier.verify(crossToken);
+    const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+    harness = createHarness({ temporaryImagingStore: store, oidcAuthentication: auth });
+    const temporary = handoff.temporaryPackage, instance = temporary.instances[0];
+    const binding = { operationId: scenario.operationId, tenantId: fixture.tenantId,
+      exchangeSessionId: scenario.sessionId, packageId: scenario.packageId,
+      studyRefId: scenario.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID };
+    let callbacks = 0, verifiedChecks = 0, physicalPurges = 0;
+    const consume = async () => { callbacks++; };
+    const currentMetadata = () => harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
+      const result = await client.query(`SELECT temporary_storage_ref::text,temporary_payload_state,
+        temporary_payload_expires_at,temporary_payload_purged_at FROM study_references WHERE study_ref_id=$1`, [scenario.studyRefId]);
+      assert.equal(result.rowCount, 1);
+      return result.rows[0];
+    });
+    const before = await currentMetadata();
+    assert.equal(before.temporary_storage_ref, temporary.storageRef);
+    assert.equal(before.temporary_payload_state, "AVAILABLE");
+    assert.equal(before.temporary_payload_expires_at.toISOString(), temporary.expiresAt);
+    await assert.rejects(harness.service.consumeCapturedInstance({ principal: signedPrincipal,
+      tenantCandidate: fixture.tenantId, correlationId: scenario.correlationId, consentId: scenario.consentId,
+      grantId: scenario.grantId, handoff, objectRef: instance.objectRef }, consume),
+    { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+
+    // Primitive key-loss proof only: real authorization, not a default-allow
+    // hook or a replacement for the concrete product consumer's two checks.
+    await assert.rejects(store.consumeInstance({ storageRef: temporary.storageRef, objectRef: instance.objectRef,
+      packageBinding: { tenantId: fixture.tenantId, exchangeSessionId: scenario.sessionId,
+        packageId: scenario.packageId, purpose: "PACS_IMPORT" },
+      instanceBinding: { studyRefId: scenario.studyRefId, seriesInstanceUid: instance.seriesInstanceUid,
+        sopInstanceUid: instance.sopInstanceUid }, expectedByteLength: instance.byteLength, expectedSha256: instance.sha256,
+    }, async () => {
+      await harness.executor.executeWithResolvedSessionFence(signedPrincipal, fixture.tenantId,
+        async (identity, client) => {
+          const scope = await new PostgresSourceCaptureScopeRepository(client).findByOperationId(scenario.operationId, identity.tenantId);
+          assert.ok(scope);
+          for (const [field, value] of Object.entries(binding)) assert.equal(scope[field], value);
+          assert.equal(scope.patientRefId, fixture.patientRefId);
+          assert.equal(scope.operationState, "CREATED");
+          return AuthorizationContext.create({ identity, exchangeSessionId: scope.exchangeSessionId,
+            resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
+            consentId: scenario.consentId, grantId: scenario.grantId });
+        }, async (_context, client) => {
+          const allowed = await client.query(`SELECT 1 FROM study_references sr JOIN integrity_evidence ie
+            ON ie.study_ref_id=sr.study_ref_id AND ie.package_id=sr.package_id
+            WHERE sr.study_ref_id=$1 AND sr.temporary_storage_ref=$2 AND sr.temporary_payload_state='AVAILABLE'
+              AND sr.temporary_payload_purged_at IS NULL AND sr.temporary_payload_expires_at=$3
+              AND sr.temporary_payload_expires_at>now() AND ie.integrity_id=$4 AND ie.operation_id=$5
+              AND ie.exchange_session_id=$6 AND ie.status='PENDING' AND ie.verification_stage='SOURCE_CAPTURE'
+              AND ie.verified_at IS NULL AND ie.algorithm=$7 AND ie.source_digest=$8 AND ie.source_object_count=$9`,
+          [scenario.studyRefId, temporary.storageRef, temporary.expiresAt, handoff.sourceEvidence.evidenceId,
+            scenario.operationId, scenario.sessionId, handoff.sourceEvidence.algorithm,
+            handoff.sourceEvidence.aggregateDigest, handoff.sourceEvidence.objectCount]);
+          assert.equal(allowed.rowCount, 1, "DEC017_REPLICA_CURRENT_AUTHORITY");
+        });
+      verifiedChecks++;
+      assert.equal(harness.counters().activeTenantTransactions, 0);
+      return "VERIFIED";
+    }, consume), { name: "TemporaryImagingStorageError", code: "RECOVERY_REQUIRED" });
+    assert.equal(verifiedChecks, 1, "DEC017_REPLICA_REAL_AUTHORIZATION_COMPLETED");
+    assert.equal(callbacks, 0);
+
+    const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, { async purgeByReference(input) {
+      physicalPurges++;
+      assert.equal(harness.counters().activeTenantTransactions, 0);
+      const state = await currentMetadata();
+      assert.ok(["PURGE_PENDING", "PURGED"].includes(state.temporary_payload_state));
+      assert.equal(state.temporary_storage_ref, input.storageRef);
+      await store.purgeByReference(input);
+      assert.deepEqual(await readdir(storageRoot), [], "DEC017_REPLICA_ABSENT_BEFORE_FINALIZE");
+      await observePrivacy(scenario, "PHYSICAL_ABSENT");
+    } });
+    const command = { principal: signedPrincipal, tenantCandidate: fixture.tenantId, binding,
+      storageRef: temporary.storageRef, correlationId: scenario.correlationId, reason: "PROCESS_RESTART" };
+    const ciphertextSnapshot = async () => {
+      const names = (await readdir(join(storageRoot, temporary.storageRef))).sort();
+      return Promise.all(names.map(async name => [name, createHash("sha256")
+        .update(await readFile(join(storageRoot, temporary.storageRef, name))).digest("hex")]));
+    };
+    const ciphertextBefore = await ciphertextSnapshot();
+    assert.equal(ciphertextBefore.length, 3);
+    await assert.rejects(purge.purge({ ...command, principal: null }), { message: "TEMPORARY_PAYLOAD_PURGE_UNAVAILABLE" });
+    await assert.rejects(purge.purge({ ...command, principal: crossPrincipal }), { message: "TEMPORARY_PAYLOAD_PURGE_UNAVAILABLE" });
+    assert.equal(physicalPurges, 0, "DEC017_REPLICA_UNAUTHORIZED_NO_PHYSICAL_EFFECT");
+    assert.deepEqual(await currentMetadata(), before);
+    assert.ok(JSON.stringify(await ciphertextSnapshot()) === JSON.stringify(ciphertextBefore));
+    assert.deepEqual(await purge.purge(command), { kind: "PURGED" });
+    assert.deepEqual(await purge.purge(command), { kind: "ALREADY_PURGED" });
+    assert.equal((await currentMetadata()).temporary_payload_state, "PURGED");
+    const counts = harness.counters();
+    assert.equal(counts.instanceCalls + counts.sourceRequests.length + counts.stowCalls + counts.destinationVerificationCalls, 0);
+    assert.equal(counts.activeTenantTransactions, 0);
+    process.stdout.write("DEC017_REPLICA_RECOVERY_PASS\n");
+  } catch (error) {
+    const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,60}$/.test(error.code) ? error.code : "SUPPRESSED";
+    const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? "")?.[1] ?? "0";
+    process.stdout.write(`DEC017_REPLICA_FAILED_${code}_LINE_${line}\n`);
+    process.exitCode = 1;
+  } finally {
+    await harness?.database.onModuleDestroy().catch(() => {
+      process.stdout.write("DEC017_REPLICA_FAILED_DATABASE_CLOSE\n");
+      process.exitCode = 1;
+    });
+  }
+}
+
+async function runTemporaryLifecycleCase(scenario, signal) {
   const keys = await generateKeyPair("RS256", { modulusLength: 2048 });
   const jwk = { ...await exportJWK(keys.publicKey), kid: "TEST-LIFECYCLE", alg: "RS256", use: "sig" };
   let jwksRequests = 0;
@@ -665,6 +870,7 @@ async function runTemporaryLifecycleCase(scenario) {
   });
   let root, store, harness, signedPrincipal;
   const attempted = [];
+  const observedQuotaRefs = new Set();
   let callbacks = 0;
   let releaseReservation, reservationEntered;
   const heldReservation = new Promise(resolve => { releaseReservation = resolve; });
@@ -706,6 +912,11 @@ async function runTemporaryLifecycleCase(scenario) {
       async write(file, buffer, offset, length, position) {
         assert.equal(harness.counters().activeTenantTransactions, 0, "DEC017_WRITE_OUTSIDE_OWN_TRANSACTION");
         assert.ok(harness.counters().quotaReservations > 0, "DEC017_COMMITTED_QUOTA_BEFORE_WRITE");
+        const ref = attempted.at(-1).storageRef;
+        if (!observedQuotaRefs.has(ref)) {
+          await observePrivacy(scenario, "QUOTA", signal);
+          observedQuotaRefs.add(ref);
+        }
         if (scenario.name === "capture_write_failure") throw new Error("DEC017_SYNTHETIC_WRITE_FAILURE");
         return file.write(buffer, offset, length, position);
       },
@@ -720,6 +931,7 @@ async function runTemporaryLifecycleCase(scenario) {
         const state = await currentMetadata();
         assert.equal(state.temporary_payload_state, "STAGING", "DEC017_RESERVED_BEFORE_ALLOCATION");
         assert.equal(state.temporary_storage_ref, ref);
+        await observePrivacy(scenario, "RESERVED", signal);
         attempted.push({ storageRef: ref, binding });
         if (scenario.name === "concurrent_capture" && attempted.length === 1) {
           reservationEntered();
@@ -736,6 +948,7 @@ async function runTemporaryLifecycleCase(scenario) {
         assert.equal(state.temporary_storage_ref, input.storageRef);
         await store.purgeByReference(input);
         assert.deepEqual(await readdir(storageRoot), [], "DEC017_PHYSICAL_PURGE_BEFORE_FINALIZE");
+        await observePrivacy(scenario, "PHYSICAL_ABSENT", signal);
       },
       async consumeInstance(input, verify, consume) {
         let phase = 0;
@@ -813,6 +1026,7 @@ async function runTemporaryLifecycleCase(scenario) {
       assert.equal(result.kind, "CAPTURED_FOR_COORDINATOR", "DEC017_CAPTURE_SUCCEEDED");
       const { handoff } = result, temporary = handoff.temporaryPackage;
       assert.ok(temporary);
+      await observePrivacy(scenario, "AVAILABLE", signal);
       const state = await currentMetadata();
       assert.equal(state.temporary_payload_state, "AVAILABLE");
       assert.equal(state.temporary_payload_expires_at.toISOString(), temporary.expiresAt, "DEC017_EXACT_EXPIRY");
@@ -833,7 +1047,7 @@ async function runTemporaryLifecycleCase(scenario) {
         });
         assert.ok(borrowed.every(byte => byte === 0), "DEC017_BORROWED_ZEROED");
       };
-      if (["roundtrip", "concurrent_capture", "replay_refetch"].includes(scenario.name)) {
+      if (["roundtrip", "concurrent_capture", "replay_refetch", "replica_recovery"].includes(scenario.name)) {
         for (const instance of temporary.instances) {
           const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
           assert.ok(known);
@@ -849,6 +1063,12 @@ async function runTemporaryLifecycleCase(scenario) {
         await assert.rejects(harness.service.consumeCapturedInstance({ ...readInput(temporary.instances[0].objectRef), handoff: { ...handoff } }, consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
         await assert.rejects(harness.service.consumeCapturedInstance({ ...readInput(temporary.instances[0].objectRef), principal: crossPrincipal, tenantCandidate: fixture.otherTenantId }, consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
         assert.equal(callbacks, manifest.instanceCount);
+        if (scenario.name === "replica_recovery") {
+          await runReplicaProcess({ root, auth, signedToken, crossToken: await token(fixture.otherTenantSubject), handoff }, signal);
+          await assert.rejects(harness.service.consumeCapturedInstance(readInput(temporary.instances[0].objectRef), consume),
+            { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+          assert.equal(callbacks, manifest.instanceCount, "DEC017_REPLICA_OLD_PARENT_HANDOFF_DENIED");
+        }
       } else {
         if (scenario.name.startsWith("ciphertext_")) {
           const target = join(storageRoot, temporary.storageRef, `${temporary.instances[0].objectRef}.enc`);
@@ -862,6 +1082,7 @@ async function runTemporaryLifecycleCase(scenario) {
         await assert.rejects(harness.service.consumeCapturedInstance(readInput(temporary.instances[0].objectRef), consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
         assert.equal(callbacks, 0, "DEC017_DENIED_BEFORE_CALLBACK");
       }
+      await observePrivacy(scenario, "READ_RESULT", signal);
       const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, port);
       const purgeInput = { principal: signedPrincipal, tenantCandidate: fixture.tenantId,
         binding: operationBinding,
@@ -872,12 +1093,13 @@ async function runTemporaryLifecycleCase(scenario) {
         assert.deepEqual(await currentMetadata(), before, "DEC017_REPLAY_PRESERVES_TTL_REF");
         assert.equal(attempted.length, 1); assert.equal(harness.counters().instanceCalls, 3);
       }
-      assert.deepEqual(await purge.purge(purgeInput), { kind: "PURGED" });
+      assert.deepEqual(await purge.purge(purgeInput), { kind: scenario.name === "replica_recovery" ? "ALREADY_PURGED" : "PURGED" });
       assert.deepEqual(await purge.purge(purgeInput), { kind: "ALREADY_PURGED" });
       if (scenario.name === "replay_refetch") {
         const replacement = await harness.service.captureForCoordinator(input);
         assert.equal(replacement.kind, "CAPTURED_FOR_COORDINATOR");
         const newTemporary = replacement.handoff.temporaryPackage;
+        await observePrivacy(scenario, "AVAILABLE", signal);
         assert.notEqual(newTemporary.storageRef, temporary.storageRef);
         assert.equal(replacement.handoff.sourceEvidence.evidenceId, handoff.sourceEvidence.evidenceId,
           "DEC017_REUSES_ONLY_MATCHING_PENDING_EVIDENCE");
@@ -895,6 +1117,7 @@ async function runTemporaryLifecycleCase(scenario) {
     assert.equal(finalState.temporary_payload_state, "PURGED", "DEC017_FINAL_PURGED");
     assert.ok(finalState.temporary_payload_purged_at instanceof Date);
     assert.deepEqual(await readdir(storageRoot), []);
+    await observePrivacy(scenario, "FINAL", signal);
     const counts = harness.counters();
     const expectedInstances = ["capture_write_failure", "capture_fsync_failure"].includes(scenario.name) ? 1
       : scenario.name === "replay_refetch" ? 6 : 3;
@@ -944,7 +1167,9 @@ async function runTemporaryLifecycleCase(scenario) {
   }
 }
 
-test("authorized source capture uses only A WADO after database-backed authorization and never writes B", async (t) => {
+if (process.argv.includes("--mediq-recovery-child")) {
+  await runRecoveryReplica();
+} else test("authorized source capture uses only A WADO after database-backed authorization and never writes B", async (t) => {
   assert.equal(manifest.fixtureId, "MEDIQ-ENV-007-SYNTHETIC-CT-V1");
   assert.equal(manifest.instanceCount, 3);
   assert.equal(manifest.patient.patientId, "TEST-PATIENT-007");
@@ -1650,7 +1875,7 @@ test("authorized source capture uses only A WADO after database-backed authoriza
   });
 
   for (const scenario of temporaryCaptureLifecycleCases) {
-    await t.test(`DEC017 signed lifecycle ${scenario.name}`, { timeout: 120_000 }, () => runTemporaryLifecycleCase(scenario));
+    await t.test(`DEC017 signed lifecycle ${scenario.name}`, { timeout: 120_000 }, childTest => runTemporaryLifecycleCase(scenario, childTest.signal));
   }
 
   assert.equal(TEST_HOSPITAL_A_ID, "04000000-0000-4000-8000-000000000001");

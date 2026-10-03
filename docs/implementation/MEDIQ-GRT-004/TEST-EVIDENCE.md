@@ -128,3 +128,13 @@ pwsh -NoProfile -File .\scripts\test-db-008-full-schema.ps1 -EnvFile .env
 - 결과: `PASS` — `MEDIQ-GRT-004`의 승인된 범위에 한함
 - Grant revoke는 exact recipient-bound authorization metadata 전이다.
 - `PASS`는 operation-time Viewer/Download/PACS 인가, in-flight fencing, offline recall, Hospital A→B E2E 또는 전체 P0 완료를 뜻하지 않는다.
+
+## 8. Shared regression diagnostic follow-up (2026-10-03)
+
+DB-008 session 6711 exited 1 in the shared GRT-003/004 test file: combined 12 PASS/2 FAIL; named failures are the GRT-003 rollback case and its parent, not a GRT-004 revoke case. Exact owned resource inventory is empty and existing stack healthy. See MEDIQ-GRT-003 evidence §8 for the retained error; its cause is unproven.
+
+Before shared test edits, GRT-003-DEC-002/DIAG-001~004 prescribe fixed connection/query-phase diagnostics, unchanged forwarding/error identity/fault semantics, and non-sensitive output checks. GRT-004 product code/recipient boundary/expiry behavior/Audit atomicity/timeout/grants are unchanged. New shared-proxy unit tests and actual full rerun are pending; earlier PASS remains historical, not a current-schema acceptance claim. No live source-run input is changed.
+
+**Shared checks:** `node --test tests/scripts/grant-db-diagnostics.test.mjs` exited 0 at **17:34:25 KST**, **15/15 PASS** using AST-extracted real functions/fake clients; the `revoke-audit` rejection remains intact along with all four other fault modes. Exact query/parameter/timeout forwarding, release binding, original error identity and sanitized output pass. JS syntax/PowerShell parser/diff checks pass. No actual shared HTTP/PostgreSQL rerun result yet; full current regression remains unaccepted. See GRT-003 §8 for exact changed diagnostics and retained failure.
+
+**Actual follow-up:** Full scratch diagnostic rerun **51950** / **mediq-db008-181f3dd33ac9** is live after source/API workloads ended. Only PostgreSQL readiness/role bootstrap passed so far. Shared GRT-003/004 HTTP/PostgreSQL, repeat/reset/reapply, final exit and cleanup still pending; see MEDIQ-PACS-001 evidence §44. Preserve all current run inputs and earlier failure evidence.

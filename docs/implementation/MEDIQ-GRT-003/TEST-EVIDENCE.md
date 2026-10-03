@@ -1,5 +1,7 @@
 # MEDIQ-GRT-003 Test Evidence
 
+**Current status, 2026-10-03:** Current-schema regression failed; see §8. Earlier scoped PASS results below are historical and are not evidence that this failure is resolved.
+
 | 항목 | 값 |
 |---|---|
 | Ticket | `MEDIQ-GRT-003` |
@@ -115,3 +117,13 @@ db008_ephemeral_cleanup=PASS
 - 근거: 26 API/DB Acceptance cases, API 442 tests, typecheck, migration consistency, live signed-OIDC PostgreSQL/RLS integration twice, exact 144 privilege inventory, DB-002~007 regressions.
 - 전체 P0 A→MediQ→B 전송, Viewer/Download/PACS operation Authorization, revocation과 production readiness는 이 결과로 PASS 처리하지 않는다.
 - 증거에는 실제 환자정보, 운영 Credential, Secret 또는 운영 DICOM을 포함하지 않는다.
+
+## 8. Current rollback regression diagnosis (2026-10-03)
+
+DB-008 `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly`, session **6711**, project **mediq-db008-9d749e984b73**, exited **1** (confirmed 17:23:38 KST). Combined GRT-003/004 summary: **12 PASS / 2 FAIL**, the GRT-003 `Audit or Scope persistence failure rolls back all Grant rows` child and its parent suite. Fixed diagnostic: stage ROLLBACK, ActorTenantContextUnavailableError, no inner SQLSTATE/query phase. Cause unproven; COMMIT latency is not established. Later full-regression stages/repeat/reset/reapply were not reached. Independent exact-label inventory: zero containers/volumes/networks; existing MediQ stack healthy. Raw database output and credentials are not retained.
+
+Before edits: GRT-003-DEC-002/DIAG-001~004 require test-only fixed connect/query/substep diagnostics, forwarding and error-identity preservation, unchanged injected failures/assertions/timeouts, and fault-app finally cleanup. ActorTenantContext currently intentionally replaces inner setup/registry/commit failures with the fixed unavailable error; the fixture context uses an unobserved client, so the current marker cannot identify the failed phase. No product fix is justified from this evidence. The active R4 source run uses another Docker target; do not alter its source/harness/Dockerfile inputs. Diagnostic-only code/tests and actual rerun evidence are pending; status PARTIAL.
+
+**Implementation and checks:** The runtime proxy now emits only fixed stage/allowlisted error/coarse-time categories for unexpected connect/query errors, rethrows the same error, and forwards the original query/parameters/query_timeout unchanged. The GRT-003 fixture's ActorTenantContext uses that observed proxy; intentional fault branches are unchanged. Rollback scenarios report fixed CREATE_SESSION/SEED/APP/ISSUE/CLOSE/OBSERVE substeps and close fault apps in finally. DB-008 surfaces at most eight fixed DB markers and eight substeps, not raw output. `node --test tests/scripts/grant-db-diagnostics.test.mjs` exited 0 at **17:34:25 KST**, **15 PASS / 0 FAIL**, 452 ms: actual functions extracted by AST, fake clients only, including five preserved fault modes and sensitive-error suppression. `node --check tests/database/grant-issue-api-runtime.integration.test.mjs`, PowerShell parser on the wrapper, and `git diff --check` passed. Real DB rerun and full gate remain pending; neither a timeout fix nor rollback acceptance is claimed.
+
+**Actual diagnostic rerun:** After separate source integration/cleanup and serial API 893/type/Port PASS had terminated, launched `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly`, session **51950**, project **mediq-db008-181f3dd33ac9**, approximately 17:37 KST. Healthy PostgreSQL and role-bootstrap PASS only; full suite, three rounds, final exit and cleanup remain pending. Current test/product/build inputs are frozen. Follow MEDIQ-PACS-001 evidence §44; no success inferred and no retry of individual DDL/operations.
