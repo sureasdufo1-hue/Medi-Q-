@@ -1,5 +1,25 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 35. User-requested R2/R3 WIP Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Explicit user request to commit/push the current CAPSTONE-P0 working state, not complete or deploy R3
+Changed: Preserve R2 failure diagnosis/contracts and approved R3 documents; checkpoint migration 0026, journal entry, nine-column privilege fixture, runtime denial test, current 253-entry assertions and test-image COPY; add truthful checkpoint records
+Not changed: No product fix or completion of unfinished test wiring in this Git task; only one staged-check EOF blank line corrected. No live migration, DB/PACS mutation, deployment, public API or dependency change; historical SQL unchanged
+Security impact: Proposed runtime Audit SELECT is limited to nine metadata columns under existing RLS; actual privilege/isolation/denial acceptance remains unverified. Candidate scan excludes local credentials/data/build outputs and found no bounded credential-pattern match, not exhaustive secret/PHI assurance
+Tests executed: JavaScript syntax 16 files and PowerShell parser 2 files, zero errors; Node dispatch-read contracts 10 plus migration-runner tests 6, all 16 PASS; diff checks, targeted 32-file candidate scan and historical SQL preservation checks PASS; fetch succeeded and main/origin main were 0/0 before checkpoint
+Tests not executed: R3 scratch migration/repeat/reset/reapply, actual exact-253/RLS/denial tests, fresh source58+dispatch18/observer gates, current full API regression and complete Preflight/B transfer/destination/security/E2E; Git-only checkpoint intentionally does not claim these gates
+Evidence: TEST-EVIDENCE.md section 71; R2 actual failures remain in section 68
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: R3 is partially written, not accepted; new runtime test is copied into its image but not yet wired into the DB wrapper, and exact catalog helper is not yet wired into source/observer. Counts alone do not establish exact privileges
+Status: PARTIAL implementation / WIP; commit and push success reported only after native Git commands and remote verification
+```
+
+## 34. DEC-020-R3 Audit metadata privilege prerequisite — opened before code
+
+2026-10-04, CAPSTONE-P0/MEDIQ-PACS-001. Previous goal turn was progress: actual 39941/82055 failures and independent 42501/zero-SELECT evidence changed the next action. Inspected current dirty R2/R3 documents/tests at saved HEAD 772423f; preserve them. No live heavy handle. Adopted R3 and exact nine-column/253-entry/denial/migration/fresh-58+18 Acceptance already recorded before edits. Implement append-only migration, explicit current inventory updates and runtime-only Audit SELECT/denial/RLS tests; first execute scratch DB-008 clean/repeat/reset/reapply plus existing runtime regressions, then the opt-in source/dispatch read gate. Persistent development database and deployed services remain unchanged in this slice. Initial PARTIAL/NOT RUN; full Preflight/real B Study transfer/destination/terminal evidence/security/E2E remain required. Evidence section 70.
+
 ## 33. User-requested R1/R2 WIP Git checkpoint — 2026-10-04
 
 ```text
@@ -17,6 +37,24 @@ Status: PARTIAL implementation; Git commit/push outcome reported only after comm
 ```
 
 ## 32. DEC-020-R2 actual committed-read SQL/RLS matrix — opened before code
+
+Final current result (supersedes live/pending notes below):
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-020-R2/R2-A actual dispatched-read verification and R3 prerequisite design
+Changed: Ten deterministic matrix/environment/diagnostic contracts; exact seed/observer success-marker checks and bounded failure projection; recommendation/Acceptance/normative/status/evidence records
+Not changed: Product SQL/guards/source, database migrations/grants/policies/deployed services or public API; no actual B STOW, real data or automatic commit/push
+Security impact: Owner URLs stay outside app tests, original 58+18/limits/privacy/no-retry preserved; raw error suppression retained. Proposed nine Audit SELECT columns remain unapplied
+Tests executed: API build/45 files/1026/type/Port PASS (68076); final Node 199, PS cleanup/privacy/readiness 29/47/10 PASS; actual 39941 and diagnostic 82055 both exit 1, seven read scenarios plus parent failed. Old source 58/observers/six restores/new seed/privacy/cleanup pass in each; independent empty inventories and hashes confirmed. Actual read-only runtime catalog/projection proves absent Audit SELECT/42501
+Tests not executed: Successful new 18-case matrix/final observer/B-after; R3 migration/exact-253/RLS/denial/DB regressions; full Preflight/coordinator/B transfer/destination/terminal evidence/security/E2E and authenticated job lifecycle
+Evidence: TEST-EVIDENCE.md section 68, including failures, read-only commands, cleanup and immutable execution inputs
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Audit read privilege prerequisite proven missing; other read defects may remain after correction. R3 design is not a tested implementation, and fixed diagnostic budget still omitted some SQL markers
+Status: PARTIAL overall; actual R2 FAILED/cleaned; R3 NOT IMPLEMENTED/NOT RUN; goal active, no live process
+```
+
+Current continuation from saved 772423f: deterministic contracts 9/9 (initial two selector failures recorded and corrected), all Node script tests 198 + PowerShell cleanup/privacy/readiness 29/47/10 PASS. Full API build/45 files/1026/type/Port PASS, session 68076 exit 0. Exact success-marker checks added to the test wrapper, no product authority/schema/grants/deployment change. Opt-in actual wrapper session 39941 launched with 294 frozen inputs, SHA256 c69a86b49f945fb3e30de736b4b7a24873d6765fc371076feae702deae039d61; results and independent cleanup pending. No executable edits while live. SQL/RLS gate is not yet accepted; full product A-to-B goal remains unchanged/incomplete. Evidence section 68; no automatic commit/push.
 
 2026-10-04, CAPSTONE-P0/MEDIQ-PACS-001. Preserve inspected R1 dirty tree at HEAD 21a48ec; prior turn progress/current actual source 58 and API 1026, no live process. Standing recommendation DEC-020-R2 and DISPREAD-SQL-001–006 recorded first. Implement test-only opt-in existing owned wrapper, disjoint actual source/signed identity/runtime RLS/crypto/dispatch predicate positive+negative matrix and independent observer. No runtime grant/schema/product route/deployment/STOW. Initial PARTIAL/NOT RUN; full Preflight/coordinator/B transfer/destination/atomic terminal evidence/security/E2E remain open. Evidence §68.
 

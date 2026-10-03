@@ -1,5 +1,9 @@
 # MediQ Security Requirements Specification
 
+## DEC-020-R3 least-privilege Audit read prerequisite (design adopted, not implemented)
+
+Actual runtime 244-column baseline cannot execute the approved dispatched-read Audit predicates (SELECT denied, SQLSTATE 42501). Before accepting this read path, append a migration adding only nine `audit_events` SELECT columns: resource_id/resource_type/exchange_session_id/actor_id/tenant_id/action/result/reason_code/occurred_at. Exact inventory becomes 253; INSERT 12, existing privileges, FORCE RLS and Tenant policy stay unchanged. No table-level SELECT, PUBLIC grant, excluded-column read, Audit UPDATE/DELETE, elevated role or definer function. These internal metadata reads are neither image Authorization nor a public Audit endpoint. R3 overrides the earlier no-grant-change assumption only in this documented scope. No existing database/deployment changed yet. R3 Acceptance, exact tuple/denial/RLS and fresh actual 58+18 gate required; whole P0 PARTIAL.
+
 ## DEC-020 committed read and cancellation boundary
 
 CAPSTONE-P0 internal only. `consumeCapturedInstance` remains CREATED-only; `consumeDispatchedInstance` requires the original non-serializable handoff, capture actor/Tenant/principal/hospital, fresh fenced Consent/Authorization/PACS_IMPORT Grant/mapping/TTL/AVAILABLE/source evidence twice plus exact durable STOW_STARTED/version-2 ownership, semantic digest, source count, pending bound Provenance and both dispatch-state Audits. Positively reserved object reads cannot retry after Audit/commit acknowledgement loss or consumption failure. These read predicates are not full Mandatory Preflight or authorization to send a POST. No DB/grant/public API change.

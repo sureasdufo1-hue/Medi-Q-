@@ -146,7 +146,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 244,
+      total: 253,
       study_select: 10,
       study_update: 4,
       study_insert: 0,

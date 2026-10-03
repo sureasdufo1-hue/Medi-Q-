@@ -1,5 +1,9 @@
 # MediQ Threat Model
 
+## DEC-020-R3 Audit read prerequisite review (not implemented)
+
+Do not solve observed Audit SELECT denial by removing durable Audit predicates, using owner credentials or disabling RLS. Add only nine approved predicate-column SELECT rights under existing forced Tenant RLS; keep three unnecessary columns non-readable and all Audit mutation rights absent except existing append INSERT. Compare exact 253 tuples and test no-context/cross-Tenant/excluded-column/table/update/delete denial. Internal metadata visibility must not become payload authority or a client-facing audit projection. Existing arbitrary same-role SQL/GUC residual remains synthetic-P0-only, not solved by this change. Migration/runtime tests and new actual wrapper are still required; current R2 FAILED, full transfer/security/E2E unproven.
+
 ## DEC-020 dispatched payload read and held-stream review
 
 Reject cloned handoff/caller claim/verifier, stale/mismatched durable dispatch ownership, pending provenance or missing dispatch-state audit and all stale Consent/Grant/mapping/TTL/source evidence. Reserve an object attempt before first-check Audit/commit acknowledgement, so loss of acknowledgement cannot permit another read. Original CREATED-only path is unchanged; metadata read gates cannot replace complete Preflight or authorize STOW.

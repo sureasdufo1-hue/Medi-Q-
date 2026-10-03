@@ -1,5 +1,7 @@
 # MediQ Data Flow Specification
 
+DEC-020-R3 prerequisite (adopted, not implemented): durable Audit existence checks run on the same verified runtime Tenant transaction and require the nine explicitly approved Audit SELECT columns. Current role lacks them and fails closed with 42501. An append-only least-privilege migration must be validated; do not bypass Audit checks, switch to privileged DB credentials or move the check outside the existing identity/fence path. Audit metadata alone is not image authority. R3/FRESH 58+18 evidence and full original transfer/security/E2E remain required.
+
 ## DEC-020 internal dispatched-byte flow
 
 Original capture handoff (CT SOP Class + actual WADO syntax, source hashes and opaque temporary refs) → downstream owned-stream demand → original actor/Tenant/Consent/Grant/mapping/AVAILABLE/source evidence + exact committed operation/provenance/Audits (fenced check 1; reserve object attempt before acknowledgement) → authenticate/decrypt one object → fresh fenced check 2 → hold borrowed consumer → copy ≤64-KiB chunks on demand → finish/cancel holding consumer → zero borrowed Buffer/release admission → close stream. Caller/purge/remaining-TTL abort stops delivery and settles cooperative bridge; a consumer ignoring cancellation keeps admission until actual settlement. Already copied or transmitted chunks are not remotely recalled. No DB transaction spans crypto/consumer/network I/O.

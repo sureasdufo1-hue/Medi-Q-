@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import pg from "pg";
+import { auditDispatchSelectColumns } from '../fixtures/runtime-privilege-contract.mjs';
 import { ActorTenantContextService } from "../../services/api/dist/identity/application/actor-tenant-context.service.js";
 import { ActorRegistryRepository } from "../../services/api/dist/identity/persistence/actor-registry.repository.js";
 import { ExchangeSessionCreationService } from "../../services/api/dist/exchange/application/exchange-session-creation.service.js";
@@ -77,7 +78,7 @@ test("EXC-003 creates a destination-bound idempotent Session and atomic Audit un
        WHERE grantee = current_user AND table_schema = 'public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 244, "EXC003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 253, "EXC003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     const sessionInsertColumns = catalog.rows.filter(
       (row) => row.table_name === "exchange_sessions" && row.privilege_type === "INSERT",
     );
@@ -90,7 +91,9 @@ test("EXC-003 creates a destination-bound idempotent Session and atomic Audit un
     assert.equal(sessionInsertColumns.length, 12);
     assert.equal(sessionSelectColumns.length, 12);
     assert.equal(auditInsertColumns.length, 12);
-    assert.equal(catalog.rows.some((row) => row.table_name === "audit_events" && row.privilege_type !== "INSERT"), false);
+    assert.deepEqual(catalog.rows.filter(row => row.table_name === 'audit_events' && row.privilege_type === 'SELECT')
+      .map(row => row.column_name).sort(), [...auditDispatchSelectColumns]);
+    assert.equal(catalog.rows.some(row => row.table_name === 'audit_events' && !['SELECT','INSERT'].includes(row.privilege_type)), false);
     console.error("EXC003_STAGE=EXACT_RUNTIME_PRIVILEGES_OK");
 
     console.error("EXC003_STAGE=CREATE_AND_IDEMPOTENT_REPLAY");

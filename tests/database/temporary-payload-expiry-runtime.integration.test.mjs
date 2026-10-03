@@ -48,7 +48,7 @@ test("DEC-016 verified SERVICE expiry with real Tenant RLS and ciphertext", { ti
     const role = await pool.query("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user");
     assert.deepEqual(role.rows[0], { current_user: "mediq_runtime", rolsuper: false, rolbypassrls: false });
     const grants = await pool.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'");
-    assert.equal(grants.rows[0].n, 244);
+    assert.equal(grants.rows[0].n, 253);
     const rls = await pool.query("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid='study_references'::regclass");
     assert.deepEqual(rls.rows[0], { relrowsecurity: true, relforcerowsecurity: true });
     const beforePackage = (await inspector.query("SELECT * FROM imaging_packages WHERE package_id=$1", [fixture.packageId])).rows[0];

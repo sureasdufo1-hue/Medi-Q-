@@ -135,7 +135,7 @@ test("CON-002 persists synthetic PENDING Consents with atomic session versions u
           FROM information_schema.column_privileges
          WHERE grantee = current_user AND table_schema = 'public'
       `);
-      assert.deepEqual(inventory.rows[0], { total: 244, updates: 19, other: 0 });
+      assert.deepEqual(inventory.rows[0], { total: 253, updates: 19, other: 0 });
       const sessionUpdates = await pool.query(`
         SELECT column_name FROM information_schema.column_privileges
          WHERE grantee=current_user AND table_schema='public'

@@ -1,5 +1,7 @@
 # MediQ System Architecture
 
+DEC-020-R3 prerequisite amendment (adopted design, not yet implemented): the internal dispatch-read SQL requires nine forced-RLS Audit metadata SELECT columns absent from the actual 244-column baseline. Add only those exact rights through a new migration (253 total), keeping runtime role, identity/fence transaction, Audit append-only writes and all claim conditions unchanged. No privileged alternate query/pool, public route or deployment; require R3 exact-catalog/denial/migration and fresh real 58+18 proof. Earlier no-grant-change notes describe their historical slices, not a runnable claim on the current database.
+
 ## DEC-020 operation-bound encrypted-source stream composition
 
 PacsImportModule exports an internal `DispatchedInstanceStreamFactory` using its existing `AuthorizedSourceCaptureService` and shared private encrypted store. After a future complete Preflight/committed dispatch, exact original handoff → lazy authorized dispatched read → two fresh fenced checks and exact durable operation/provenance/Audit predicates → authenticated borrowed object → independent ≤64-KiB transport chunks → awaited consumer settlement/zero/release → EOF → next object. Source metadata supplies CT SOP Class and actual authorized WADO supplies Explicit VR Little Endian syntax; these fields are immutable in original expected/temp inventories. Ordinary public capture response stays unchanged.

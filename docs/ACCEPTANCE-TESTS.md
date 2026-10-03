@@ -1,5 +1,19 @@
 # MediQ Acceptance Test Specification
 
+### DEC-020-R3 grant prerequisite — recorded before implementation
+
+CAPSTONE-P0; adopted recommendation, initial **NOT IMPLEMENTED / NOT RUN**. Actual R2 39941/82055 FAILED/cleaned; independent current runtime exact Audit projection denied with SQLSTATE 42501. R3 supersedes R2's unchanged-244 constraint only after its explicit additive migration, not historical results. Preserve original claim predicates and all 17 scenarios/18 tests.
+
+| ID (`TC-PACS-001-DISPREAD-R3-*`) | Required evidence |
+|---|---|
+| 001 | Append-only migration/journal validated; historical applied SQL/hash ledger unchanged; clean/reapply scratch and migration smoke PASS. No unrecorded persistent/deployed schema change. |
+| 002 | Independently compare all exact runtime column/privilege tuples: previous 244 plus only nine Audit SELECT tuples = 253. Exact Audit SELECT fields resource_id/resource_type/exchange_session_id/actor_id/tenant_id/action/result/reason_code/occurred_at; INSERT 12 unchanged. No table/PUBLIC/Audit UPDATE/DELETE or SELECT audit_event_id/correlation_id/created_at. NOSUPER/NOBYPASS/forced RLS unchanged. Count-only proof insufficient. |
+| 003 | Runtime, without Tenant context or with another Tenant, cannot read protected Audit rows or owned operations; correct Tenant can inspect needed minimized metadata. No image authority from Audit visibility. Excluded-column SELECT, full projection and Audit UPDATE/DELETE deny. No elevated credentials in application process. |
+| 004 | Relevant prior DB exact-inventory/role/RLS/regression expectations deliberately updated and run, rather than broad accepted ranges or disabling guards. Current full API/build/type/Port, fixture/wrapper/helper contracts PASS. |
+| 005 | Fresh frozen original 58 + new 18 real signed-source/runtime SQL/RLS/crypto tests and independent exact Audit/provenance/purge/quota observer PASS; B EMPTY before/after, mutation restoration, log privacy, owned cleanup and existing resources/input hashes unchanged. Both prior failures remain recorded. Full P0 success requires original Preflight/real B import/destination/evidence/security/E2E separately. |
+
+DEC-020-R2-A diagnostic Acceptance (before edits): fixed projection must retain only allowlisted assertion label, fixed code and numeric source line; arbitrary message/path/fields are suppressed. CASE markers must not exhaust the ORIGIN/CHECK/QUERY budget. Original 58+18 outcomes, actual SQL/RLS, no-retry, privacy and cleanup conditions remain unchanged. Model projection tests cannot close actual dispatch-read acceptance. Run 39941 is FAILED/cleaned, not PASS; diagnostic rerun required.
+
 ## PACS-001 DEC-020 — committed-operation source reads (before implementation)
 
 ### DEC-020-R2 actual SQL/RLS gate (recorded before code; initial NOT RUN)

@@ -66,7 +66,7 @@ test("GRT-002 persists and reconstitutes TransferGrant under exact permanent gra
       const byTable = (table, kind) => privileges.rows
         .filter((row) => row.table_name === table && row.privilege_type === kind)
         .map((row) => row.column_name).sort();
-      assert.equal(privileges.rows.length, 244, "GRT002_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+      assert.equal(privileges.rows.length, 253, "GRT002_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
       assert.deepEqual(byTable("transfer_grants", "INSERT"), [
         "consent_id", "created_at", "exchange_session_id", "expires_at", "grant_id",
         "idempotency_key", "imaging_package_id", "issued_at", "recipient_actor_id",

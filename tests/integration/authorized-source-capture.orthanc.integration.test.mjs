@@ -1246,7 +1246,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     try {
       const role = await runtime.query("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user");
       assert.deepEqual(role.rows[0], { current_user: "mediq_runtime", rolsuper: false, rolbypassrls: false });
-      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 244);
+      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 253);
       assert.deepEqual((await runtime.query("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='study_references'::regclass")).rows[0], { relrowsecurity: true, relforcerowsecurity: true });
       assert.equal((await runtime.query("SELECT study_ref_id FROM study_references WHERE study_ref_id=$1", [scenario.studyRefId])).rowCount, 0, "DEC017_NO_CONTEXT_DENIED");
       await assert.rejects(runtime.query("SELECT reserved_bytes FROM temporary_payload_quota_state"), error => error?.code === "42501");
@@ -1489,6 +1489,20 @@ async function runTemporaryLifecycleCase(scenario, signal) {
   }
 }
 
+function dispatchedReadFailureMarkers(error) {
+  const checks = ['DISPREAD_ACTUAL_SELECT_COUNT','DISPREAD_ACTUAL_SELECT_MATCHES',
+    'DISPREAD_REAL_COMMIT_ACK_FAULT','DISPREAD_VERIFIER_COMMITS','DISPREAD_DENIED_DELIVERY',
+    'DISPREAD_NO_RETRY_QUERY','DISPREAD_NO_RETRY_AUTHORITY','DISPREAD_AUDITED_PURGE',
+    'DISPREAD_ACTUAL_SOURCE_CAPTURE','DISPREAD_EXACT_ORIGINAL_BYTES','DISPREAD_ZERO_BEFORE_EOF'];
+  const check = error?.code === 'ERR_ASSERTION'
+    ? checks.find(value => error.message === value || error.message?.startsWith(`${value}\n`)) ?? 'SUPPRESSED'
+    : 'SUPPRESSED';
+  const code = ['ERR_ASSERTION','TEMPORARY_IMAGING_READ_UNAVAILABLE','DISPREAD_COMMIT_ACK_LOST'].includes(error?.code ?? error?.message)
+    ? error.code ?? error.message : 'SUPPRESSED';
+  const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? '')?.[1] ?? '0';
+  return Object.freeze({ code, check, line });
+}
+
 async function dispatchTestTransition(harness, signedPrincipal, scenario, nextState, omitAudit = false) {
   // Test setup only: a ledger state is not full Preflight or permission to STOW.
   return harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
@@ -1682,10 +1696,9 @@ async function runDispatchedReadCase(scenario, principals, auth, signal) {
       assert.equal(op.source_object_count, scenario.count); assert.equal(op.request_digest, dispatchedReadDigest(scenario));
     });
   } catch (error) {
-    const code = /^[A-Z][A-Z0-9_]{1,90}$/.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'SUPPRESSED';
-    const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? '')?.[1] ?? '0';
+    const { code, check, line } = dispatchedReadFailureMarkers(error);
     const database = (harness?.counters().databaseFailures ?? []).filter(value => /^[A-Z0-9_]{1,100}$/.test(value)).slice(-3);
-    throw new Error(`DISPREAD_CASE_${scenario.name.toUpperCase()} DISPREAD_ERROR_${code} DISPREAD_ORIGIN_${line} ${database.map(value => `DISPREAD_QUERY_${value}`).join(' ')}`);
+    throw new Error(`DISPREAD_CASE_${scenario.name.toUpperCase()} DISPREAD_ERROR_${code} DISPREAD_CHECK_${check} DISPREAD_ORIGIN_${line} ${database.map(value => `DISPREAD_QUERY_${value}`).join(' ')}`);
   } finally {
     try { for (const input of attempted) await store?.purgeByReference(input); }
     finally {

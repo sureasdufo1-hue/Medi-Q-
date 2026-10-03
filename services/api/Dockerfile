@@ -38,6 +38,8 @@ CMD ["node", "scripts/run-database-migrations.mjs"]
 
 FROM build AS integration-test
 
+COPY tests/fixtures/runtime-privilege-contract.mjs tests/fixtures/runtime-privilege-contract.mjs
+COPY tests/database/dispatch-audit-metadata-runtime.integration.test.mjs tests/database/dispatch-audit-metadata-runtime.integration.test.mjs
 COPY tests/database/patient-reference-runtime.integration.test.mjs tests/database/patient-reference-runtime.integration.test.mjs
 COPY tests/database/actor-tenant-context-runtime.integration.test.mjs tests/database/actor-tenant-context-runtime.integration.test.mjs
 COPY tests/database/postgres-authorization-evidence-runtime.integration.test.mjs tests/database/postgres-authorization-evidence-runtime.integration.test.mjs
@@ -65,6 +67,7 @@ CMD ["node", "--test", "tests/integration/orthanc-dicomweb.orthanc.integration.t
 
 FROM build AS authorized-source-capture-test
 
+COPY tests/fixtures/runtime-privilege-contract.mjs tests/fixtures/runtime-privilege-contract.mjs
 COPY tests/fixtures/dispatched-source-read-fixture.mjs tests/fixtures/dispatched-source-read-fixture.mjs
 COPY scripts/seed-int001-dispatched-reads.mjs scripts/seed-int001-dispatched-reads.mjs
 COPY scripts/verify-int001-dispatched-reads.mjs scripts/verify-int001-dispatched-reads.mjs

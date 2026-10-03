@@ -103,7 +103,7 @@ test("INT-001 operation-bound pending source Integrity PostgreSQL/RLS Acceptance
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 244,
+      total: 253,
       evidence_select: 12,
       evidence_insert: 12,
       evidence_update: 0,
