@@ -1,5 +1,57 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 44. User-requested DEC-021/DEC-022 Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Save the current 29-file code/test/document checkpoint on main to the user-designated origin
+Changed: Git checkpoint record and current existing DEC-021/021-A contract/parser plus DEC-022 initial transport work; no additional product implementation
+Not changed: No route/coordinator/current-authority verifier, DB/grant/migration, persistent stack/PACS/deployment or completion policy
+Security impact: Only reviewed source/tests/documents; .env and dist excluded; bounded candidate secret/binary scan has zero findings, not an exhaustive PHI/secret audit
+Tests executed: Current build/API47files/1101, parsed contract21, API typecheck and Port compile check all exit0; historical scoped results remain sections42–43; current evidence in TEST-EVIDENCE.md section80
+Tests not executed: No new real DB/Orthanc/full Preflight/one B STOW/destination raw comparison/terminal evidence/physical purge/security/E2E gate
+Evidence: TEST-EVIDENCE.md section80; verify staged paths/diff and native commit/push/remote equality before reporting Git success
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Local component acceptance does not complete the original P0; whole verifier, terminal writers and original coordinator/E2E remain unfinished
+Status: Product PARTIAL; Git result pending actual commands, not predicted
+```
+
+## 43. DEC-022 destination byte path — opened before implementation
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 plan step2 initial B-only byte stream transport prerequisite
+Changed: Distinct Port/resolver capability and adapter method; strict copied request/context/genuine non-shadowed signal validator; compile-time conforming Port fixture and20 transport tests; policy/Acceptance/DICOM/requirements/security/threat/architecture/dataflow/plan/schedule/index/evidence synchronized
+Not changed: No whole destination verifier, trusted current-authority service, actual B fixture/transfer, source manifest builder, DB/migration/grant/RLS/evidence writer, public API/controller/DI, production dependency, persistent stack/deployment/Git
+Security impact: B generic WADO/Viewer and A verification stay denied; no caller endpoint/credential/permit. Snapshot rejects getters/Proxy/native-signal shadows before effect. Shared bounded multipart/EOF/deadline/cancel/admission reused. Static capability is not Authorization; trusted coordinator must authorize every read
+Tests executed: Focused20; full API47files/1101 and build/type/Port; real contract21; Node232; PowerShell107; syntax/diff checks. Earlier component19/full1100 precede one extra signal-shadow case and are historical
+Tests not executed: Actual Orthanc B positive/tamper/identity/TLS or changed-source integration, whole canonical source/destination comparison/current authority/total bound, DB terminal rights/evidence, actual full Preflight/one dispatch/Audit/purge/security/E2E
+Evidence: TEST-EVIDENCE.md §79
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Initial stream transport alone cannot prove destination bytes or grant access; next complete before/after identity/current authority/canonical verifier and real isolated B/source tests, then independently approved DB terminal writers/grants and complete original coordinator/E2E
+Status: Local transport/regression scoped PASS; whole DEC-022/step2/PACS-001/P0 PARTIAL; no live process
+```
+
+2026-10-04 CAPSTONE-P0. Revalidated bd734d7 +22 preserved dirty DEC-021 files, previous goal turn progress and no live process. Adopted DEC-022/DESTBYTES-001–007 before code. Plan step2 remains the complete raw destination/terminal evidence path, not merely metadata verification. Start distinct B-only internal stream capability and canonical byte verifier; no route, caller-supplied authority/endpoint/credential, DB/grant, source-evidence rewrite or effect/deployment/Git action. Component, actual Orthanc and original P0 verdicts remain distinct. Initial PARTIAL/NOT RUN, evidence§79.
+
+## 42. DEC-021-A actual contract/parser completion — opened before edits
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 plan step1 import/replay/owned-status contract and data-validation prerequisite
+Changed: Orphan YAML path only removed; safe HTTP/code partitions, bounded UUID/UTC schemas and normative traceability; production immutable request/status response binding validator;55 actual implementation tests and21 real contract/schema tests; related baseline/plan/index/evidence synchronized
+Not changed: No route/controller, signed owner service, DB query/grant/migration/RLS, trusted completed-result producer, STOW/physical destination/PACS effect, deployment/runtime dependency or Git action
+Security impact: Reject forged/unknown/coerced/Proxy/getter inputs without execution; mandatory destination verification, no-resend, closed safe responses and exact completed envelope/result binding. Validation never confers authority or proves destination/Audit/purge facts
+Tests executed: Focused55 then full API46files/1081; build/type/Port; real parsed contract21; Node232; PowerShell107; syntax/diff;20 original operation IDs and existing Web/SaaS ID sets preserved; production98 lock tuples unchanged
+Tests not executed: Actual signed owned HTTP/RLS/status lookup/replay concurrency/coordinator/full Preflight/one B STOW/raw destination/terminal evidence/physical purge/security/E2E/runtime maintenance; clean dependency install/security audit
+Evidence: TEST-EVIDENCE.md §78; historical initial failures retained, R3 actual prerequisite§75 separately scoped
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: API routes/producer and original end-state composition remain incomplete; schema and literal proof cannot mint true completion. GET ownership and semantic concurrency must be exercised with real signed API/DB before wiring
+Status: API-001/002/005 prerequisite scoped PASS; API-003 PARTIAL; API-004/006/007 NOT RUN; whole PACS-001/P0 PARTIAL, no live process
+```
+
+2026-10-04 CAPSTONE-P0. Revalidated clean bd734d7, approved plan step1 and DEC-021; previous goal turn is progress, no live validation handle. DEC-021-A recommendation and extended API Acceptance recorded before changes. Preserve original P0 end state and prior R3 prerequisite evidence; no route, schema/grant, persistent DB, PACS effect or Git authorization in this continuation. Initial PARTIAL / NOT RUN; evidence §78. Intended work: fix orphan YAML path only, complete real production request/status validation tests, strict parsed OpenAPI/schema/HTTP partitions, normative synchronization and current regression. Actual ownership/dispatch/full Preflight/terminal evidence/A-to-B/security/E2E remain separate gates.
+
 ## 41. User-requested R3-B / DEC-021 WIP Git checkpoint — 2026-10-04
 
 ```text

@@ -71,6 +71,7 @@ export class TestOrthancEndpointResolver implements DicomEndpointResolver {
             "STOW_INSTANCE",
             "STOW_STUDY",
             "VERIFY_STUDY",
+            "VERIFY_INSTANCE_BYTES",
           ]),
         },
       ],

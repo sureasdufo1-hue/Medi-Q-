@@ -351,10 +351,6 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
-  /exchange-sessions/{sessionId}/actions/view:
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-
   /exchange-sessions/{sessionId}/consents/{consentId}/approve:
     post:
       tags: [Consent]
@@ -817,6 +813,9 @@ paths:
       tags: [Imaging]
       operationId: importStudyToDestinationPacs
       summary: Transfer study to destination PACS
+      x-mediq-requirements: [REQ-PACS-API-001, REQ-PACS-API-002, REQ-PACS-API-003, REQ-PACS-API-006]
+      x-mediq-security: [SEC-PACS-API-001, SEC-PACS-API-003, SEC-PACS-API-004, SEC-PACS-API-005]
+      x-mediq-acceptance: [TC-PACS-001-API-001, TC-PACS-001-API-002, TC-PACS-001-API-003, TC-PACS-001-API-005, TC-PACS-001-API-006, TC-PACS-001-API-007]
       description: |
         MediQ P0의 핵심 Hospital-to-Hospital 의료영상 전송 Action.
 
@@ -901,7 +900,7 @@ paths:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/PacsImportNotCompleted'
-                  - $ref: '#/components/schemas/PacsImportActionError'
+                  - $ref: '#/components/schemas/PacsImportConflictError'
         '502':
           $ref: '#/components/responses/PacsImportUpstreamFailure'
         '503':
@@ -912,6 +911,9 @@ paths:
       tags: [Imaging]
       operationId: getOwnedPacsImportStatus
       summary: Inspect own durable import outcome without sending images again
+      x-mediq-requirements: [REQ-PACS-API-004, REQ-PACS-API-005, REQ-PACS-API-006]
+      x-mediq-security: [SEC-PACS-API-001, SEC-PACS-API-002, SEC-PACS-API-004, SEC-PACS-API-005]
+      x-mediq-acceptance: [TC-PACS-001-API-001, TC-PACS-001-API-002, TC-PACS-001-API-004, TC-PACS-001-API-005, TC-PACS-001-API-006]
       description: |
         SAME retained Idempotency-Key identifies the operation even after losing the first POST response.
         Require configured verified OIDC identity, active Hospital USER, exact owning Tenant/Actor,
@@ -1152,27 +1154,27 @@ components:
     PacsImportBadRequest:
       description: Invalid bounded data-only input; false destination verification is forbidden
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: PACS_IMPORT_REQUEST_INVALID } } } ] } } }
     PacsImportUnauthenticated:
       description: Invalid or absent configured authentication
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: AUTHENTICATION_REQUIRED } } } ] } } }
     PacsImportForbidden:
       description: Identity, membership, object or imaging authorization denied
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: ACCESS_DENIED } } } ] } } }
     PacsImportNotFound:
       description: Missing and foreign owned-operation keys are indistinguishable
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: NOT_FOUND } } } ] } } }
     PacsImportUpstreamFailure:
       description: Definite upstream failure only; an uncertain started transfer uses RESULT_UNKNOWN
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: DICOMWEB_FAILURE } } } ] } } }
     PacsImportServiceUnavailable:
       description: Identity/persistence/proof dependency unavailable; never invent completion
       headers: { Cache-Control: { $ref: '#/components/headers/PacsImportNoStore' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/PacsImportActionError' } } }
+      content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/PacsImportActionError' }, { type: object, properties: { code: { const: SERVICE_UNAVAILABLE } } } ] } } }
 
     BadRequest:
       description: Invalid request
@@ -1709,20 +1711,15 @@ components:
         - temporaryPayloadPurged
       properties:
         operationId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         sessionId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         studyRefId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         sourceHospitalId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         destinationHospitalId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         transferStatus:
           type: string
           const: COMPLETED
@@ -1733,11 +1730,9 @@ components:
           type: string
           const: VERIFIED
         integrityId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         provenanceId:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/PacsImportUuid'
         completionAuditRecorded:
           type: boolean
           const: true
@@ -1750,14 +1745,14 @@ components:
       additionalProperties: false
       required: [operationId, sessionId, operationState, completionConfirmed, resendAllowed, updatedAt]
       properties:
-        operationId: { type: string, format: uuid }
-        sessionId: { type: string, format: uuid }
+        operationId: { $ref: '#/components/schemas/PacsImportUuid' }
+        sessionId: { $ref: '#/components/schemas/PacsImportUuid' }
         operationState:
           type: string
           enum: [CREATED, PREFLIGHT_PASSED, STOW_STARTED, VERIFYING, DENIED, FAILED, PARTIAL, RESULT_UNKNOWN]
         completionConfirmed: { type: boolean, const: false }
         resendAllowed: { type: boolean, const: false }
-        updatedAt: { type: string, format: date-time }
+        updatedAt: { $ref: '#/components/schemas/PacsImportStatusTimestamp' }
 
     PacsImportCompletedStatus:
       type: object
@@ -1765,12 +1760,12 @@ components:
       required: [operationId, sessionId, operationState, completionConfirmed, resendAllowed, updatedAt, result]
       description: Result operationId/sessionId must equal the envelope; application checks this cross-field binding.
       properties:
-        operationId: { type: string, format: uuid }
-        sessionId: { type: string, format: uuid }
+        operationId: { $ref: '#/components/schemas/PacsImportUuid' }
+        sessionId: { $ref: '#/components/schemas/PacsImportUuid' }
         operationState: { type: string, const: COMPLETED }
         completionConfirmed: { type: boolean, const: true }
         resendAllowed: { type: boolean, const: false }
-        updatedAt: { type: string, format: date-time }
+        updatedAt: { $ref: '#/components/schemas/PacsImportStatusTimestamp' }
         result: { $ref: '#/components/schemas/PacsImportResult' }
 
     PacsImportOperationStatus:
@@ -1787,7 +1782,7 @@ components:
           type: string
           enum: [PACS_IMPORT_IN_PROGRESS, PACS_IMPORT_DENIED, PACS_IMPORT_FAILED, PACS_IMPORT_PARTIAL, PACS_IMPORT_RESULT_UNKNOWN]
         message: { type: string, const: PACS import is not confirmed complete. }
-        correlationId: { type: string, format: uuid }
+        correlationId: { $ref: '#/components/schemas/PacsImportUuid' }
         operation: { $ref: '#/components/schemas/PacsImportNonCompletedStatus' }
       oneOf:
         - properties:
@@ -1806,6 +1801,27 @@ components:
             code: { const: PACS_IMPORT_RESULT_UNKNOWN }
             operation: { type: object, properties: { operationState: { const: RESULT_UNKNOWN } } }
 
+    PacsImportUuid:
+      type: string
+      format: uuid
+      minLength: 36
+      maxLength: 36
+      description: Hyphenated UUID, not URN; production normalizes letter case.
+
+    PacsImportStatusTimestamp:
+      type: string
+      format: date-time
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
+      description: Canonical server UTC timestamp with milliseconds; calendar validity also checked.
+
+    PacsImportConflictError:
+      allOf:
+        - $ref: '#/components/schemas/PacsImportActionError'
+        - type: object
+          properties:
+            code:
+              enum: [IDEMPOTENCY_KEY_CONFLICT, PACS_IMPORT_OPERATION_CONFLICT, INVALID_SESSION_STATE, PATIENT_MAPPING_INVALID, DESTINATION_MISMATCH, CONSENT_MISMATCH]
+
     PacsImportActionError:
       type: object
       additionalProperties: false
@@ -1815,7 +1831,7 @@ components:
           type: string
           enum: [PACS_IMPORT_REQUEST_INVALID, AUTHENTICATION_REQUIRED, ACCESS_DENIED, NOT_FOUND, IDEMPOTENCY_KEY_CONFLICT, PACS_IMPORT_OPERATION_CONFLICT, INVALID_SESSION_STATE, PATIENT_MAPPING_INVALID, DESTINATION_MISMATCH, CONSENT_MISMATCH, DICOMWEB_FAILURE, SERVICE_UNAVAILABLE]
         message: { type: string, const: PACS import request could not be completed. }
-        correlationId: { type: string, format: uuid }
+        correlationId: { $ref: '#/components/schemas/PacsImportUuid' }
 
     IntegrityStatus:
       type: string

@@ -8,7 +8,8 @@ export type DicomGatewayOperation =
   | "WADO_FRAME"
   | "STOW_INSTANCE"
   | "STOW_STUDY"
-  | "VERIFY_STUDY";
+  | "VERIFY_STUDY"
+  | "VERIFY_INSTANCE_BYTES";
 
 /**
  * The application must resolve hospitalId from trusted Session/Authorization
@@ -195,6 +196,10 @@ export interface DicomGateway {
   retrieveFrameStream(
     request: RetrieveFrameStreamRequest,
   ): Promise<DicomFrameStream>;
+  /** Internal B-only raw verification; trusted coordinator freshly authorizes each read. Never a Viewer/content API. */
+  retrieveDestinationVerificationInstanceStream(
+    request: RetrieveInstanceStreamRequest,
+  ): Promise<DicomInstanceStream>;
   storeInstanceStream(request: StoreInstanceStreamRequest): Promise<DicomStowResult>;
   /** One bounded multipart HTTP attempt for the entire same-Study inventory. */
   storeStudyStream(request: StoreStudyStreamRequest): Promise<DicomStowResult>;

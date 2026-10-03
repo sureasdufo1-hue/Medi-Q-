@@ -1,8 +1,28 @@
 # MediQ Acceptance Test Specification
 
+### DEC-022 exact destination bytes — recorded before code
+
+CAPSTONE-P0, MEDIQ-PACS-001. Initial NOT IMPLEMENTED/NOT RUN; plan step2 prerequisite, not full transfer acceptance.
+
+Current initial component (2026-10-04): DESTBYTES-001/002/003 **transport-local scoped PASS** only;005 local regressions scoped PASS (focused20/full API1101/contract21/Node232/PS107/build/type/Port).001's actual signed authority is NOT IMPLEMENTED/NOT RUN;004 aggregate comparison/whole deadline/current owner,006 actual B/new source and007 DB/terminal/full coordinator/E2E remain NOT IMPLEMENTED/NOT RUN. Raw sample hash equality proves unit byte delivery only, not actual B or original source integrity. Overall step2/PACS-001/P0 PARTIAL; evidence§79, no completion or public route.
+
+| ID (`TC-PACS-001-DESTBYTES-*`) | Required evidence |
+|---|---|
+| 001 | Distinct B-only VERIFY_INSTANCE_BYTES, A denied; B generic WADO metadata/instance/frame remain denied and source behavior unchanged. No user URL/credential/selectors beyond exact closed identity/context. Transport profile is not authority; future coordinator rechecks signed Session/destination/Consent/Authorization/exact Grant before each read. |
+| 002 | Data-only exact request/context snapshots; invalid/duplicate/oversized inventory, forged fields, getter/Proxy or mutated selectors fail before fetch without getter/trap execution. No client permit or public route. |
+| 003 | Positive byte stream uses HTTPS/server-resolved endpoint, same multipart/Explicit VR LE/bounds/deadline/cancellation/EOF parser; corrupted MIME/length/syntax/multipart/error/abort cannot yield proof and releases admission. No generalized B content response. |
+| 004 | Trusted original source manifest/inventory, canonical ordered sequential B hashing, exact before/after identity and every length/hash/count/total/aggregate match; one5min total bound and all instance/Study ceilings. Changed/truncated/extra/missing bytes, UID hierarchy, source contradiction or race cannot complete. No re-fetch/retry/STOW/state mutation or payload retention. Unit/model tests not actual PACS proof. |
+| 005 | Current focused actual implementations + complete API/build/type/Port + Node/PS/parsed-contract regressions, no schema/grant/runtime dependency/route mutation, evidence and normative boundary sync. |
+| 006 | Actual owned isolated Test Orthanc B contains only explicitly seeded synthetic fixture; real HTTPS WADO source/destination byte hash equality and deliberately tampered/missing/extra identity rejection, strict TLS/endpoint/no-retry/cancellation/log privacy, independent exact cleanup/input/dev inventory. Changed shared source parser needs fresh actual source integration before full acceptance. No unowned stack mutation; sample import alone is not full Preflight/E2E. |
+| 007 | Append-only DESTINATION_VERIFY with narrow immutable terminal Provenance binding/rights, actual forced RLS/exact-delta/denial/concurrency/Audit rollback, complete signed Preflight/coordinator/one B Study dispatch/destination raw proof/terminal Audit/session/physical purge/security/E2E. Source pending constraints unchanged. Required before original P0 PASS, NOT RUN in component slice. |
+
 ### DEC-021 PACS Import submission/replay/status contract — before implementation
 
 CAPSTONE-P0/MEDIQ-PACS-001, initial NOT IMPLEMENTED/NOT RUN; no protected route registration in this slice. R3 actual prerequisite evidence remains §75, not full transfer proof.
+
+Current DEC-021/021-A result (2026-10-04, supersedes initial labels): API-001/002/005 **scoped PASS** (actual data-only production validators55, strict real contract21, API46files/1081/build/type/Port, Node232/PS107, normative/UI identity preservation). API-003 **PARTIAL**: actual digest unit agrees across canonical fields, but no new signed HTTP/durable replay/concurrency gate. API-004/006/007 **NOT IMPLEMENTED/NOT RUN** in this slice. Standard JSON Schema structurally permits foreign result/envelope IDs; the actual production validator separately rejects them. Neither validates physical destination facts. Whole PACS-001/P0 PARTIAL; report§42/evidence§78. Previous actual R3 proof is not new-code E2E evidence.
+
+DEC-021-A additional pre-code conditions: remove only the orphan Viewer path fragment (no method); preserve all original real operation IDs including authorizeViewerAccess/approveConsent/withdrawConsent. Production data-only status validator must reject mismatched completion envelope/result IDs, false or missing evidence literals, forged fields, noncanonical UTC timestamps and getter/Proxy input without executing it; freeze copied output. JSON-schema structural proof does not prove cross-field binding or destination facts. Validate each HTTP error-code partition with positive/negative real schema fixtures, without coercion/default/property removal or disabling strict schema checks. Current overall PARTIAL; evidence §78/report §42 opened before edits.
 
 | ID (`TC-PACS-001-API-*`) | Required evidence |
 |---|---|

@@ -1,11 +1,15 @@
 # MediQ Technology Stack Decision
 
+## DEC-021/021-A contract test tools — 2026-10-04
+
+CAPSTONE-P0 testing: direct dev pins yaml2.9.1, ajv8.20.0, ajv-formats3.0.1 and npm lock. YAML uniqueKeys; AJV2020 strict=true/full formats, coerceTypes/useDefaults/removeAdditional=false. Only reference pointer routing adapts reachable actual OpenAPI schemas, no substitute schema or nonstandard $data. Production checks cross-field binding separately. AJV/formats are existing shared Fastify runtime transitives, not dev-only lock entries; only yaml is newly dev-only. Existing98 non-dev path/version/resolved/integrity tuples remain unchanged, verified by frozen SHA256. No new application runtime imports of these tools. This is not a dependency security audit or clean-environment install proof.
+
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** Technology Stack Decision / Architecture Decision Record  
-**Version:** v1.4 PACS-001 DEC-014/015 bounded multipart and pinned local EOF correction
+**Version:** v1.5 PACS-001 DEC-021 parsed API contract validation
 **Decision Date:** 2026-09-20  
-**Primary Scope:** CAPSTONE-P0  
+**Primary Scope:** CAPSTONE-P0
 **Decision Status:** ACCEPTED FOR P0 SCAFFOLDING  
 **Implementation Status:** npm workspace/Compose, DB gates and existing PAT/Auth scopes are documented in their records; `MEDIQ-DCM-002` adds an internal test-profile Orthanc adapter with A QIDO/WADO/frame and B read-only QIDO integration PASS, streaming/hash and bounded mock STOW tests. Adapter is not registered in a product route. Live STOW, Mandatory Preflight, product operation Authorization, production HTTPS/TLS, integrity/provenance/audit and A→B transfer remain NOT RUN.
 

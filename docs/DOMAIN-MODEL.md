@@ -3,9 +3,17 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DOMAIN-MODEL.md`
-**Version:** v1.4 Destination PatientMapping Validation Amendment
+**Version:** v1.5 PACS Import Owned Status Projection Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
+
+## DEC-021/021-A operation action/projection boundary — 2026-10-04
+
+CAPSTONE-P0, existing PacsTransferOperation only, no new aggregate or transition. A valid normalized request is not a verified principal, Consent, Authorization or Grant. Server binds Idempotency-Key to verified Tenant+Actor and canonical Session/Study/Consent/Grant/PACS_IMPORT digest; exact replay returns the existing operation without recapture/STOW, changed meaning conflicts, and Session/Study uniqueness remains enforced.
+
+Owned status is a minimized immutable read projection under distinct metadata authorization: current active Hospital USER + exact owning Tenant/Actor/current destination Hospital/Session/key. Withdrawal blocks image actions, but does not automatically hide authorized historical operation metadata. Projection never renews image permission, performs reconciliation, advances state or grants retry. RESULT_UNKNOWN stays terminal and resendAllowed is false in every status.
+
+CREATED/PREFLIGHT_PASSED/STOW_STARTED/VERIFYING/DENIED/FAILED/PARTIAL/RESULT_UNKNOWN project completionConfirmed=false, no result. COMPLETED may project true only with real terminal facts and a closed verified result bound to the exact envelope operation/session. The data-only production validator checks shape, flags, UTC timestamp and this binding; it cannot mint physical evidence. Missing evidence fails closed503. Preserve existing operation graph/CAS/Audit rules and SOURCE_CAPTURE/PENDING immutability. Requirements REQ-PACS-API-001~006, Acceptance API-001~007; no registered route or DB migration in this slice.
 **Status:** Approved Baseline
 
 ---

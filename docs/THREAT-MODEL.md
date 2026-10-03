@@ -1,5 +1,17 @@
 # MediQ Threat Model
 
+## DEC-022 internal destination-byte retrieval review — 2026-10-04
+
+Prevent misusing B verification as generic Viewer/source access: only separate VERIFY_INSTANCE_BYTES is allowlisted at Test B; generic B WADO and A verification remain denied. Strict data/context snapshot prevents caller mutation, Proxy/getter execution, URL/credential/permit injection and signal brand/property shadows before fetch. Shared multipart/Explicit VR LE/EOF/size/deadline/cancel controls preserve streaming bounds; HTTP/MIME/part/syntax failures do not retry or retain admission. Per-instance response selector/metadata is not embedded DICOM identity or byte equality proof.
+
+Residual: static test resolver/Port is not current signed authorization; trusted coordinator must revalidate exact owner/Session/destination/Consent/Grant before every byte read, no raw content to client. Canonical aggregate/per-instance source comparison and exact identity-before/after/race checks, total bounds, actual B TLS/tamper/source regression and destination/terminal evidence are still missing. Do not claim success from unit sample bytes or permit existing source PENDING row mutation. Original full Preflight/one dispatch/terminal Audit/purge/security/E2E remain mandatory; no public route/DB/grant/deployment change here.
+
+## DEC-021/021-A replay/status/completion threat review (2026-10-04)
+
+CAPSTONE-P0. Prevent forged actor/Tenant/Consent/PACS selectors through strict data parsing plus future signed server authority (parser alone is insufficient). Prevent double import on response loss/replay with verified-owner semantic digest/UQ and durable dispatch; status GET cannot call WADO/STOW/reconcile or revive Grant. Conceal absent/foreign operations identically404; current Hospital membership, destination and exact owner/key/session must bind, including after historical Consent withdrawal. Keep that minimized metadata permission distinct from image rights and do not return UIDs, patient IDs, payload, raw failures or endpoint credentials. All responses no-store.
+
+Prevent false success by requiring true destination/integrity/provenance/Audit/physical purge evidence and bound envelope/result IDs; JSON literals and ledger state alone remain spoofable and cannot certify these facts. Strict whole-YAML unique-key tests protect against silently lost Viewer/Consent operations. Error-code/state/HTTP partitions prevent ambiguous UI success or unsafe retry. Proxy/getter/unknown-property denial prevents parser side effects; frozen copies prevent post-validation mutation. Residual: trusted producer must still check actual facts, and real signed HTTP/RLS ownership/concurrency/full Preflight/terminal/security/E2E are NOT RUN here. No public route or new runtime privilege is enabled by this contract slice. DEC-021-A / API-001~007.
+
 ## DEC-020-R3 Audit read prerequisite review (implementation present, acceptance pending)
 
 R3-B review: do not address independent observer42501 by weakening quota evidence or granting inherited/application owner access. Use only already-approved observer membership with SET LOCAL ROLE, verified READ ONLY/repeatable-read boundaries, exact zero projections, COMMIT reset and failure rollback before release. Runtime/migration/RLS/product predicates stay unchanged; synthetic actual wrapper remains required, and historical53311 failure stays recorded. Existing owner membership is a test/migration authority, never a client/app authority.

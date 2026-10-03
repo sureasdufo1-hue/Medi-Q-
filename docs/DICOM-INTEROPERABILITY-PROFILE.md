@@ -1,5 +1,11 @@
 # MediQ DICOM Interoperability Profile
 
+## DEC-022 distinct destination byte-read profile — 2026-10-04
+
+CAPSTONE-P0, internal Test B only. `VERIFY_INSTANCE_BYTES` resolves the fixed configured HTTPS B DICOMweb origin and retrieves one exact Study/Series/SOP with `multipart/related; type=application/dicom; transfer-syntax=1.2.840.10008.1.2.1`. `retrieveDestinationVerificationInstanceStream` uses the existing bounded single-part/closing-boundary/64MiB/deadline/admission/cancellation parser and strict immutable selector/context snapshot. B generic WADO metadata/instance/frame and A verification/STOW remain denied. No endpoint/credential/user permit crosses the Port; the stream is internal verification input, not Viewer/client content.
+
+This static capability is not Authorization. Future trusted coordinator must freshly bind signed owner/Session/current destination/Consent/Authorization/exact PACS_IMPORT scope before each read. Per-instance bytes must feed canonical sequential SHA256-MANIFEST-V1 with complete exact identity checks before/after, source lengths/hashes/count/total/digest equality, whole5-minute bound and original Study ceilings. Current implementation is the single-instance transport prerequisite only, not full aggregate comparison, real Orthanc B proof, terminal evidence or E2E. Any transcoding/byte difference must fail rather than rewrite or normalize the source. Source PENDING constraints remain immutable; destination evidence is separately append-only. DEC-022 / TC-PACS-001-DESTBYTES-001~007.
+
 ## DEC-020 source-derived transport representation
 
 CAPSTONE-P0 capture now validates CT Image Storage SOP Class from source metadata, then binds Explicit VR Little Endian to the actual authorized WADO instance response. Missing/wrong actual syntax or conflicting optional metadata syntax rejects before a usable handoff; no metadata-syntax guessing. Both original expected and temporary object inventories carry frozen SOP Class/Transfer Syntax alongside exact SOP/Series/length/SHA256. No identifying patient value enters this inventory or ordinary capture result.

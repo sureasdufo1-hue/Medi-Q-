@@ -3,9 +3,13 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `ERD.md`
-**Version:** v1.5 Operation-scoped Temporary Payload Metadata Amendment
+**Version:** v1.6 PACS Import Status Projection Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
+
+## DEC-021/021-A existing relations used by status — 2026-10-04
+
+No entity, FK, cardinality or database privilege changes. Owned operation status derives from existing PacsTransferOperation→ExchangeSession→destination Hospital and verified owner Tenant/Actor/key binding. Existing Session/Study uniqueness and Tenant/Actor/key uniqueness are preserved. Only completed projection may reference separately proven terminal Integrity and bound Provenance; both result operationId/sessionId equal the containing operation/session. JSON references alone are not evidence of those relationships or destination/purge success. Minimal status after Consent/Grant revocation is a distinct authorized metadata read, not a new relation restoring image rights. OpenAPI1.3.0 / REQ-PACS-API-001~006 / API-001~007; no route/actual owned query accepted in this slice.
 **Target RDBMS:** PostgreSQL
 **Status:** Approved Baseline
 

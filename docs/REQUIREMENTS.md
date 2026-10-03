@@ -1,11 +1,30 @@
 # MediQ Requirements Specification
 
+## DEC-022 destination byte transport prerequisite — 2026-10-04
+
+`REQ-PACS-BYTES-001` (CAPSTONE-P0): use only separately authorized internal B-only VERIFY_INSTANCE_BYTES for exact destination Study/Series/SOP bytes, never generic B Viewer/WADO access. Strict copied closed selectors, server-configured HTTPS endpoint, no caller permit/credential/URL and existing single-instance stream bounds/cancel/deadline required. Static transport capability does not establish access rights. `REQ-PACS-BYTES-002` (CAPSTONE-P0): before completed response, future trusted coordinator must revalidate authority before each read, compare exact before/after identity plus canonical raw byte per-instance/aggregate evidence under whole5min and original count/size ceilings, then persist independent destination/terminal proofs/Audit and physical purge. Sample/model transport proof cannot close this requirement. Acceptance DESTBYTES-001~007, report§43/evidence§79; current single-instance component only, full comparison/actual PACS/terminal/E2E remains NOT IMPLEMENTED/NOT RUN.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `REQUIREMENTS.md`
-**Version:** v1.10 PACS Import Identity and Retry Preconditions
+**Version:** v1.11 PACS Import Replay and Owned Status Contract
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
+
+## PACS-001 DEC-021/021-A — import action and status requirements (2026-10-04)
+
+All below are CAPSTONE-P0, normative contracts, not registered-route or complete transfer acceptance. OpenAPI1.3.0, PACS-001 report§42/evidence§78 and `TC-PACS-001-API-001~007` are the traceability sources.
+
+| Requirement | Required behavior | Acceptance |
+|---|---|---|
+| REQ-PACS-API-001 | Synchronous POST actions/pacs-import requires retained UUID Idempotency-Key, untrusted X-Tenant-ID membership selector and verified active Hospital USER. Body only grantId/studyRefId/optional literal-true verifyDestination; omission means true. Server resolves Consent and all authority, never client actor/endpoint/credential claims. | API-001/002/004/006 |
+| REQ-PACS-API-002 | Key belongs to verified Tenant+Actor; canonical Session/Study/Consent/Grant/PACS_IMPORT meaning must match. Same meaning returns existing operation, no recapture/STOW. Changed meaning409; new key cannot bypass Session/Study uniqueness. | API-003/006 |
+| REQ-PACS-API-003 | POST200 requires real destination identity/bytes and VERIFIED Integrity, completed bound Provenance, committed completion Audit and physical terminal purge. Closed result includes operationId/sessionId/studyRefId/source/destinationHospitalId/integrityId/provenanceId and only COMPLETED/true/VERIFIED evidence literals. Fields alone cannot prove facts. | API-002/006/007 |
+| REQ-PACS-API-004 | GET actions/pacs-import/status uses the SAME key, even when POST response loss concealed operationId. Current signed active Hospital USER, exact Tenant/Actor/destination Hospital/Session/key ownership required; missing/foreign404 identical. Minimum metadata history is separate permission, may remain after Consent/Grant withdrawal and never authorizes images. No PACS call, reconciliation, business-state/quota mutation or resend. | API-001/002/004 |
+| REQ-PACS-API-005 | Status states mirror durable operation; incomplete always completionConfirmed=false/resendAllowed=false. COMPLETED requires matching envelope/result operationId/sessionId and full verified result. Status timestamp canonical UTC milliseconds. RESULT_UNKNOWN is not FAILED/COMPLETED and never automatically retried. Missing terminal proof yields safe503. | API-001/002/006 |
+| REQ-PACS-API-006 | All action/status outcomes no-store and safe bounded projections. POST409 separates IN_PROGRESS/DENIED/FAILED/PARTIAL/RESULT_UNKNOWN by exact state/code; other errors use their documented HTTP partition. No raw reason/UID/PatientID/payload/digest/PACS URL/credential. Idempotency-Replayed only literal string true for actual exact-semantic replay; never a conflict header. No async202. | API-002/004/005 |
+
+Current implementation includes data-only request/status response validators, not authentication, owned DB lookup, effect coordinator or a product HTTP route. Passing parser/schema tests must not close API-004/006/007 or original REQ-PACS-001~005.
 **Status:** Approved Baseline
 
 ---

@@ -3,11 +3,11 @@
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** P0 Web UI/UX Specification  
-**Version:** v1.0  
+**Version:** v1.1 PACS Import Replay and Owned Status Amendment
 **Baseline Date:** 2026-09-20  
 **Scope:** CAPSTONE-P0 / Synthetic·Test DICOM  
 **Status:** APPROVED UI/UX BASELINE — DOCUMENTED, NOT IMPLEMENTED / NOT TESTED  
-**Target:** React 19.3 + Vite 8 SPA, OHIF Viewer 3.11, MediQ API v1.1.0
+**Target:** React 19.3 + Vite 8 SPA, OHIF Viewer 3.11, MediQ OpenAPI v1.3.0 (contract, not deployed routes)
 
 ---
 
@@ -278,7 +278,7 @@ MediQ Viewer Gateway → Source PACS WADO-RS on-demand
 | WEB-08 | Cloud DICOM Viewer | Hospital User, Patient | P0-CRITICAL | ViewerSession API 있음; OHIF metadata 계약 보완 필요 |
 | WEB-09 | DICOM Download 확인 | Hospital User | P0-CRITICAL | API 있음 |
 | WEB-10 | Hospital B PACS Import 요청 | Hospital User | P0-CRITICAL | Mapping 검증 및 Action API 있음 |
-| WEB-11 | 전송 진행 | Hospital User | P0-CRITICAL | 동기 Action만 있음; durable progress API 없음 |
+| WEB-11 | 전송 진행 | Hospital User | P0-CRITICAL | 동기 Action + same-key owned status 계약 있음; 실제 HTTP/DB/UI 미구현 |
 | WEB-12 | 전송 완료 | Hospital User | P0-CRITICAL | Result/Provenance/Audit API 있음 |
 | WEB-13 | 전송 실패·거부 | Hospital User | P0-CRITICAL | ErrorResponse 있음 |
 | WEB-14 | Audit·Provenance 이력 | 승인된 Actor | P0-HIGH | Session 단위 API 있음 |
@@ -669,6 +669,8 @@ Grant는 독립 화면이 아니라 `WEB-03` 또는 Exchange 상세의 보호된
 2. 필요 시 `GET /exchange-sessions/{sessionId}`로 최신 상태 확인
 3. `POST /exchange-sessions/{sessionId}/actions/pacs-import`
 
+DEC-021/021-A: one logical request retains one UUID Idempotency-Key in verified Actor/Tenant context. X-Tenant-ID is an untrusted selector. Body only grantId/studyRefId/optional true verification. Same key identifies read-only GET `.../actions/pacs-import/status`; never key/Grant/token in URL/history. A new key is not permission to resend. No client key persistence/refresh recovery or UI implementation is claimed here.
+
 **규칙**
 
 - Preflight 하나라도 PASS가 아니면 전송 버튼을 활성화하지 않는다.
@@ -698,15 +700,16 @@ Grant는 독립 화면이 아니라 `WEB-03` 또는 Exchange 상세의 보호된
 **Network interruption**
 
 - 요청 결과가 불명확하면 자동 retry하지 않는다.
-- 같은 Grant로 즉시 재전송하지 않고 Session Audit/Provenance를 확인하도록 안내한다.
+- 같은 Grant로 즉시 재전송하지 않고 보존한 동일 Idempotency-Key로 소유 작업 status를 조회한다. GET은 영상 전송·reconcile·업무 상태 변경이 아니다.
 - Correlation ID를 보존해 운영자가 결과를 추적할 수 있게 한다.
 
-**계약 공백:** 현재 PACS Import는 최종 `200`을 반환하는 동기 계약이며 durable operation ID/진행 조회 endpoint가 없다. 장시간 전송·새로고침 복구를 지원하려면 `202 + operationId`, idempotency key, `GET operation status`를 OpenAPI·Requirements·Acceptance와 함께 승인해야 한다.
+**DEC-021/021-A 계약:** OpenAPI1.3.0에 동기 POST와 동일 key의 소유 작업 GET status가 정의되었다. POST200만 검증된 완료이며, 미완료는 state/code가 일치하는409다. status GET200은 조회 성공일 뿐이며 전송 완료가 아니다. completionConfirmed=true/COMPLETED와 정확히 binding된 전체 검증 결과가 있을 때만 완료를 표시한다. 중간 상태와 DENIED/FAILED/PARTIAL/RESULT_UNKNOWN을 분리하며 모든 resendAllowed=false다. 자동 재전송/202 queue 없음.404는 없음·권한 없음의 존재정보를 구분하지 않고503은 의존성/증거 확인 불가로 완료를 추정하지 않는다. Idempotency-Replayed는 실제 exact-semantic replay에서만 true다. 계약/데이터 검증은 작성했지만 실제 소유 HTTP·DB 조회/coordinator/React와 key 복구는 NOT IMPLEMENTED/NOT RUN이다.
 
 **Acceptance**
 
 - AC-UI-PROG-001: 서버 근거 없는 진행률을 표시하지 않는다.
 - AC-UI-PROG-002: 결과 불명 상태에서 자동 중복 전송하지 않는다.
+- AC-UI-PROG-003: status HTTP200/ledger state만으로 완료를 표시하지 않고 검증된 bound result를 확인한다. GET에서 재전송/reconcile하지 않는다.
 
 ---
 

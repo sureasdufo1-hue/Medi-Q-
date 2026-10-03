@@ -3,9 +3,15 @@
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DATA-MODEL.md`
-**Version:** v1.5 Durable PACS Transfer Operation Amendment
+**Version:** v1.6 PACS Import Status Read Projection Amendment
 **Current Phase:** Capstone Technical MVP
 **Primary Scope:** CAPSTONE-P0
+
+## DEC-021/021-A HTTP projection — no schema/grant amendment (2026-10-04)
+
+CAPSTONE-P0. Existing operation rows/key/semantic digest/UQ remain unchanged. GET status returns only operationId, sessionId, operationState, completionConfirmed, resendAllowed=false, updatedAt (UTC ISO milliseconds); only proven COMPLETED adds the full closed PacsImportResult. Tenant/Actor/current destination Hospital/Session/key ownership is checked internally before projection. Idempotency-Key is a selector, not a bearer credential. Do not return actor/Tenant/Patient ID, Consent/Grant IDs, request digest, raw reason, UID, payload or PACS configuration.
+
+Completed result includes bound operation/session/study, source/destination Hospital references, terminal Integrity/Provenance references and fixed verified completion/Audit/purge literals (OpenAPI1.3.0). These are projections of separately validated facts, not new columns or evidence-by-JSON. Ledger COMPLETED alone is insufficient. Source Integrity PENDING rows cannot be promoted to destination evidence. No table, migration, RLS/role/grant, retention or public Audit projection change; future actual owned lookup/terminal writer remains its own security/DB gate. REQ-PACS-API-001~006 / TC-PACS-001-API-001~007.
 **Target RDBMS:** PostgreSQL
 **Status:** Approved Baseline
 

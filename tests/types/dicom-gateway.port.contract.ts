@@ -57,6 +57,10 @@ class SyntheticConformingDicomGateway implements DicomGateway {
     };
   }
 
+  async retrieveDestinationVerificationInstanceStream(request: RetrieveInstanceStreamRequest): Promise<DicomInstanceStream> {
+    return { body: emptyStream(), mediaType: "application/dicom", sopInstanceUid: request.sopInstanceUid };
+  }
+
   async storeInstanceStream(
     request: StoreInstanceStreamRequest,
   ): Promise<DicomStowResult> {

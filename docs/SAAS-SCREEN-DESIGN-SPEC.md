@@ -4,17 +4,19 @@
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document ID:** MEDIQ-SAAS-SCREEN-001  
 **Document Title:** MediQ SaaS Web Application Screen Design Specification  
-**Version:** 0.3.0 — Hospital Clinical Workflow P1 Extension  
+**Version:** 0.3.1 — PACS Import Owned Status Contract Amendment
 **Classification:** MIXED — CAPSTONE-P0 / CAPSTONE-P1 / POST-MVP  
 **Status:** Proposed Reference-Driven SaaS Screen Design Baseline  
 **Owner:** MediQ Product, Web, Architecture, Security & QA  
 **Implementation:** NOT IMPLEMENTED  
 **Test Status:** NOT RUN  
-**Last Updated:** 2026-09-27
+**Last Updated:** 2026-10-04
 
 ---
 
 # 1. 목적과 문서 관계
+
+DEC-021/021-A (CAPSTONE-P0) preserves all existing Screen IDs/priorities. SAAS-SCR-060~070 use OpenAPI1.3.0 synchronous import and same-key owned status contract, not implemented/tested React/HTTP/DB. REQ-PACS-API-001~006 / TC-PACS-001-API-001~007: same logical request/key/Actor/Tenant context, no false verification/new-key resend. GET has no PACS/state effect; status HTTP200 is not completion. Only completionConfirmed=true with bound operation/session/full verified result displays completed. Intermediate states, DENIED/FAILED/PARTIAL/RESULT_UNKNOWN, concealed404 and proof503 remain distinct, all resendAllowed=false. No fake progress, automatic retry,202 queue or Grant revival; no key/token in URL/history. Loss of retained key/context is not permission to submit again; safe refresh recovery requires separate client implementation/acceptance.
 
 본 문서는 Hospital Portal, Synthetic Patient Web, QR Hospital Web, Hospital Clinical Workflow P1 Extension 및 후속 SaaS Administration 화면의 구현 계약을 정의한다. 실제 React 코드, Backend API, DB Migration, PACS 연동 또는 테스트 완료를 의미하지 않는다.
 
@@ -609,13 +611,13 @@ Consent, Authorization, Grant, Viewer, QR, Transfer, Verification, Integrity, Pr
 | 036~038 | Grant issue/revoke/status | authorized actor, exact scope | ACTIVE/REVOKED | denied/conflict | EXISTING P0 / read GAP |
 | 040~047 | view action, Viewer Session, authorized WADO gateway | `study:view` | ACTIVE/frames | expired/revoked/502 | EXISTING P0 + metadata GAP |
 | 050~053 | download action | `study:download` | stream complete | grant/upstream error | EXISTING P0 |
-| 060~070 | pacs-import, result, verification, integrity | `study:pacs-transfer` | verified completion | preflight/STOW/verify fail | EXISTING P0; durable operation GAP |
+| 060~070 | pacs-import + same-key owned status (OpenAPI1.3.0) | `study:pacs-transfer` for images; distinct exact-owner metadata permission for status | verified bound completion only | in-progress/denied/failed/partial/unknown; concealed404/proof503 | CONTRACT DOCUMENTED; owned lookup/coordinator/UI NOT IMPLEMENTED |
 | QR-004 | `POST /api/v1/qr-handoff/claims` | workforce + server context | CLAIMED | unavailable/conflict | P1 CONTRACT |
 | QR-005~010 | `GET /api/v1/qr-handoff/requests/{id}` | claimant | pending/issued/terminal | 403/404/410 | P1 CONTRACT |
 | 080~084 | session Audit/Provenance/Integrity | authorized exchange actor | evidence | denied/not found | EXISTING P0 |
 | 085, ADM-* | Admin/Operations APIs | roles not defined | — | — | API GAP |
 
-구현 전 필수 Gap: Exchange 목록, Context resolution, PatientReference 진입, Consent 상세/Reject, Grant read, OHIF metadata, durable import operation/status, Patient activity, Admin/Connector APIs.
+구현 전 필수 Gap: Exchange 목록, Context resolution, PatientReference 진입, Consent 상세/Reject, Grant read, OHIF metadata, durable import/status의 실제 소유 HTTP·DB/coordinator 연결(계약은 DEC-021에서 정의), Patient activity, Admin/Connector APIs.
 
 # 11. Multi-tenant와 Browser 보안
 
@@ -879,7 +881,7 @@ Preflight
 - progress는 server operation state에서만 가져온다.
 - total bytes/instances가 없으면 percent를 표시하지 않는다.
 - STOW response가 유실되면 `RESULT_UNKNOWN`으로 이동한다.
-- `RESULT_UNKNOWN`은 destination verification과 reconciliation 전 전체 retry를 허용하지 않는다.
+- `RESULT_UNKNOWN`은 terminal이며 전체 retry를 허용하지 않는다. 동일 key의 소유 status 조회는 재전송/reconciliation이 아니다. 별도 승인된 evidence-based reconciliation 없이 상태를 바꾸거나 완료로 추정하지 않는다.
 - Destination Verification과 Integrity가 모두 `VERIFIED`, Provenance와 Audit evidence가 존재할 때만 `COMPLETED`를 표시한다.
 
 ## 21.3 QR

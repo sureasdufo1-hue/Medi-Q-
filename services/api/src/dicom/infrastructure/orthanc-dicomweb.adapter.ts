@@ -34,6 +34,7 @@ import type {
   ResolvedDicomEndpoint,
 } from "./test-orthanc-endpoint-resolver.js";
 import { awaitStowSignal, makeStudyStowBody, snapshotStudyStowRequest } from "./study-stow-body.js";
+import { snapshotDestinationVerificationRequest } from "./destination-verification-request.js";
 
 const DICOMWEB_ROOT = "/dicom-web/";
 const MAX_STUDIES = 100;
@@ -108,7 +109,7 @@ export class OrthancDicomwebAdapter implements DicomGateway {
       request.context.hospitalId === TEST_HOSPITAL_A_ID
         ? ["QIDO_STUDIES", "WADO_STUDY_METADATA", "WADO_INSTANCE", "WADO_FRAME"]
         : request.context.hospitalId === TEST_HOSPITAL_B_ID
-          ? ["QIDO_STUDIES", "STOW_INSTANCE", "STOW_STUDY", "VERIFY_STUDY"]
+          ? ["QIDO_STUDIES", "STOW_INSTANCE", "STOW_STUDY", "VERIFY_STUDY", "VERIFY_INSTANCE_BYTES"]
           : [];
     const operations = candidates.filter((operation) => {
       try {
@@ -205,6 +206,15 @@ export class OrthancDicomwebAdapter implements DicomGateway {
   ): Promise<DicomInstanceStream> {
     validateInstanceIdentity(request.studyInstanceUid, request.seriesInstanceUid, request.sopInstanceUid);
     return this.#retrieveMultipartInstance(request);
+  }
+
+  async retrieveDestinationVerificationInstanceStream(
+    input: RetrieveInstanceStreamRequest,
+  ): Promise<DicomInstanceStream> {
+    const request = snapshotDestinationVerificationRequest(input);
+    if (request.context.hospitalId !== TEST_HOSPITAL_B_ID) throw new Error("DICOM_ENDPOINT_DENIED");
+    this.#resolve(request.context, "VERIFY_INSTANCE_BYTES");
+    return this.#retrieveMultipartInstance(request, "VERIFY_INSTANCE_BYTES");
   }
 
   async retrieveFrameStream(
@@ -493,6 +503,7 @@ export class OrthancDicomwebAdapter implements DicomGateway {
 
   async #retrieveMultipartInstance(
     request: RetrieveInstanceStreamRequest,
+    operation: "WADO_INSTANCE" | "VERIFY_INSTANCE_BYTES" = "WADO_INSTANCE",
   ): Promise<DicomInstanceStream> {
     validateContext(request.context);
     const release = await this.#semaphore.acquire(request.context.signal);
@@ -503,7 +514,7 @@ export class OrthancDicomwebAdapter implements DicomGateway {
     );
     let iterator: AsyncGenerator<StreamingMultipartPart, void, void> | undefined;
     try {
-      const endpoint = this.#resolve(request.context, "WADO_INSTANCE");
+      const endpoint = this.#resolve(request.context, operation);
       const url = endpointUrl(
         endpoint,
         `studies/${segment(request.studyInstanceUid)}/series/${segment(request.seriesInstanceUid)}/instances/${segment(request.sopInstanceUid)}`,

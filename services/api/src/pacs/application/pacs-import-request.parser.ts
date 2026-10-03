@@ -1,4 +1,5 @@
 import { types } from "node:util";
+import { pacsTransferOperationStates, type PacsTransferOperationState } from "../domain/pacs-transfer-operation.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -69,4 +70,71 @@ export function parsePacsImportSubmission(input: unknown): PacsImportSubmissionR
 export function parsePacsImportStatus(input: unknown): PacsImportStatusRequest {
   try { return headers(data(input, ["sessionId", "tenantCandidate", "idempotencyKey", "correlationId"])); }
   catch { throw new PacsImportRequestInvalidError(); }
+}
+
+export class PacsImportStatusInvalidError extends Error {
+  constructor() {
+    super("PACS_IMPORT_STATUS_INVALID");
+    this.name = "PacsImportStatusInvalidError";
+  }
+}
+
+export interface PacsImportVerifiedResult {
+  readonly operationId: string;
+  readonly sessionId: string;
+  readonly studyRefId: string;
+  readonly sourceHospitalId: string;
+  readonly destinationHospitalId: string;
+  readonly integrityId: string;
+  readonly provenanceId: string;
+  readonly transferStatus: "COMPLETED";
+  readonly destinationVerified: true;
+  readonly integrityStatus: "VERIFIED";
+  readonly completionAuditRecorded: true;
+  readonly temporaryPayloadPurged: true;
+}
+
+interface StatusEnvelope {
+  readonly operationId: string;
+  readonly sessionId: string;
+  readonly resendAllowed: false;
+  readonly updatedAt: string;
+}
+
+export type PacsImportOperationStatus = StatusEnvelope & (
+  | { readonly operationState: "COMPLETED"; readonly completionConfirmed: true; readonly result: PacsImportVerifiedResult }
+  | { readonly operationState: Exclude<PacsTransferOperationState, "COMPLETED">; readonly completionConfirmed: false }
+);
+
+const resultFields = ["operationId", "sessionId", "studyRefId", "sourceHospitalId", "destinationHospitalId",
+  "integrityId", "provenanceId", "transferStatus", "destinationVerified", "integrityStatus",
+  "completionAuditRecorded", "temporaryPayloadPurged"] as const;
+
+/** Shape/literal/binding validation only. Never certifies destination or purge facts. */
+export function parsePacsImportOperationStatus(input: unknown): PacsImportOperationStatus {
+  try {
+    const f = data(input, ["operationId", "sessionId", "operationState", "completionConfirmed", "resendAllowed", "updatedAt"], ["result"]);
+    if (typeof f.operationState !== "string" ||
+      !pacsTransferOperationStates.includes(f.operationState as PacsTransferOperationState) ||
+      f.resendAllowed !== false || typeof f.updatedAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(f.updatedAt) ||
+      new Date(f.updatedAt).toISOString() !== f.updatedAt) throw new PacsImportStatusInvalidError();
+    const envelope: StatusEnvelope = Object.freeze({ operationId: uuid(f.operationId), sessionId: uuid(f.sessionId),
+      resendAllowed: false, updatedAt: f.updatedAt });
+    if (f.operationState !== "COMPLETED") {
+      if (f.completionConfirmed !== false || Object.hasOwn(f, "result")) throw new PacsImportStatusInvalidError();
+      return Object.freeze({ ...envelope, operationState: f.operationState as Exclude<PacsTransferOperationState, "COMPLETED">,
+        completionConfirmed: false });
+    }
+    if (f.completionConfirmed !== true) throw new PacsImportStatusInvalidError();
+    const r = data(f.result, resultFields);
+    if (r.transferStatus !== "COMPLETED" || r.destinationVerified !== true || r.integrityStatus !== "VERIFIED" ||
+      r.completionAuditRecorded !== true || r.temporaryPayloadPurged !== true) throw new PacsImportStatusInvalidError();
+    const result: PacsImportVerifiedResult = Object.freeze({ operationId: uuid(r.operationId), sessionId: uuid(r.sessionId),
+      studyRefId: uuid(r.studyRefId), sourceHospitalId: uuid(r.sourceHospitalId), destinationHospitalId: uuid(r.destinationHospitalId),
+      integrityId: uuid(r.integrityId), provenanceId: uuid(r.provenanceId), transferStatus: "COMPLETED", destinationVerified: true,
+      integrityStatus: "VERIFIED", completionAuditRecorded: true, temporaryPayloadPurged: true });
+    if (result.operationId !== envelope.operationId || result.sessionId !== envelope.sessionId) throw new PacsImportStatusInvalidError();
+    return Object.freeze({ ...envelope, operationState: "COMPLETED", completionConfirmed: true, result });
+  } catch { throw new PacsImportStatusInvalidError(); }
 }
