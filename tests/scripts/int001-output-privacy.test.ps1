@@ -42,10 +42,12 @@ $script:dockerOutput = @()
 $script:dockerExit = 0
 $script:logsExit = 0
 $script:owner = 'mediq-int001-capture-123456abcdef'
+$script:service = 'source-capture-db-observer'
+$script:autoRemove = 'true'
 function docker {
     $script:dockerCalls += ,@($args)
     $global:LASTEXITCODE = $script:dockerExit
-    if ($args[0] -eq 'inspect') { Write-Output $script:owner }
+    if ($args[0] -eq 'inspect') { Write-Output "$script:owner|$script:service|/$($args[-1])|$script:autoRemove" }
     else {
         if ($args[0] -eq 'logs') { $global:LASTEXITCODE = $script:logsExit }
         $script:dockerOutput | Write-Output
@@ -96,7 +98,26 @@ Check ($script:dockerCalls.Count -eq 0)
 $script:owner = 'other-project'
 Expect-Error { Assert-ObserverLogPrivacy -Name $name -ProjectName $project -SensitiveValues @() } 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'
 Check ($script:dockerCalls.Count -eq 1)
+$script:dockerExit = 0
+$script:service = 'source-capture-fixture-seed'
+$mutationName = "${project}-fixture-mutator"
 $script:owner = $project
+$script:dockerOutput = @('INT001_FIXTURE_MUTATION_READY')
+Assert-ObserverLogPrivacy -Name $mutationName -ProjectName $project -SensitiveValues @('TEST-R6-REBOUND', ('c' * 64)) -MutationController
+$script:cases++
+Expect-Error { Assert-ObserverLogPrivacy -Name $mutationName -ProjectName $project -SensitiveValues @() } 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'
+$script:service = 'source-capture-db-observer'
+Expect-Error { Assert-ObserverLogPrivacy -Name $mutationName -ProjectName $project -SensitiveValues @() -MutationController } 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'
+$script:service = 'source-capture-fixture-seed'
+$script:autoRemove = 'false'
+Expect-Error { Assert-ObserverLogPrivacy -Name $mutationName -ProjectName $project -SensitiveValues @() -MutationController } 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'
+$script:autoRemove = 'true'
+foreach ($sentinel in @('TEST-R6-REBOUND', ('c' * 64))) {
+    $script:dockerOutput = @($sentinel)
+    Expect-Error { Assert-ObserverLogPrivacy -Name $mutationName -ProjectName $project -SensitiveValues @($sentinel) -MutationController } 'INT001_OUTPUT_PRIVACY_REJECTED'
+}
+$script:owner = $project
+$script:service = 'source-capture-db-observer'
 $script:dockerOutput = @('TEST-ONLY-SECRET')
 Expect-Error { Assert-ObserverLogPrivacy -Name $name -ProjectName $project -SensitiveValues @('TEST-ONLY-SECRET') } 'INT001_OUTPUT_PRIVACY_REJECTED'
 $script:logsExit = 1

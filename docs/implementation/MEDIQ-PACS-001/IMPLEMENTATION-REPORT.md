@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — R6 seed/test/observer/test-image partially wired; wrapper/controller lifecycle still missing, actual 57-case suite NOT RUN; 197 lightweight tests PASS; original runtime/STOW/P0 gates open |
+| 상태 | `PARTIAL` — R7 run 65501 historical 58-case PASS; current 38034 FAILED at HTTP_BODY_ASSERTION_TX_ACTIVE, automatically cleaned; 246 lightweight PASS; own/concurrent transaction diagnosis next; original runtime/STOW/P0 unfinished |
 
 ## 1. 목표 및 판정 범위
 
@@ -553,4 +553,36 @@ Evidence: TEST-EVIDENCE.md section 53
 Implementation record: docs/implementation/MEDIQ-PACS-001/
 Remaining risks: Intentionally incomplete checkpoint, not a runnable new integration baseline. Model/loopback checks do not prove actual denial/database transitions/cleanup. Historical R5 PASS covers its frozen inputs only
 Status: PARTIAL; user-requested commit/push is not feature completion
+```
+
+## 23. R6 actual source-matrix and cleanup verification
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-017-R6, actual mapping/actor mutation at source/read boundaries
+Changed: Wrapper private controller start/health/summary, separate token and environment restoration, exact two-helper log/ownership/cleanup; fake-Docker/client/read-only mutation contracts; current status and evidence
+Not changed: Product source, schema/grants, infra/Compose, dependencies, runtime registration, OpenAPI, STOW, real patient data or production environment; no new commit/push
+Security impact: Runtime retains 244 exact column grants and no fixture credential/mutation rights; independent read-only observer and fixed test-only controller remain separate. Unauthorized actor cleanup denies before physical port. Test fixture restoration is not product authority or remote recall
+Tests executed: 149 Node + 29 cleanup + 47 output + 10 readiness = 235 lightweight PASS; actual source wrapper 92681 exit 0 with 57 cases, six restored R6 scenarios, live/final observers, B EMPTY, both helper log checks and automatic cleanup; independent zero resources/healthy existing stack/267 identical hashes
+Tests not executed: New full API/DB rerun (product unchanged from recorded baselines), full original lifecycle audit, runtime/coordinator/Preflight/STOW/destination/Viewer/Download/P0 E2E
+Evidence: TEST-EVIDENCE.md sections 54–55; Acceptance R6, decision DEC-017-R6
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Bounded privacy scans are not OS-dump/arbitrary-encoding assurance; independent replica is not killed-origin recovery; prior intermittent failures remain unexplained. Capture-time Consent withdrawal lacks an isolated actual source case. Overall runtime and original A-to-B goal remain unfinished
+Status: R6 scoped PASS; MEDIQ-PACS-001/P0 PARTIAL
+```
+
+## 24. R7 capture-time Consent withdrawal — implementation opened
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-017-R7/R7-A/R7-B, capture-time withdrawal and test-monitor diagnosis
+Changed: Fixed withdrawal graph/actual signed service hook/read-only Consent+ACTIVE Grant observations/exact denial Audit, 58-case wrapper, fixed source diagnostics, zero-prefetch test monitor and regression tests; status/evidence audit
+Not changed: Product source, database schema/grants, infra/Compose, dependencies, runtime/route/scheduler/STOW; no real data, commit or push
+Security impact: Withdrawal remains effective and cannot be restored by test controller; denial requires no allocation/instance read/handoff. All I/O assertions/limits retained; test diagnostics exclude raw errors/IDs/secrets
+Tests executed: 246 lightweight PASS; monitor RED 2/GREEN 6; real 17902 FAIL/cleaned, 65501 58-case PASS/cleaned, current 38034 FAIL/cleaned; all frozen hashes and exact zero-resource inventories confirmed
+Tests not executed: Accepted actual correction of transaction-ownership condition; unrelated-transaction overlap proof; new full API/DB rerun (product unchanged), runtime/full transfer/P0 E2E
+Evidence: TEST-EVIDENCE.md sections 56–57; Acceptance R7/R7-A/R7-B; policy DEC-017 decisions
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Current test path fails with global transaction-active HTTP_BODY assertion; logical transaction owner unobserved, so product-versus-instrumentation cause not concluded. Earlier 17902 root cause unknown; no claim that zero-prefetch fixes it. Original A-to-B success still unachieved
+Status: PARTIAL; no live heavy process, diagnostic next step available
 ```

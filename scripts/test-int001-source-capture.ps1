@@ -88,8 +88,10 @@ function Get-ObserverRemovalElapsedMilliseconds([Diagnostics.Stopwatch]$Clock) {
     return $Clock.ElapsedMilliseconds
 }
 
-function Stop-OwnedPrivacyObserver([string]$Name, [string]$ProjectName) {
-    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-privacy-observer") {
+function Stop-OwnedPrivacyObserver([string]$Name, [string]$ProjectName, [switch]$MutationController) {
+    $suffix = if ($MutationController) { 'fixture-mutator' } else { 'privacy-observer' }
+    $service = if ($MutationController) { 'source-capture-fixture-seed' } else { 'source-capture-db-observer' }
+    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-$suffix") {
         throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
     }
     $observerIds = @(& docker ps -aq --filter "name=$Name" | Where-Object { $_ })
@@ -100,7 +102,7 @@ function Stop-OwnedPrivacyObserver([string]$Name, [string]$ProjectName) {
     }
     $observerId = $observerIds[0]
     $identity = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Name}}|{{.HostConfig.AutoRemove}}' $observerId 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $identity -cne "$ProjectName|source-capture-db-observer|/$Name|true") {
+    if ($LASTEXITCODE -ne 0 -or $identity -cne "$ProjectName|$service|/$Name|true") {
         throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
     }
     $null = @(& docker stop --timeout 15 $observerId 2>&1)
@@ -128,12 +130,14 @@ function Assert-CaptureOutputPrivacy([string]$Output, [string[]]$SensitiveValues
     if ($Output -match $markers) { throw "INT001_OUTPUT_PRIVACY_REJECTED" }
 }
 
-function Assert-ObserverLogPrivacy([string]$Name, [string]$ProjectName, [string[]]$SensitiveValues) {
-    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-privacy-observer") {
+function Assert-ObserverLogPrivacy([string]$Name, [string]$ProjectName, [string[]]$SensitiveValues, [switch]$MutationController) {
+    $suffix = if ($MutationController) { 'fixture-mutator' } else { 'privacy-observer' }
+    $service = if ($MutationController) { 'source-capture-fixture-seed' } else { 'source-capture-db-observer' }
+    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-$suffix") {
         throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
     }
-    $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $Name 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $owner -cne $ProjectName) { throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID" }
+    $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Name}}|{{.HostConfig.AutoRemove}}' $Name 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $owner -cne "$ProjectName|$service|/$Name|true") { throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID" }
     $output = @(& docker logs $Name 2>&1 | ForEach-Object { $_.ToString() })
     if ($LASTEXITCODE -ne 0) { throw "INT001_PRIVACY_OBSERVER_LOG_INSPECTION_FAILED" }
     Assert-CaptureOutputPrivacy -Output ([string]::Join("`n", [string[]]$output)) -SensitiveValues $SensitiveValues
@@ -295,14 +299,23 @@ $failure = $null
 $cleanupFailure = $null
 $privacyLogFailure = $null
 $privacyObserverOwned = $false
+$mutationControllerOwned = $false
 $previousObservationToken = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", "Process")
 $previousObservationUrl = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", "Process")
+$previousMutationToken = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_MUTATION_TOKEN", "Process")
+$previousMutationUrl = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_MUTATION_URL", "Process")
+$previousMutationProject = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_PROJECT", "Process")
 $privacyObserverName = "${projectName}-privacy-observer"
+$mutationControllerName = "${projectName}-fixture-mutator"
 $observationBytes = [byte[]]::new(32)
+$mutationBytes = [byte[]]::new(32)
 $random = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $random.GetBytes($observationBytes) } finally { $random.Dispose() }
+try { $random.GetBytes($observationBytes); $random.GetBytes($mutationBytes) } finally { $random.Dispose() }
 $env:MEDIQ_TEST_OBSERVATION_TOKEN = [BitConverter]::ToString($observationBytes).Replace('-', '').ToLowerInvariant()
 $env:MEDIQ_TEST_OBSERVATION_URL = "http://${privacyObserverName}:8791"
+$env:MEDIQ_TEST_MUTATION_TOKEN = [BitConverter]::ToString($mutationBytes).Replace('-', '').ToLowerInvariant()
+$env:MEDIQ_TEST_MUTATION_URL = "http://${mutationControllerName}:8792"
+$env:MEDIQ_TEST_PROJECT = $projectName
 $capturePrivacyValues = @()
 $privacyProbeScript = @'
 const response = await fetch("http://127.0.0.1:8791/" + process.argv[1], {
@@ -311,13 +324,21 @@ const response = await fetch("http://127.0.0.1:8791/" + process.argv[1], {
 const body = await response.json();
 if (!response.ok || body.status !== (process.argv[1] === "health" ? "READY" : "PRIVACY_OBSERVER_PASS")) process.exitCode = 1;
 '@
+$mutationProbeScript = @'
+const response = await fetch("http://127.0.0.1:8792/" + process.argv[1], {
+  headers: { "x-mediq-test-mutation": process.env.MEDIQ_TEST_MUTATION_TOKEN }, signal: AbortSignal.timeout(3000)
+});
+const body = await response.json();
+if (!response.ok || body.status !== (process.argv[1] === "health" ? "READY" : "MUTATION_CONTROLLER_PASS")) process.exitCode = 1;
+'@
 
 try {
     $manifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "data/synthetic-ct-env007/manifest.json") -Raw | ConvertFrom-Json
     $capturePrivacyValues = @($manifest.patient.patientId, $manifest.studyInstanceUID, $manifest.seriesInstanceUID) +
         @($manifest.instances | ForEach-Object { $_.sopInstanceUID }) +
         @($secretKeys | Where-Object { $_ -match 'PASSWORD$' } | ForEach-Object { $settings[$_] }) +
-        @($settings["MEDIQ_DATABASE_URL"], $settings["MEDIQ_MIGRATION_DATABASE_URL"], $env:MEDIQ_TEST_OBSERVATION_TOKEN)
+        @($settings["MEDIQ_DATABASE_URL"], $settings["MEDIQ_MIGRATION_DATABASE_URL"], $env:MEDIQ_TEST_OBSERVATION_TOKEN,
+            $env:MEDIQ_TEST_MUTATION_TOKEN, 'TEST-R6-REBOUND')
     Assert-CaptureOutputPrivacy -Output '' -SensitiveValues $capturePrivacyValues
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "config", "--quiet")) "INT001_COMPOSE_VALIDATION_FAILED"
     $null = Invoke-Compose ($composeBase + @("up", "--detach", "--wait", "postgres", "orthanc-a", "orthanc-b")) "INT001_TEMPORARY_SERVICES_START_FAILED"
@@ -376,18 +397,34 @@ COMMIT;
         Start-Sleep -Seconds 2
     }
     if (-not $privacyReady) { throw "INT001_PRIVACY_OBSERVER_NOT_READY" }
+    $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--detach", "--rm", "--no-deps",
+        "--name", $mutationControllerName, "--env", "MEDIQ_TEST_MUTATION_TOKEN", "--env", "MEDIQ_TEST_PROJECT", "source-capture-fixture-seed",
+        "node", "scripts/int001-fixture-mutation-controller.mjs")) "INT001_MUTATION_CONTROLLER_START_FAILED"
+    $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $mutationControllerName | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $owner -ne $projectName) { throw "INT001_MUTATION_CONTROLLER_OWNER_INVALID" }
+    $mutationControllerOwned = $true
+    $mutationReady = $false
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        $null = @(& docker exec $mutationControllerName node --input-type=module -e $mutationProbeScript health 2>&1)
+        if ($LASTEXITCODE -eq 0) { $mutationReady = $true; break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $mutationReady) { throw "INT001_MUTATION_CONTROLLER_NOT_READY" }
     $testOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
-        "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED" $capturePrivacyValues
+        "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL",
+        "--env", "MEDIQ_TEST_MUTATION_TOKEN", "--env", "MEDIQ_TEST_MUTATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED" $capturePrivacyValues
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "51" -or $testFail -ne "0") {
+    if ($testPass -ne "58" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
     Write-Output "source_test_output_privacy=PASS known_values_and_markers_only=true"
     Invoke-DockerQuiet -DockerArgs @("exec", $privacyObserverName, "node", "--input-type=module", "-e", $privacyProbeScript, "summary") -FailureCode "INT001_PRIVACY_OBSERVER_INCOMPLETE"
     Write-Output "live_privacy_observer=PASS read_only=true runtime_privileges_unchanged=true"
+    Invoke-DockerQuiet -DockerArgs @("exec", $mutationControllerName, "node", "--input-type=module", "-e", $mutationProbeScript, "summary") -FailureCode "INT001_MUTATION_CONTROLLER_INCOMPLETE"
+    Write-Output "fixture_mutation_controller=PASS restored_cases=6 test_only=true"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED" $capturePrivacyValues
     Write-Output "audit_and_evidence_observer=PASS"
     Write-Output "final_observer_output_privacy=PASS known_values_and_markers_only=true"
@@ -409,20 +446,40 @@ finally {
             } else { "INT001_OBSERVER_OUTPUT_PRIVACY_UNVERIFIED" }
         }
     }
+    if ($mutationControllerOwned) {
+        try {
+            Assert-ObserverLogPrivacy -Name $mutationControllerName -ProjectName $projectName -SensitiveValues $capturePrivacyValues -MutationController
+            Write-Output "mutation_controller_output_privacy=PASS known_values_and_markers_only=true"
+        }
+        catch {
+            $privacyLogFailure = if ($_.Exception.Message -ceq "INT001_OUTPUT_PRIVACY_REJECTED" -or $privacyLogFailure -ceq "INT001_OUTPUT_PRIVACY_REJECTED") {
+                "INT001_OUTPUT_PRIVACY_REJECTED"
+            } else { "INT001_OBSERVER_OUTPUT_PRIVACY_UNVERIFIED" }
+        }
+    }
     [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", $previousObservationToken, "Process")
     [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", $previousObservationUrl, "Process")
     [Array]::Clear($observationBytes, 0, $observationBytes.Length)
+    [Environment]::SetEnvironmentVariable("MEDIQ_TEST_MUTATION_TOKEN", $previousMutationToken, "Process")
+    [Environment]::SetEnvironmentVariable("MEDIQ_TEST_MUTATION_URL", $previousMutationUrl, "Process")
+    [Environment]::SetEnvironmentVariable("MEDIQ_TEST_PROJECT", $previousMutationProject, "Process")
+    [Array]::Clear($mutationBytes, 0, $mutationBytes.Length)
     try {
         Assert-OwnedResources $projectName
         $observerStopFailure = $null
-        try {
-            if ($privacyObserverOwned) { Stop-OwnedPrivacyObserver -Name $privacyObserverName -ProjectName $projectName }
-        }
-        catch {
-            if ($_.Exception.Message -notin @('INT001_PRIVACY_OBSERVER_STOP_FAILED', 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE', 'INT001_PRIVACY_OBSERVER_POSTSTOP_INVENTORY_FAILED')) { throw }
-            # Identity was already verified. Still attempt normal owned cleanup,
-            # but preserve this failure even if later inventory becomes empty.
-            $observerStopFailure = $_.Exception.Message
+        foreach ($auxiliary in @(
+            @{ Owned = $privacyObserverOwned; Name = $privacyObserverName; Mutation = $false },
+            @{ Owned = $mutationControllerOwned; Name = $mutationControllerName; Mutation = $true }
+        )) {
+            try {
+                if ($auxiliary.Owned) { Stop-OwnedPrivacyObserver -Name $auxiliary.Name -ProjectName $projectName -MutationController:$auxiliary.Mutation }
+            }
+            catch {
+                if ($_.Exception.Message -notin @('INT001_PRIVACY_OBSERVER_STOP_FAILED', 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE', 'INT001_PRIVACY_OBSERVER_POSTSTOP_INVENTORY_FAILED')) { throw }
+                # Identity was verified. Attempt both owned stops and Compose down;
+                # retain failure even when final inventory is empty.
+                if (-not $observerStopFailure) { $observerStopFailure = $_.Exception.Message }
+            }
         }
         $remaining = Get-ProjectResources $projectName
         if ($remaining.Containers.Count -or $remaining.Volumes.Count -or $remaining.Networks.Count) {

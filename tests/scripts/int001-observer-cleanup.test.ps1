@@ -39,9 +39,9 @@ function Start-Sleep([int]$Milliseconds) { Check ($Milliseconds -eq 250); $scrip
 function Get-ObserverRemovalElapsedMilliseconds([Diagnostics.Stopwatch]$Clock) {
     Check ($Clock.IsRunning); $value = $script:elapsed; $script:elapsed += 250; return $value
 }
-function Run-Case([string]$Expected = '', [string]$Name = $script:observerName, [string]$Project = $script:project) {
+function Run-Case([string]$Expected = '', [string]$Name = $script:observerName, [string]$Project = $script:project, [switch]$MutationController) {
     $caught = ''
-    try { Stop-OwnedPrivacyObserver -Name $Name -ProjectName $Project } catch { $caught = $_.Exception.Message }
+    try { Stop-OwnedPrivacyObserver -Name $Name -ProjectName $Project -MutationController:$MutationController } catch { $caught = $_.Exception.Message }
     Check ($caught -ceq $Expected); $script:cases++
 }
 Reset-Fake; Run-Case
@@ -62,6 +62,17 @@ foreach ($failure in @(@('ps', 'INT001_PRIVACY_OBSERVER_INVENTORY_FAILED'), @('i
 Reset-Fake; $script:linger = 2; Run-Case; Check ($script:polls -eq 3 -and $script:sleeps -eq 2)
 Reset-Fake; $script:linger = 120; Run-Case 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE'; Check ($script:polls -eq 120 -and $script:sleeps -eq 120)
 Reset-Fake; $script:failCommand = 'poststop'; Run-Case 'INT001_PRIVACY_OBSERVER_POSTSTOP_INVENTORY_FAILED'
+$mutationName = "$script:project-fixture-mutator"
+Reset-Fake; $script:identity = "$script:project|source-capture-fixture-seed|/$mutationName|true"
+Run-Case -Name $mutationName -MutationController
+Check (($script:calls | ForEach-Object { $_[0] }) -join '|' -ceq 'ps|inspect|stop|ps')
+Reset-Fake; Run-Case -Name $mutationName -Expected 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'; Check ($script:calls.Count -eq 0)
+Reset-Fake; Run-Case -MutationController -Expected 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'; Check ($script:calls.Count -eq 0)
+foreach ($wrong in @("$script:project|source-capture-db-observer|/$mutationName|true", "$script:project|source-capture-fixture-seed|/$mutationName|false")) {
+    Reset-Fake; $script:identity = $wrong
+    Run-Case -Name $mutationName -MutationController -Expected 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'
+    Check ($script:calls.Count -eq 2)
+}
 # Structural ordering check complements helper execution, not actual Docker proof.
 $mainTry = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.TryStatementAst] })[-1]
 $finallyText = $mainTry.Finally.Extent.Text
@@ -78,12 +89,21 @@ Check ($cleanupBodies.Count -eq 1)
 $bodyText = $cleanupBodies[0].Body.Extent.Text
 $cleanupBody = [scriptblock]::Create($bodyText.Substring(1, $bodyText.Length - 2))
 function Assert-OwnedResources { $script:cleanupActions += 'ownership' }
-function Stop-OwnedPrivacyObserver { $script:cleanupActions += 'stop'; if ($script:stopError) { throw $script:stopError } }
+function Stop-OwnedPrivacyObserver([string]$Name, [string]$ProjectName, [switch]$MutationController) {
+    $script:cleanupActions += $(if ($MutationController) { 'stop-mutation' } else { 'stop' })
+    if ($script:stopError -and (-not $MutationController -or $script:failMutationOnly)) {
+        if (-not $script:failMutationOnly -or $MutationController) { throw $script:stopError }
+    }
+}
 function Get-ProjectResources { return $developmentSnapshot }
 function Invoke-DockerQuiet { $script:cleanupActions += 'down' }
 function Assert-NoProjectResources { $script:cleanupActions += 'empty' }
 $projectName = $script:project
 $privacyObserverOwned = $true
+$privacyObserverName = $script:observerName
+$mutationControllerOwned = $false
+$mutationControllerName = $mutationName
+$script:failMutationOnly = $false
 $composeBase = @('compose', '--project-name', $projectName)
 $developmentSnapshot = [pscustomobject]@{ Containers = @('TEST-container'); Volumes = @('TEST-volume'); Networks = @('TEST-network') }
 foreach ($stopError in @('', 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE', 'INT001_PRIVACY_OBSERVER_OWNER_INVALID')) {
@@ -91,6 +111,18 @@ foreach ($stopError in @('', 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE', 'I
     try { $null = & $cleanupBody } catch { $caught = $_.Exception.Message }
     Check ($caught -ceq $stopError)
     Check (($script:cleanupActions -contains 'down') -eq ($stopError -ne 'INT001_PRIVACY_OBSERVER_OWNER_INVALID'))
+    $script:cases++
+}
+$mutationControllerOwned = $true
+foreach ($mode in @('success', 'first-stop', 'second-stop', 'wrong-owner')) {
+    $script:stopError = switch ($mode) {
+        'success' { '' }; 'wrong-owner' { 'INT001_PRIVACY_OBSERVER_OWNER_INVALID' }; default { 'INT001_PRIVACY_OBSERVER_STOP_FAILED' }
+    }
+    $script:failMutationOnly = $mode -eq 'second-stop'
+    $script:cleanupActions = @(); $caught = ''
+    try { $null = & $cleanupBody } catch { $caught = $_.Exception.Message }
+    Check ($caught -ceq $script:stopError)
+    Check (($script:cleanupActions -join '|') -ceq $(if ($mode -eq 'wrong-owner') { 'ownership|stop' } else { 'ownership|stop|stop-mutation|down|empty' }))
     $script:cases++
 }
 $global:LASTEXITCODE = 0

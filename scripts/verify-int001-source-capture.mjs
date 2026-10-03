@@ -171,6 +171,17 @@ async function privacySnapshot(scenario, baseline, phase) {
         actors[0].external_subject === 'synthetic-int001-source-capture-actor' &&
         actors[0].status === (changed && scenario.mutation === "ACTOR_INACTIVE" ? "INACTIVE" : "ACTIVE"), "REGISTRY_MUTATION");
     }
+    if (scenario.consentWithdrawal) {
+      const consent = (await client.query(`SELECT c.consent_id,c.exchange_session_id,c.status,c.withdrawn_at,
+        g.grant_id,g.consent_id AS grant_consent_id,g.status AS grant_status
+        FROM consents c JOIN transfer_grants g ON g.consent_id=c.consent_id
+        WHERE c.consent_id=$1 AND g.grant_id=$2`, [scenario.consentId,scenario.grantId])).rows;
+      privacyAssert(consent.length === 1 && consent[0].consent_id === scenario.consentId &&
+        consent[0].exchange_session_id === scenario.sessionId && consent[0].status === 'WITHDRAWN' &&
+        consent[0].withdrawn_at instanceof Date && Number.isFinite(consent[0].withdrawn_at.getTime()) &&
+        consent[0].grant_id === scenario.grantId && consent[0].grant_consent_id === scenario.consentId &&
+        consent[0].grant_status === 'ACTIVE', 'CONSENT_WITHDRAWAL');
+    }
     const expectedDigest = (await client.query("SELECT source_digest FROM integrity_evidence WHERE operation_id=$1 AND verification_stage='SOURCE_CAPTURE'", [ids.operation])).rows[0]?.source_digest;
     const snapshot = {
       study_references: (await client.query(`SELECT temporary_storage_ref,temporary_payload_state,temporary_payload_expires_at,temporary_payload_purged_at
@@ -227,7 +238,7 @@ async function servePrivacyObserver() {
       if (phase === "AVAILABLE") privacyAssert(result.state === "AVAILABLE" && result.reserved > 0, "AVAILABLE_PHASE");
       if (phase === "PHYSICAL_ABSENT") privacyAssert(["PURGE_PENDING", "PURGED"].includes(result.state), "PURGE_PHASE");
       if (phase === "FINAL") privacyAssert(result.state === (scenario.boundary === "METADATA" ? null : "PURGED") && result.reserved === 0, "FINAL_PHASE");
-      if (["MUTATED", "DENIED", "RESTORED"].includes(phase)) {
+      if (["MUTATED", "DENIED", "RESTORED", "WITHDRAWN"].includes(phase)) {
         const expected = scenario.boundary === "METADATA" ? null : scenario.boundary === "RESERVED" ? "STAGING" : "AVAILABLE";
         privacyAssert(result.state === expected && (expected === "AVAILABLE" ? result.reserved > 0 : result.reserved === 0), "MUTATION_PHASE");
       }
@@ -494,8 +505,8 @@ try {
     assert.equal(row.patient_ref_id, "15000000-0000-4000-8000-000000000001");
     assert.equal(row.source_hospital_id, "04000000-0000-4000-8000-000000000001");
     assert.equal(row.grant_status, scenario.name === "read_revoked" ? "REVOKED" : "ACTIVE");
-    assert.equal(row.consent_status, scenario.name === "read_withdrawn" ? "WITHDRAWN" : "ACTIVE");
-    const completionFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure", "capture_mapping_revoked", "capture_actor_inactive"].includes(scenario.name);
+    assert.equal(row.consent_status, scenario.name === "read_withdrawn" || scenario.consentWithdrawal ? "WITHDRAWN" : "ACTIVE");
+    const completionFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure", "capture_mapping_revoked", "capture_actor_inactive", "capture_consent_withdrawn"].includes(scenario.name);
     assert.equal(row.evidence_count, completionFailed ? 0 : 1);
     if (!completionFailed) {
       const evidence = (await pool.query(`SELECT verification_stage,status,verified_at,source_digest,source_object_count
@@ -539,7 +550,10 @@ try {
       if (scenario.name === "read_withdrawn") expected["CONSENT_WITHDRAWN|SUCCESS|NULL"] = 1;
       if (competing || replay) expected["PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] = 1;
     }
-    if (scenario.mutation) {
+    if (scenario.consentWithdrawal) {
+      assert.deepEqual(observed, { 'PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL': 1,
+        'CONSENT_WITHDRAWN|SUCCESS|NULL': 1, 'PACS_SOURCE_CAPTURE_DENIED|DENY|AUTHORIZATION_DENIED': 1 }, 'DEC017_OBSERVER_CAPTURE_WITHDRAWAL_AUDIT');
+    } else if (scenario.mutation) {
       const mutationAudits = Object.fromEntries(Object.entries(mutationExpectedAudit(scenario, true)).map(([key, count]) => [key.endsWith('|') ? key + 'NULL' : key, count]));
       if (!noAllocation) mutationAudits["PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|EXPLICIT_CLOSE"] = 1;
       assert.deepEqual(observed, mutationAudits, "DEC017_OBSERVER_MUTATION_AUDIT");
@@ -552,7 +566,7 @@ try {
     [1,2,3].map(n => ({ actor_id: `0a000000-0000-4000-8000-${String(n).padStart(12,'0')}`, status: 'ACTIVE' })));
   assert.equal((await pool.query(`SELECT count(*)::int AS n FROM study_references WHERE study_ref_id=ANY($1::uuid[])
     AND (temporary_storage_ref IS NOT NULL OR temporary_payload_state IS NOT NULL OR temporary_payload_expires_at IS NOT NULL OR temporary_payload_purged_at IS NOT NULL)`, [[ids.study, ids.studyOther, ids.studyMissingCount]])).rows[0].n, 0);
-  console.log("int001_lifecycle_observer=PASS cases=22 purge_audits=22 quota_released=true operations_created=true approved_identifiers_restored=true");
+  console.log("int001_lifecycle_observer=PASS cases=23 purge_audits=22 quota_released=true operations_created=true approved_identifiers_restored=true capture_consent_withdrawal_persisted=true");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code

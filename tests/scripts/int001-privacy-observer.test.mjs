@@ -5,7 +5,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases, privacyColumnContract, privacyPhases, privacyAssert,
+import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, captureConsentWithdrawalCase, expectedPrivacyPhases, privacyColumnContract, privacyPhases, privacyAssert,
   privacyTokenMatches, parsePrivacyProbe, assertPrivacyText, assertPrivacySnapshot,
   assertPublicCaptureProjection, assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 
@@ -87,6 +87,28 @@ test("R6 invalidation phases are required and cannot be claimed for an original 
   assert.throws(() => parsePrivacyProbe({scenario:scenario.name,phase:'MUTATED'}), {message:'DEC017_PRIVACY_PROTOCOL'});
   assert.throws(() => parsePrivacyProbe({scenario:'capture_mapping_revoked',phase:'QUOTA'}), {message:'DEC017_PRIVACY_PROTOCOL'});
 });
+test("R7 fixed selectors are unique and protocol does not admit allocation or restoration", () => {
+  const fields = ['sessionId','sessionKey','packageId','studyRefId','consentId','consentActionId','grantId','grantKey','grantScopeId','operationId','operationKey','correlationId','revokeCorrelationId'];
+  const selectors = allSourceLifecycleCases.flatMap(item=>fields.map(key=>item[key]));
+  assert.equal(selectors.length,299); assert.equal(new Set(selectors).size,299);
+  assert.deepEqual(expectedPrivacyPhases(captureConsentWithdrawalCase),['WITHDRAWN','DENIED','FINAL']);
+  for (const phase of expectedPrivacyPhases(captureConsentWithdrawalCase)) assert.equal(parsePrivacyProbe({scenario:captureConsentWithdrawalCase.name,phase}).scenario,captureConsentWithdrawalCase);
+  for (const phase of ['RESERVED','QUOTA','AVAILABLE','RESTORED']) assert.throws(()=>parsePrivacyProbe({scenario:captureConsentWithdrawalCase.name,phase}),{message:'DEC017_PRIVACY_PROTOCOL'});
+  assert.throws(()=>parsePrivacyProbe({scenario:scenario.name,phase:'WITHDRAWN'}),{message:'DEC017_PRIVACY_PROTOCOL'});
+});
+test("R7 metadata-denial cannot hide allocation, quota or evidence", () => {
+  const empty = snapshot();
+  empty.study_references = [Object.fromEntries(privacyColumnContract.study_references.map(key=>[key,null]))];
+  empty.temporary_payload_quota_state[0].reserved_bytes='0';
+  empty.temporary_payload_reservations=[]; empty.temporary_payload_package_quotas=[]; empty.integrity_evidence=[]; empty.audit_events=[];
+  assert.deepEqual(assertPrivacySnapshot(empty,captureConsentWithdrawalCase,digest),{state:null,reserved:0});
+  for (const change of [
+    value=>{value.study_references[0].temporary_payload_state='STAGING';},
+    value=>{value.temporary_payload_quota_state[0].reserved_bytes='1';},
+    value=>{value.integrity_evidence=snapshot().integrity_evidence;},
+    value=>{value.temporary_payload_package_quotas=snapshot().temporary_payload_package_quotas;},
+  ]) { const invalid=structuredClone(empty); change(invalid); assert.throws(()=>assertPrivacySnapshot(invalid,captureConsentWithdrawalCase,digest),/^Error: DEC017_PRIVACY_/); }
+});
 for (const [table, columns] of Object.entries(privacyColumnContract)) {
   for (const column of columns) {
     test(`privacy rejects patient and key sentinels in ${table}.${column}`, () => {
@@ -160,7 +182,7 @@ async function serverHarness() {
     privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases,
     privacySnapshot: async () => {
       observations++;
-      if (requestedScenario?.mutation) {
+      if (requestedScenario?.mutation || requestedScenario?.consentWithdrawal) {
         const boundary = requestedScenario.boundary;
         const state = requestedPhase === 'FINAL' ? (boundary === 'METADATA' ? null : 'PURGED')
           : requestedPhase === 'PHYSICAL_ABSENT' ? 'PURGE_PENDING'
@@ -252,6 +274,71 @@ test("observer database failure does not leave its read-only role/transaction op
   assert.equal(run.calls.at(-1).sql, "ROLLBACK");
   assert.equal(run.released(), true);
 });
+test("R7 independent observer rejects non-withdrawn/misbound Consent or inactive Grant and always releases read-only transaction", async () => {
+  const current=captureConsentWithdrawalCase;
+  const valid={consent_id:current.consentId,exchange_session_id:current.sessionId,status:'WITHDRAWN',withdrawn_at:new Date(),
+    grant_id:current.grantId,grant_consent_id:current.consentId,grant_status:'ACTIVE'};
+  for (const phase of ['WITHDRAWN','DENIED','FINAL']) {
+    for (const change of [null,{status:'ACTIVE'},{withdrawn_at:null},{withdrawn_at:'TEST-INVALID'},
+      {grant_status:'REVOKED'},{grant_consent_id:scenario.consentId},{exchange_session_id:scenario.sessionId}]) {
+      const calls=[]; let released=false;
+      const client={async query(sql,args) {
+        calls.push({sql,args});
+        if(sql.includes('FROM pg_class'))return {rows:Object.entries(privacyColumnContract).flatMap(([table_name,columns])=>columns.map(column_name=>({table_name,column_name})))};
+        if(sql.includes('FROM pg_tables'))return {rows:[{tablename:'TEST_TABLE'}]};
+        if(sql.includes('CROSS JOIN patient_mappings'))return {rows:[{study_instance_uid:'2.25.1',local_patient_id:'TEST-PATIENT-007',status:'VALID'}]};
+        if(sql.includes('FROM consents c JOIN transfer_grants')) { assert.deepEqual([...args],[current.consentId,current.grantId]);return {rows:[{...valid,...change}]}; }
+        return {rows:[]};
+      },release(){released=true;}};
+      const run=runInNewContext(`${snapshotFunction.getText(ast)}; privacySnapshot`,{
+        Date,
+        pool:{connect:async()=>client},ids:{tenant:'02000000-0000-4000-8000-000000000002',operation:scenario.operationId},
+        privacyColumnContract,privacyAssert,assertPrivacySnapshot:()=>({state:null,reserved:0}),
+      });
+      const promise=run(current,{studyUid:'2.25.1',patientId:'TEST-PATIENT-007',tables:['TEST_TABLE']},phase);
+      if(change)await assert.rejects(promise,{message:'DEC017_PRIVACY_CONSENT_WITHDRAWAL'});
+      else assert.deepEqual(await promise,{state:null,reserved:0});
+      assert.equal(released,true);assert.equal(calls.at(-1).sql,'ROLLBACK');
+      assert.ok(calls.every(call=>/^(BEGIN|SELECT|SET LOCAL ROLE mediq_quota_owner$|ROLLBACK$)/.test(call.sql)));
+    }
+  }
+});
+
+for (const current of allSourceLifecycleCases.filter(item => item.mutation)) {
+  test(`read-only observer requires actual mutation then restoration: ${current.name}`, async () => {
+    for (const phase of ['MUTATED', 'DENIED', 'RESTORED']) {
+      const changed = phase !== 'RESTORED';
+      const mapping = { study_instance_uid: '2.25.1', local_patient_id: changed && current.mutation === 'MAPPING_REBOUND' ? 'TEST-R6-REBOUND' : 'TEST-PATIENT-007',
+        status: changed && current.mutation === 'MAPPING_REVOKED' ? 'REVOKED' : 'VALID' };
+      const actor = { actor_id: '0a000000-0000-4000-8000-000000000001', tenant_id: '02000000-0000-4000-8000-000000000002',
+        hospital_id: '04000000-0000-4000-8000-000000000002', actor_type: 'USER', external_subject: 'synthetic-int001-source-capture-actor',
+        status: changed && current.mutation === 'ACTOR_INACTIVE' ? 'INACTIVE' : 'ACTIVE' };
+      const calls = []; let released = 0;
+      const client = { async query(sql, args) {
+        calls.push({ sql, args });
+        if (sql.includes('FROM pg_class')) return { rows: Object.entries(privacyColumnContract).flatMap(([table_name, columns]) => columns.map(column_name => ({table_name,column_name}))) };
+        if (sql.includes('FROM pg_tables')) return { rows: [{tablename:'TEST_TABLE'}] };
+        if (sql.includes('CROSS JOIN patient_mappings')) return {rows:[mapping]};
+        if (sql.includes('FROM actors WHERE actor_id')) { assert.deepEqual([...args], [actor.actor_id]); return {rows:[actor]}; }
+        return {rows:[]};
+      }, release() { released++; } };
+      const observe = runInNewContext(`${snapshotFunction.getText(ast)}; privacySnapshot`, {
+        pool: {connect:async()=>client}, ids:{actor:actor.actor_id,tenant:actor.tenant_id,operation:scenario.operationId},
+        privacyColumnContract, privacyAssert, assertPrivacySnapshot: (_snapshot, observedScenario) => {
+          assert.equal(observedScenario,current); return {state:'TEST_ONLY'};
+        },
+      });
+      const run = () => observe(current,{studyUid:'2.25.1',patientId:'TEST-PATIENT-007',tables:['TEST_TABLE']},phase);
+      assert.deepEqual(await run(),{state:'TEST_ONLY'});
+      if (current.mutation === 'ACTOR_INACTIVE') actor.status = actor.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+      else if (current.mutation === 'MAPPING_REBOUND') mapping.local_patient_id = mapping.local_patient_id === 'TEST-PATIENT-007' ? 'TEST-R6-REBOUND' : 'TEST-PATIENT-007';
+      else mapping.status = mapping.status === 'VALID' ? 'REVOKED' : 'VALID';
+      await assert.rejects(run(), {message:current.mutation === 'ACTOR_INACTIVE' ? 'DEC017_PRIVACY_REGISTRY_MUTATION' : 'DEC017_PRIVACY_APPROVED_IDENTIFIERS'});
+      assert.equal(released,2); assert.equal(calls.at(-1).sql,'ROLLBACK');
+      assert.ok(calls.every(call=>/^(BEGIN|SELECT|SET LOCAL ROLE mediq_quota_owner$|ROLLBACK$)/.test(call.sql)));
+    }
+  });
+}
 
 test("observer actual HTTP transport enforces token/body/projection boundaries and closes its owned listener", { timeout: 10_000 }, async () => {
   const processFake = new EventEmitter(), token = "a".repeat(64);

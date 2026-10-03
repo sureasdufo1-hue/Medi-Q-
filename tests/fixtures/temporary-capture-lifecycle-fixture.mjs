@@ -21,10 +21,19 @@ export const temporaryCaptureLifecycleCases = Object.freeze([
   });
 }));
 
+export const captureConsentWithdrawalCase = Object.freeze({
+  name: "capture_consent_withdrawn", boundary: "METADATA", consentWithdrawal: true,
+  sessionId: id("16", 123), sessionKey: id("1c", 123), packageId: id("17", 123), studyRefId: id("18", 123),
+  consentId: id("19", 123), consentActionId: id("19", 223), grantId: id("1a", 123), grantKey: id("1c", 223),
+  grantScopeId: id("1a", 223), operationId: id("1b", 123), operationKey: id("1c", 323),
+  correlationId: id("1d", 123), revokeCorrelationId: id("1d", 223),
+});
+
 // Read-only test-observer contracts, never runtime routes or DB permissions.
-export const allSourceLifecycleCases = Object.freeze([...temporaryCaptureLifecycleCases, ...sourceMutationCases]);
-export const privacyPhases = Object.freeze(["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL", "MUTATED", "DENIED", "RESTORED"]);
+export const allSourceLifecycleCases = Object.freeze([...temporaryCaptureLifecycleCases, ...sourceMutationCases, captureConsentWithdrawalCase]);
+export const privacyPhases = Object.freeze(["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL", "MUTATED", "DENIED", "RESTORED", "WITHDRAWN"]);
 export function expectedPrivacyPhases(scenario) {
+  if (scenario.consentWithdrawal) return ["WITHDRAWN", "DENIED", "FINAL"];
   if (scenario.mutation) {
     const changes = ["MUTATED", "DENIED", "RESTORED", "FINAL"];
     if (scenario.boundary === "METADATA") return changes;
@@ -97,7 +106,7 @@ export function assertPrivacySnapshot(snapshot, scenario, expectedDigest) {
   const metadata = rows("study_references", snapshot.study_references);
   check(metadata.length === 1, "METADATA_COUNT");
   const state = metadata[0];
-  const noAllocation = scenario.name === "capture_mapping_revoked";
+  const noAllocation = ["capture_mapping_revoked", "capture_consent_withdrawn"].includes(scenario.name);
   check(noAllocation ? Object.values(state).every(value => value === null) : uuid(state.temporary_storage_ref) && ["STAGING", "AVAILABLE", "PURGE_PENDING", "PURGED"].includes(state.temporary_payload_state) &&
     date(state.temporary_payload_expires_at) && (state.temporary_payload_state === "PURGED"
       ? date(state.temporary_payload_purged_at) : state.temporary_payload_purged_at === null), "METADATA");
@@ -126,7 +135,7 @@ export function assertPrivacySnapshot(snapshot, scenario, expectedDigest) {
     row.source_object_count === 3 && row.destination_digest === null && row.destination_object_count === null &&
     row.status === "PENDING" && row.verified_at === null && date(row.created_at), "EVIDENCE");
   const actions = ["PACS_SOURCE_CAPTURE_STARTED", "PACS_SOURCE_CAPTURED", "PACS_SOURCE_CAPTURE_FAILED", "PACS_TEMPORARY_READ_AUTHORIZED", "PACS_TEMPORARY_READ_FAILED", "PACS_TEMPORARY_OBJECT_PURGED", "GRANT_REVOKED", "CONSENT_WITHDRAWN", ...(noAllocation ? ["PACS_SOURCE_CAPTURE_DENIED"] : [])];
-  const reasons = [null, "SOURCE_CAPTURE_PERSISTENCE_FAILED", "SOURCE_READ_FAILED", "BEFORE_DECRYPT", "BEFORE_DELIVERY", "TEMPORARY_READ_FAILED", "CAPTURE_FAILURE", "EXPLICIT_CLOSE", "PROCESS_RESTART", ...(noAllocation ? ["PATIENT_MAPPING_INVALID"] : [])];
+  const reasons = [null, "SOURCE_CAPTURE_PERSISTENCE_FAILED", "SOURCE_READ_FAILED", "BEFORE_DECRYPT", "BEFORE_DELIVERY", "TEMPORARY_READ_FAILED", "CAPTURE_FAILURE", "EXPLICIT_CLOSE", "PROCESS_RESTART", ...(noAllocation ? [scenario.consentWithdrawal ? "AUTHORIZATION_DENIED" : "PATIENT_MAPPING_INVALID"] : [])];
   for (const row of rows("audit_events", snapshot.audit_events)) {
     const resource = { STUDY: scenario.studyRefId, CONSENT: scenario.consentId, TRANSFER_GRANT: scenario.grantId }[row.resource_type];
     check(uuid(row.audit_event_id) && date(row.occurred_at) && date(row.created_at) &&

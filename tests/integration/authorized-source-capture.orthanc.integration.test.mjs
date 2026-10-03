@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { temporaryCaptureLifecycleCases, privacyAssert, assertPublicCaptureProjection,
+import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, privacyAssert, assertPublicCaptureProjection,
   assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 import { sourceMutationCases } from "../fixtures/source-capture-mutation-fixture.mjs";
 import { RemoteJwksOidcTokenVerifier } from "../../services/api/dist/authentication/oidc-jwt.verifier.js";
@@ -266,6 +266,16 @@ function partialDicomThenFail(response) {
   return new Response(body, { status: response.status, headers });
 }
 
+function sourceFailureMarkers(failures) {
+  const stages = ['FETCH','METADATA','INSTANCE_OPEN','HTTP_BODY','INSTANCE_BODY','FAILURE_AUDIT'];
+  const codes = ['ASSERTION','ABORT','TIMEOUT','NETWORK','GENERIC',
+    'SOURCE_READ_FAILED','SOURCE_CAPTURE_CANCELLED','SOURCE_CAPTURE_DEADLINE','SOURCE_CAPTURE_PERSISTENCE_FAILED'];
+  if (!Array.isArray(failures)) return [];
+  return [...new Set(failures.slice(0, 16).filter(item => item && stages.includes(item.stage) &&
+    codes.includes(item.code) && typeof item.transactionActive === 'boolean')
+    .map(item => `DEC017_STAGE_${item.stage}_${item.code}_TX_${item.transactionActive ? 'ACTIVE' : 'CLOSED'}`))].slice(0, 8);
+}
+
 function createHarness({
   failFirstInstance = false,
   databaseUrl,
@@ -284,6 +294,12 @@ function createHarness({
   const database = new RuntimeDatabaseService(config);
   let quotaReservations = 0;
   const databaseFailures = [];
+  const sourceFailures = [];
+  const recordSourceFailure = (stage, error) => {
+    const code = error?.code === 'ERR_ASSERTION' ? 'ASSERTION' : error?.name === 'AbortError' ? 'ABORT'
+      : error?.name === 'TimeoutError' ? 'TIMEOUT' : ['ECONNRESET','ECONNREFUSED','EPIPE'].includes(error?.code) ? 'NETWORK' : 'GENERIC';
+    if (sourceFailures.length < 16) sourceFailures.push({stage,code,transactionActive:activeTenantTransactions > 0});
+  };
   const databaseForContext = Object.freeze({
     connect: async () => {
       let client;
@@ -324,6 +340,11 @@ function createHarness({
                               : "OTHER_QUERY";
               const queryStartedAt = performance.now();
               return Reflect.apply(target.query, target, args).then((result) => {
+                if (statement.includes('INSERT INTO audit_events') && args[1]?.[7] === 'PACS_SOURCE_CAPTURE_FAILED' &&
+                    ['SOURCE_READ_FAILED','SOURCE_CAPTURE_CANCELLED','SOURCE_CAPTURE_DEADLINE','SOURCE_CAPTURE_PERSISTENCE_FAILED'].includes(args[1]?.[9]) && sourceFailures.length < 16) {
+                  // Statement returned, not proof of commit. Only fixed reason enums.
+                  sourceFailures.push({stage:'FAILURE_AUDIT',code:args[1][9],transactionActive:activeTenantTransactions > 0});
+                }
                 if (statement.includes("reserve_temporary_payload_quota")) quotaReservations += 1;
                 if (statement === "BEGIN" || statement === "ROLLBACK") recordedCaptureStart = false;
                 if (statement.includes("INSERT INTO audit_events") && args[1]?.[7] === "PACS_SOURCE_CAPTURE_STARTED" && result.rowCount === 1) {
@@ -445,7 +466,9 @@ function createHarness({
         }));
         sourceRequests.push(url.pathname.includes("/metadata") ? "METADATA" : "INSTANCE");
         sourcePaths.push(url.pathname);
-        const response = await globalThis.fetch(input, init);
+        let response;
+        try { response = await globalThis.fetch(input, init); }
+        catch (error) { recordSourceFailure('FETCH', error); throw error; }
         if (metadataFault && url.pathname.endsWith("/metadata")) {
           return applyMetadataFault(response, metadataFault);
         }
@@ -461,20 +484,21 @@ function createHarness({
           const reader = response.body.getReader();
           const monitored = new ReadableStream({
             async pull(controller) {
-              assert.equal(activeTenantTransactions, 0, "No transaction may span DICOM stream consumption");
-              assert.equal(initialAuthorizationCommitted, true);
               try {
+                assert.equal(activeTenantTransactions, 0, "No transaction may span DICOM stream consumption");
+                assert.equal(initialAuthorizationCommitted, true);
                 const part = await reader.read();
                 if (part.done) controller.close();
                 else controller.enqueue(part.value);
               } catch (error) {
+                recordSourceFailure('HTTP_BODY', error);
                 controller.error(error);
               }
             },
             async cancel(reason) {
               await reader.cancel(reason).catch(() => undefined);
             },
-          });
+          }, { highWaterMark: 0 });
           return new Response(monitored, {
             status: response.status,
             headers: response.headers,
@@ -488,7 +512,9 @@ function createHarness({
   const dicomGateway = Object.freeze({
     retrieveStudyMetadata: async (request) => {
       metadataCalls += 1;
-      const metadata = await adapter.retrieveStudyMetadata(request);
+      let metadata;
+      try { metadata = await adapter.retrieveStudyMetadata(request); }
+      catch (error) { recordSourceFailure('METADATA', error); throw error; }
       if (afterMetadata) await afterMetadata();
       return metadata;
     },
@@ -506,6 +532,7 @@ function createHarness({
       try {
         source = await adapter.retrieveInstanceStream(request);
       } catch (error) {
+        recordSourceFailure('INSTANCE_OPEN', error);
         activeInstanceStreams -= 1;
         throw error;
       }
@@ -556,6 +583,7 @@ function createHarness({
             digest.update(next.value);
             controller.enqueue(next.value);
           } catch (error) {
+            recordSourceFailure('INSTANCE_BODY', error);
             settle();
             controller.error(error);
           }
@@ -631,6 +659,7 @@ function createHarness({
       instanceCalls,
       tenantContextFailures: [...tenantContextFailures],
       databaseFailures: [...databaseFailures],
+      sourceFailures: sourceFailures.map(item => ({...item})),
     }),
   });
 }
@@ -695,7 +724,7 @@ async function observePrivacy(scenario, phase, signal) {
   const result = JSON.parse(raw);
   if (!response.ok || result.status !== "OK") {
     const code = /^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "") ? result.code : "DEC017_PRIVACY_OBSERVER_REJECTED";
-    const diagnosticPhase = ["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL", "MUTATED", "DENIED", "RESTORED"].includes(phase) ? phase : "UNKNOWN";
+    const diagnosticPhase = ["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL", "MUTATED", "DENIED", "RESTORED", "WITHDRAWN"].includes(phase) ? phase : "UNKNOWN";
     console.error(`DEC017_PRIVACY_PROBE_${diagnosticPhase}_${code}`);
     throw new Error(code);
   }
@@ -1030,8 +1059,19 @@ async function runTemporaryLifecycleCase(scenario, signal) {
         }, consume);
       },
     };
+    const withdrawAfterMetadata = async () => {
+      assert.equal(harness.counters().activeTenantTransactions, 0);
+      const outcome = await new ConsentWithdrawalService(harness.actorContext).withdraw({
+        principal: patientPrincipal, tenantCandidate: fixture.tenantId, sessionId: scenario.sessionId,
+        consentId: scenario.consentId, correlationId: scenario.revokeCorrelationId, hasUnexpectedInput: false,
+      });
+      assert.equal(outcome.consent.status, 'WITHDRAWN', 'DEC017_CAPTURE_CONSENT_WITHDRAWAL_COMMITTED');
+      assert.equal(outcome.replayed, false);
+      assert.equal(harness.counters().activeTenantTransactions, 0);
+      await observePrivacy(scenario, 'WITHDRAWN', signal);
+    };
     harness = createHarness({ temporaryImagingStore: port, oidcAuthentication: auth, observeInstanceStreams: true,
-      ...(noAllocation ? { afterMetadata: applyMutation } : {}) });
+      ...(noAllocation ? { afterMetadata: scenario.consentWithdrawal ? withdrawAfterMetadata : applyMutation } : {}) });
     const runtime = await harness.database.connect();
     try {
       const role = await runtime.query("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user");
@@ -1063,10 +1103,14 @@ async function runTemporaryLifecycleCase(scenario, signal) {
       await observePrivacy(scenario, 'RESTORED', signal);
     };
     if (noAllocation) {
-      assert.deepEqual(await harness.service.captureForCoordinator(input), { kind: 'DENIED', reason: 'PATIENT_MAPPING_INVALID' });
+      const denied = await harness.service.captureForCoordinator(input);
+      assert.deepEqual(denied, { kind: 'DENIED', reason: scenario.consentWithdrawal ? 'AUTHORIZATION_DENIED' : 'PATIENT_MAPPING_INVALID' });
+      assertPublicCaptureProjection(denied);
       assert.equal(attempted.length, 0); assert.equal(harness.counters().instanceCalls, 0);
       assert.equal(harness.counters().quotaReservations, 0); assert.deepEqual(await children(storageRoot), []);
-      await restoreAfterDenial();
+      assert.equal(physicalPurgeCalls, 0); assert.equal(callbacks, 0);
+      if (scenario.consentWithdrawal) await observePrivacy(scenario, 'DENIED', signal);
+      else await restoreAfterDenial();
     } else if (actorCapture) {
       await assert.rejects(harness.service.captureForCoordinator(input), { message: 'SOURCE_CAPTURE_UNAVAILABLE' });
       assert.equal(attempted.length, 1); assert.equal(harness.counters().quotaReservations, 0);
@@ -1215,6 +1259,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     const markers = [`DEC017_CASE_${scenario.name.toUpperCase()}`,
       `DEC017_ERROR_${fixed(error?.code ?? error?.message)}`, `DEC017_ORIGIN_LINE_${line}`];
     const counts = harness?.counters();
+    markers.push(...sourceFailureMarkers(counts?.sourceFailures));
     for (const item of counts?.databaseFailures ?? []) {
       if (/^[A-Z0-9_]{1,120}$/.test(item)) markers.push(`DEC017_QUERY_${item}`);
     }
@@ -1948,7 +1993,7 @@ if (process.argv.includes("--mediq-recovery-child")) {
     }
   });
 
-  for (const scenario of [...temporaryCaptureLifecycleCases, ...sourceMutationCases]) {
+  for (const scenario of allSourceLifecycleCases) {
     await t.test(`DEC017 signed lifecycle ${scenario.name}`, { timeout: 120_000 }, childTest => runTemporaryLifecycleCase(scenario, childTest.signal));
   }
 
