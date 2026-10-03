@@ -43,6 +43,7 @@ import {
 import { PostgresPatientMappingRepository } from "../../patient/persistence/postgres-patient-mapping.repository.js";
 import { validateDestinationPatientMapping } from "../../patient/domain/patient-mapping-validation.js";
 import { validatePacsPatientIdBinding } from "../../pacs/domain/pacs-patient-id-binding.js";
+import { pacsTransferOperationDigest } from "../../pacs/domain/pacs-transfer-operation-digest.js";
 import { AuditEvent } from "../../audit/domain/audit-event.js";
 import { PostgresAuditEventWriter } from "../../audit/persistence/postgres-audit-event-writer.js";
 import type {
@@ -141,6 +142,8 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
   readonly expectedInstances: readonly Readonly<{
     seriesInstanceUid: string;
     sopInstanceUid: string;
+    sopClassUid: string;
+    transferSyntaxUid: string;
     byteLength: number;
     sha256: `sha256:${string}`;
   }>[];
@@ -154,6 +157,8 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
       objectRef: string;
       seriesInstanceUid: string;
       sopInstanceUid: string;
+      sopClassUid: string;
+      transferSyntaxUid: string;
       byteLength: number;
       sha256: `sha256:${string}`;
     }>[];
@@ -191,6 +196,8 @@ interface ValidatedSourceInstance {
   readonly sopInstanceUid: string;
   readonly seriesInstanceUid: string;
   readonly patientId: string;
+  readonly sopClassUid: string;
+  readonly transferSyntaxUid?: string;
 }
 
 type StartDecision =
@@ -425,10 +432,12 @@ function validateMetadata(
         instance.sopInstanceUid.length > 64 ||
         !DICOM_UID_PATTERN.test(instance.sopInstanceUid) ||
         typeof instance.sopClassUid !== "string" ||
+        instance.sopClassUid !== "1.2.840.10008.5.1.4.1.1.2" ||
         instance.sopClassUid.length > 64 ||
         !DICOM_UID_PATTERN.test(instance.sopClassUid) ||
         (instance.transferSyntaxUid !== undefined &&
           (typeof instance.transferSyntaxUid !== "string" ||
+            instance.transferSyntaxUid !== "1.2.840.10008.1.2.1" ||
             instance.transferSyntaxUid.length > 64 ||
             !DICOM_UID_PATTERN.test(instance.transferSyntaxUid))) ||
         typeof instance.patientId !== "string" ||
@@ -441,6 +450,8 @@ function validateMetadata(
         sopInstanceUid: instance.sopInstanceUid,
         seriesInstanceUid: series.seriesInstanceUid,
         patientId: instance.patientId,
+        sopClassUid: instance.sopClassUid,
+        ...(instance.transferSyntaxUid === undefined ? {} : { transferSyntaxUid: instance.transferSyntaxUid }),
       }));
     }
   }
@@ -456,9 +467,10 @@ function createCoordinatorHandoff(input: {
   readonly evidence: SourceIntegrityEvidenceRecord;
   readonly capture: SourceIntegrityCapture;
   readonly descriptors: readonly ValidatedSourceInstance[];
+  readonly observedSyntaxes: ReadonlyMap<string, string>;
   readonly temporaryPackage?: AuthorizedSourceCaptureCoordinatorHandoff["temporaryPackage"];
 }): AuthorizedSourceCaptureCoordinatorHandoff {
-  const { identity, scope, evidence, capture, descriptors } = input;
+  const { identity, scope, evidence, capture, descriptors, observedSyntaxes } = input;
   const { manifest } = capture;
   if (
     identity.tenantId.toLowerCase() !== scope.tenantId ||
@@ -510,7 +522,7 @@ function createCoordinatorHandoff(input: {
       .map((descriptor) => {
         const integrity = perInstance.get(descriptor.sopInstanceUid);
         if (
-          !integrity ||
+          !integrity || observedSyntaxes.get(descriptor.sopInstanceUid) !== "1.2.840.10008.1.2.1" ||
           !/^sha256:[0-9a-f]{64}$/.test(integrity.sha256) ||
           !Number.isSafeInteger(integrity.byteLength) ||
           integrity.byteLength < 1
@@ -520,6 +532,8 @@ function createCoordinatorHandoff(input: {
         return Object.freeze({
           seriesInstanceUid: descriptor.seriesInstanceUid,
           sopInstanceUid: descriptor.sopInstanceUid,
+          sopClassUid: descriptor.sopClassUid,
+          transferSyntaxUid: observedSyntaxes.get(descriptor.sopInstanceUid)!,
           byteLength: integrity.byteLength,
           sha256: integrity.sha256,
         });
@@ -602,6 +616,10 @@ export class AuthorizedSourceCaptureService {
     scope: SourceCaptureScope;
     mapping: DestinationMappingBinding;
   }>>();
+  readonly #dispatchReads = new WeakMap<AuthorizedSourceCaptureCoordinatorHandoff, {
+    readonly claimedAt: string;
+    readonly attempts: Set<string>;
+  }>();
 
   constructor(
     private readonly operationExecutor: Pick<
@@ -625,6 +643,16 @@ export class AuthorizedSourceCaptureService {
 
   /** Internal pre-dispatch borrowed read; never accepts a caller access verifier. */
   async consumeCapturedInstance(input: unknown, consume: TemporaryImagingInstanceConsumer): Promise<void> {
+    return this.consumeInstanceInternal("CAPTURE", input, consume);
+  }
+
+  /** Read-only prerequisite, never a dispatch capability or caller verifier. */
+  async consumeDispatchedInstance(input: unknown, consume: TemporaryImagingInstanceConsumer): Promise<void> {
+    return this.consumeInstanceInternal("DISPATCH", input, consume);
+  }
+
+  private async consumeInstanceInternal(mode: "CAPTURE" | "DISPATCH", input: unknown,
+    consume: TemporaryImagingInstanceConsumer): Promise<void> {
     let command: CaptureCommand | undefined;
     try {
       if (!input || typeof input !== "object" || Array.isArray(input) ||
@@ -648,6 +676,7 @@ export class AuthorizedSourceCaptureService {
       if (!temporary || !validUuid(objectRef)) throw new Error("UNKNOWN_CAPTURE");
       const instance = temporary.instances.find((item) => item.objectRef === objectRef.toLowerCase());
       if (!instance) throw new Error("UNKNOWN_OBJECT");
+      if (mode === "DISPATCH" && this.#dispatchReads.get(handoff)?.attempts.has(instance.objectRef)) throw new Error("DISPATCH_READ_REPLAY");
       command = exactCommand({
         principal: fields.principal!.value, tenantCandidate: fields.tenantCandidate!.value,
         correlationId: fields.correlationId!.value, consentId: fields.consentId!.value,
@@ -662,6 +691,7 @@ export class AuthorizedSourceCaptureService {
           !Number.isFinite(expiresAt.getTime()) || now >= expiresAt.getTime()) throw new Error("READ_EXPIRED");
       };
       let phase = 0;
+      let claimedAt: string | undefined;
       await this.temporaryImagingStore.consumeInstance({
         storageRef: temporary.storageRef, objectRef: instance.objectRef,
         packageBinding: Object.freeze({ tenantId: handoff.tenantId,
@@ -674,11 +704,15 @@ export class AuthorizedSourceCaptureService {
         assertLive();
         phase += 1;
         if (phase > 2) throw new Error("INVALID_READ_PHASE");
+        if (mode === "DISPATCH" && phase === 1 && this.#dispatchReads.get(handoff)?.attempts.has(instance.objectRef)) {
+          throw new Error("DISPATCH_READ_REPLAY");
+        }
         await this.operationExecutor.executeWithResolvedSessionFence(
           readCommand.principal, readCommand.tenantCandidate,
           async (identity, transaction) => {
             const scope = await this.resolveScope(transaction, readCommand.operationId, identity.tenantId);
-            if (!sameCaptureIdentity(identity, binding.identity) || !this.isSupportedScope(identity, scope) ||
+            if (!sameCaptureIdentity(identity, binding.identity) || !this.isTestBinding(identity, scope) ||
+              scope.operationState !== (mode === "CAPTURE" ? "CREATED" : "STOW_STARTED") ||
               !sameSourceCaptureBinding(binding.scope, scope)) throw new AuthorizationDeniedError();
             return AuthorizationContext.create({ identity, exchangeSessionId: scope.exchangeSessionId,
               resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
@@ -688,7 +722,7 @@ export class AuthorizedSourceCaptureService {
             assertLive();
             const scope = await this.resolveScope(transaction, readCommand.operationId, identity.tenantId);
             if (!sameSourceCaptureBinding(binding.scope, scope) ||
-              scope.operationState !== "CREATED" || !IMPORTABLE_SESSION_STATES.has(scope.sessionState)) {
+              scope.operationState !== (mode === "CAPTURE" ? "CREATED" : "STOW_STARTED") || !IMPORTABLE_SESSION_STATES.has(scope.sessionState)) {
               throw new Error("READ_GRAPH_CHANGED");
             }
             const mapping = await mappingBinding(scope, transaction);
@@ -717,11 +751,67 @@ export class AuthorizedSourceCaptureService {
                 handoff.sourceEvidence.aggregateDigest, handoff.sourceEvidence.objectCount, scope.tenantId],
             );
             if (available.rowCount !== 1 || available.rows.length !== 1) throw new Error("READ_METADATA_CHANGED");
+            if (mode === "DISPATCH") {
+              const digest = pacsTransferOperationDigest({ tenantId: identity.tenantId,
+                actorId: identity.actorId, exchangeSessionId: scope.exchangeSessionId, studyRefId: scope.studyRefId,
+                consentId: readCommand.consentId, grantId: readCommand.grantId, action: "PACS_IMPORT" });
+              const claim = await transaction.query(
+                `SELECT op.stow_started_at AS dispatch_read_claimed_at
+                   FROM pacs_transfer_operations AS op
+                   JOIN provenance_records AS pr ON pr.operation_id = op.operation_id
+                  WHERE op.operation_id = $1::uuid AND op.tenant_id = $2::uuid AND op.actor_id = $3::uuid
+                    AND op.exchange_session_id = $4::uuid AND op.study_ref_id = $5::uuid
+                    AND op.request_digest = $6 AND op.state = 'STOW_STARTED' AND op.version = 2
+                    AND op.source_object_count = $7 AND op.stow_started_at IS NOT NULL
+                    AND op.stow_started_at >= op.created_at AND op.stow_started_at <= op.updated_at
+                    AND op.stow_started_at <= $8::timestamptz AND op.stow_started_at < $9::timestamptz
+                    AND pr.exchange_session_id = op.exchange_session_id AND pr.package_id = $10::uuid
+                    AND pr.study_ref_id = op.study_ref_id AND pr.source_hospital_id = $11::uuid
+                    AND pr.destination_hospital_id = $12::uuid AND pr.transfer_type = 'PACS_IMPORT'
+                    AND pr.transfer_status = 'PENDING' AND pr.integrity_id IS NULL
+                    AND pr.ingested_at IS NULL AND pr.transferred_at IS NULL
+                    AND pr.created_at <= op.stow_started_at
+                    AND EXISTS (SELECT 1 FROM audit_events AS ae WHERE ae.resource_id = op.operation_id
+                      AND ae.resource_type = 'PACS_TRANSFER_OPERATION' AND ae.exchange_session_id = op.exchange_session_id
+                      AND ae.actor_id = op.actor_id AND ae.tenant_id = op.tenant_id
+                      AND ae.action = 'PACS_TRANSFER_OPERATION_STATE_CHANGED' AND ae.result = 'SUCCESS'
+                      AND ae.reason_code = 'PREFLIGHT_PASSED' AND ae.occurred_at <= op.stow_started_at)
+                    AND EXISTS (SELECT 1 FROM audit_events AS ae WHERE ae.resource_id = op.operation_id
+                      AND ae.resource_type = 'PACS_TRANSFER_OPERATION' AND ae.exchange_session_id = op.exchange_session_id
+                      AND ae.actor_id = op.actor_id AND ae.tenant_id = op.tenant_id
+                      AND ae.action = 'PACS_TRANSFER_OPERATION_STATE_CHANGED' AND ae.result = 'SUCCESS'
+                      AND ae.reason_code = 'STOW_STARTED' AND ae.occurred_at = op.stow_started_at)
+                    AND NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = op.tenant_id`,
+                [scope.operationId, scope.tenantId, identity.actorId, scope.exchangeSessionId, scope.studyRefId,
+                  digest, handoff.sourceEvidence.objectCount, this.clock(), expiresAt, scope.packageId,
+                  scope.sourceHospitalId, scope.destinationHospitalId],
+              );
+              const timestamp = claim.rows[0]?.dispatch_read_claimed_at;
+              if (claim.rowCount !== 1 || claim.rows.length !== 1 || !(timestamp instanceof Date) ||
+                !Number.isFinite(timestamp.getTime()) || timestamp > this.clock() || timestamp >= expiresAt ||
+                (claimedAt !== undefined && claimedAt !== timestamp.toISOString()) ||
+                (this.#dispatchReads.get(handoff) && this.#dispatchReads.get(handoff)!.claimedAt !== timestamp.toISOString())) {
+                throw new Error("DISPATCH_CLAIM_CHANGED");
+              }
+              claimedAt = timestamp.toISOString();
+              if (phase === 1) {
+                // Reserve after positive fresh ownership/authorization, before
+                // Audit/COMMIT acknowledgement. A lost acknowledgement cannot
+                // turn this process's attempted read into a retry capability.
+                const previous = this.#dispatchReads.get(handoff);
+                if (previous?.attempts.has(instance.objectRef)) throw new Error("DISPATCH_READ_REPLAY");
+                const ledger = previous ?? { claimedAt, attempts: new Set<string>() };
+                ledger.attempts.add(instance.objectRef); this.#dispatchReads.set(handoff, ledger);
+              }
+            }
             await recordAudit(transaction, { actorId: identity.actorId, tenantId: identity.tenantId, scope,
               correlationId: readCommand.correlationId, action: "PACS_TEMPORARY_READ_AUTHORIZED", result: "ALLOW",
               reasonCode: phase === 1 ? "BEFORE_DECRYPT" : "BEFORE_DELIVERY", now: this.clock(), createId: this.createId });
           },
         );
+        if (mode === "DISPATCH" && phase === 1) {
+          if (!claimedAt || !this.#dispatchReads.get(handoff)?.attempts.has(instance.objectRef)) throw new Error("DISPATCH_CLAIM_MISSING");
+        }
         assertLive();
         return "VERIFIED";
       }, async (plaintext, signal) => {
@@ -1029,6 +1119,7 @@ export class AuthorizedSourceCaptureService {
         }
       }
 
+      const observedSyntaxes = new Map<string, string>();
       const instanceDescriptors = descriptors.map((descriptor) => {
         return Object.freeze({
           sopInstanceUid: descriptor.sopInstanceUid,
@@ -1041,6 +1132,12 @@ export class AuthorizedSourceCaptureService {
               seriesInstanceUid: descriptor.seriesInstanceUid,
               sopInstanceUid: descriptor.sopInstanceUid,
             });
+            if (sourceStream.transferSyntaxUid !== "1.2.840.10008.1.2.1" ||
+              (descriptor.transferSyntaxUid !== undefined && descriptor.transferSyntaxUid !== sourceStream.transferSyntaxUid)) {
+              await sourceStream.body.cancel().catch(() => undefined);
+              throw new AuthorizedSourceCaptureUnavailableError();
+            }
+            observedSyntaxes.set(descriptor.sopInstanceUid, sourceStream.transferSyntaxUid);
             if (
               !temporaryPackageBinding ||
               !temporaryPackageHandle ||
@@ -1131,6 +1228,8 @@ export class AuthorizedSourceCaptureService {
               objectRef: receipt.objectRef,
               seriesInstanceUid: receipt.seriesInstanceUid,
               sopInstanceUid: receipt.sopInstanceUid,
+              sopClassUid: descriptor.sopClassUid,
+              transferSyntaxUid: observedSyntaxes.get(receipt.sopInstanceUid)!,
               byteLength: receipt.byteLength,
               sha256: receipt.sha256,
             });
@@ -1291,6 +1390,7 @@ export class AuthorizedSourceCaptureService {
                   evidence: evidence.record,
                   capture,
                   descriptors,
+                  observedSyntaxes,
                   temporaryPackage: temporaryPackageHandoff,
                 }),
               } as const);

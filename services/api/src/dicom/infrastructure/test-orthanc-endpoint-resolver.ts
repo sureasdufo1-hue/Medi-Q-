@@ -69,6 +69,7 @@ export class TestOrthancEndpointResolver implements DicomEndpointResolver {
           operations: new Set<DicomGatewayOperation>([
             "QIDO_STUDIES",
             "STOW_INSTANCE",
+            "STOW_STUDY",
             "VERIFY_STUDY",
           ]),
         },

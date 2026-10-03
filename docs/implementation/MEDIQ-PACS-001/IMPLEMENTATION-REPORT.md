@@ -1,5 +1,47 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 30. User-requested current-state Git checkpoint — 2026-10-04
+
+This checkpoint supersedes older current-status statements. DEC-019/020 implementation is saved as WIP, without fixing product/test code in this commit/push task.
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: User-authorized current-state commit/push; CAPSTONE-P0 WIP snapshot
+Changed: Preserve existing Study transport, operation-bound source read, metadata/owned-stream bridge, merged purge/TTL cancellation, tests and design records; append truthful checkpoint evidence and status
+Not changed: No implementation fix, new endpoint/schema/grant/dependency, deployed stack or live DB/PACS mutation
+Security impact: Existing deny/unknown/no-retry boundaries preserved; cancellation/lifetime acceptance has current failing regressions and is not accepted
+Tests executed: API build PASS; full API 45 files/1019 tests, 1016 PASS and 3 FAIL (exit 1); typecheck and DICOM Port contract PASS; diff integrity and targeted candidate-path/credential-pattern checks PASS
+Tests not executed: Current real Orthanc/source, dispatched SQL/RLS, additional purge/TTL bridge acceptance, full coordinator/destination/security/E2E and deployment
+Evidence: TEST-EVIDENCE.md section 66; includes exact commands, all failures and inspection-based next steps
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Fake Study outcome inventory mismatch; purge reason and signal-identity regression expectations need reconciliation and passing verification; complete dispatch/Preflight/destination/evidence/purge composition remains open
+Status: PARTIAL; current regression FAILED; checkpoint is not a release or completed P0
+```
+
+## 29. Current work — DEC-020 committed-operation source reads (opened before code)
+
+Ticket MEDIQ-PACS-001; CAPSTONE-P0. DEC-020 and DISPREAD-001–006 recorded before implementation. Add validated SOP Class/actual WADO syntax to original internal handoff and a separate durable operation-bound dispatched read; preserve CREATED-only existing reads. Do not perform a dispatch transition/STOW, bypass full Preflight or alter DB/grants/public API. Focused real crypto/engine/model SQL and full regression plus current actual source coverage planned. Evidence §65. Status PARTIAL/NOT RUN; actual new SQL/RLS and complete coordinator/transport lifetime/E2E remain required.
+
+## 28. Current work — DEC-019 Study transport (opened before implementation)
+
+Ticket: MEDIQ-PACS-001. Scope: CAPSTONE-P0 internal bounded one-attempt Study STOW prerequisite. Recommendation and STUDY-001–006 Acceptance recorded before code. Planned changes: lazy sequential multipart Study port, B-only resolver capability, strict complete minimized outcome and cancellation/limits/contract tests. Not changed: public API, DB/schema/grants, source CREATED read boundary, existing stack, Preflight/dispatch authority, destination or P0 success conditions. Tests not yet executed. Evidence §64. Risks: actual Orthanc/borrowed crypto lifetime/full coordinator remain unverified. Status PARTIAL; do not enable a product STOW route or mark transfer complete.
+
+Final verification (2026-10-03 23:55 KST), supersedes the initial opening statement:
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 internal single-attempt bounded Study transport (DEC-019)
+Changed: Typed lazy Study port, B-only STOW_STUDY capability, dense immutable metadata snapshot, sequential multipart, complete minimized outcomes, bounded cancellation/timeout/late cleanup; tests and normative/evidence/plan/index synchronization
+Not changed: Public API, DB/schema/grants/dependencies/infra, source CREATED-only reads, deployed stack and original Preflight/A-to-B success conditions
+Security impact: Reject malformed/mutated/oversized inventory before effect; one started attempt without retry; incomplete/contradictory or interrupted outcome is UNKNOWN, never COMPLETED; callback remains trusted and is not authority
+Tests executed: New focused 50 PASS; final 98976 full 45 files/962 tests/build/type/Port PASS; native loopback exact two-part request/socket-loss/cleanup; bounded 2-GiB counter fixture with one active reader; pre-effect denial, queue/cancel/timeout/late/unread-body cleanup; diff check and unchanged-persistence review PASS
+Tests not executed: Real Orthanc Study STOW, deployed runtime/new DB or source integration rerun, authorized post-dispatch crypto lifetime, full coordinator/destination verification/atomic completion, security/E2E and maintenance scheduling
+Evidence: TEST-EVIDENCE.md §64 (all commands/results/review corrections/limitations)
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Protocol-only native peer is not PACS/TLS/RLS; counter workload is not actual 2-GiB throughput/OS-memory evidence. Fresh full Preflight/fenced dispatch ownership, source metadata/read bridge, destination hashes/provenance/Audit/purge and job lifecycle still required
+Status: STUDY-001–005 scoped PASS; STUDY-006 NOT IMPLEMENTED; MEDIQ-PACS-001/P0 PARTIAL. No live heavy handle or automatic commit/push
+```
+
 ## 27. Current work — DEC-018 runtime composition (opened 2026-10-03)
 
 ```text
@@ -22,7 +64,7 @@ Status: DEC-018 RUNTIME-001–008 scoped PASS; MEDIQ-PACS-001/P0 PARTIAL; no liv
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — R9/R9-A actual 87439 58-case/overlap/cleanup PASS; 275 lightweight and API 33404 894/build/type/Port PASS; internal evidence reconciliation/runtime/full P0 remain open |
+| 상태 | `PARTIAL` — DEC-019 STUDY-001–005 component/protocol scoped PASS, current API 45/962/build/type/Port and focused 50 PASS; DEC-018 runtime/source evidence remains separately recorded. Full committed-dispatch read/coordinator/Preflight/STOW/destination/security/E2E and maintenance job lifecycle remain open |
 
 ## 1. 목표 및 판정 범위
 

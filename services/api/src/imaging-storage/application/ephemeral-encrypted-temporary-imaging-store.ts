@@ -843,7 +843,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
       !input || typeof verifyAccess !== "function" || typeof consume !== "function" ||
       (input.signal !== undefined && !(input.signal instanceof AbortSignal))
     ) storageError("INVALID_INPUT");
-    const signal = input.signal ?? new AbortController().signal;
+    let signal = input.signal ?? new AbortController().signal;
     const request = Object.freeze({
       storageRef: input.storageRef,
       objectRef: input.objectRef,
@@ -863,6 +863,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
     });
     const release = await AUTHENTICATED_PLAINTEXT_ADMISSION.acquire(signal);
     let plaintext: Buffer | null = null;
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
     const checkAccess = async () => {
       if (signal.aborted) storageError("ABORTED");
       try {
@@ -873,6 +874,12 @@ export class EphemeralEncryptedTemporaryImagingStore {
     };
     try {
       await checkAccess();
+      const { storedPackage } = this.#assertReadableInstance(request);
+      const remaining = storedPackage.expiresAt! - this.now();
+      if (!Number.isSafeInteger(remaining) || remaining <= 0) storageError("EXPIRED");
+      const expiry = new AbortController();
+      expiryTimer = setTimeout(() => expiry.abort(), remaining);
+      signal = AbortSignal.any([signal, storedPackage.abortController.signal, expiry.signal]);
       plaintext = await this.#readAuthenticatedInstance(request, signal);
       await checkAccess();
       // Expiry or a concurrent purge may have happened during final verifier I/O.
@@ -882,6 +889,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
       if (signal.aborted) storageError("ABORTED");
     } finally {
       // Never race-release on abort: the active consumer must actually settle.
+      if (expiryTimer) clearTimeout(expiryTimer);
       plaintext?.fill(0);
       release();
     }

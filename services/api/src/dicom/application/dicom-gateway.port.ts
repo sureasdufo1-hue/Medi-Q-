@@ -7,6 +7,7 @@ export type DicomGatewayOperation =
   | "WADO_INSTANCE"
   | "WADO_FRAME"
   | "STOW_INSTANCE"
+  | "STOW_STUDY"
   | "VERIFY_STUDY";
 
 /**
@@ -102,6 +103,29 @@ export interface StoreInstanceStreamRequest {
   readonly contentLength?: number;
 }
 
+/** Metadata only; never construct an eager array of DICOM payloads. */
+export interface DicomStowStudyInstance {
+  readonly seriesInstanceUid: string;
+  readonly sopInstanceUid: string;
+  readonly sopClassUid: string;
+  readonly transferSyntaxUid: string;
+  readonly contentLength: number;
+}
+
+export interface StoreStudyStreamRequest {
+  readonly context: DicomGatewayRequestContext;
+  readonly studyInstanceUid: string;
+  readonly instances: readonly DicomStowStudyInstance[];
+  /**
+   * Trusted coordinator only, after committed dispatch/Preflight. Called lazily
+   * once per frozen descriptor, sequentially; must respect abort and own emitted
+   * buffers. An enqueue is not network settlement or authority to read a vault.
+   */
+  readonly openInstance: (
+    instance: Readonly<DicomStowStudyInstance>, signal: AbortSignal,
+  ) => Promise<ReadableStream<Uint8Array>>;
+}
+
 export type DicomStowFailureCode =
   | "PROCESSING_FAILURE"
   | "INVALID_INSTANCE"
@@ -172,6 +196,8 @@ export interface DicomGateway {
     request: RetrieveFrameStreamRequest,
   ): Promise<DicomFrameStream>;
   storeInstanceStream(request: StoreInstanceStreamRequest): Promise<DicomStowResult>;
+  /** One bounded multipart HTTP attempt for the entire same-Study inventory. */
+  storeStudyStream(request: StoreStudyStreamRequest): Promise<DicomStowResult>;
   verifyDestinationStudy(
     request: VerifyDestinationStudyRequest,
   ): Promise<VerifyDestinationStudyResult>;

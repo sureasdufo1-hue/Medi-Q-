@@ -1,5 +1,9 @@
 # MediQ Data Flow Specification
 
+## Internal Study transport flow — PACS-001-DEC-019
+
+Trusted coordinator (future complete Preflight + committed dispatch claim) → immutable Study/inventory/context snapshot → B-only endpoint resolution → bounded adapter admission → one multipart POST → lazily open next owned instance stream → validate exact declared bytes/EOF → close reader → next part → closing boundary → bounded complete outcome partition. Started body/response failure returns only fixed OUTCOME_UNKNOWN, never automatic retry or COMPLETED. No whole-Study payload array, caller endpoint or PACS credential crosses the port. The opener does not grant vault access; current source reads still reject STOW_STARTED. Dispatch-bound authorized reading/validated transport metadata/crypto ownership, actual destination hashes/provenance/Audit/terminal purge are subsequent mandatory flows, not proven by loopback transport tests. Acceptance STUDY-001–006/evidence §64.
+
 ## Current internal runtime flow — PACS-001-DEC-018 (2026-10-03)
 
 API provider startup → initialize private ciphertext directory → bind one store to source capture and expiry maintenance. A valid source coordinator command still follows verified identity/mapping/Consent/Authorization/Grant → committed STAGING reservation → per-capture committed quota → A HTTPS WADO/hash/encryption → committed AVAILABLE/evidence/Audit → in-process handoff. Authorized borrowed reads use the two existing fresh checks and the same store; ordinary response projection is unchanged.

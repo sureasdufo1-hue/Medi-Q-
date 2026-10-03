@@ -15,6 +15,7 @@ import { DICOM_GATEWAY, type DicomGateway } from "../dicom/application/dicom-gat
 import { OrthancDicomwebAdapter } from "../dicom/infrastructure/orthanc-dicomweb.adapter.js";
 import { TestOrthancEndpointResolver } from "../dicom/infrastructure/test-orthanc-endpoint-resolver.js";
 import { AuthorizedSourceCaptureService } from "../integrity/application/authorized-source-capture.service.js";
+import { DispatchedInstanceStreamFactory } from "./application/dispatched-instance-stream.factory.js";
 import { TemporaryImagingStorageModule } from "../imaging-storage/temporary-imaging-storage.module.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 
@@ -61,7 +62,12 @@ import { EphemeralEncryptedTemporaryImagingStore } from "../imaging-storage/appl
         store: EphemeralEncryptedTemporaryImagingStore,
       ) => new AuthorizedSourceCaptureService(executor, actorTenantContext, dicomGateway, undefined, undefined, store),
     },
+    {
+      provide: DispatchedInstanceStreamFactory,
+      inject: [AuthorizedSourceCaptureService],
+      useFactory: (source: AuthorizedSourceCaptureService) => new DispatchedInstanceStreamFactory(source),
+    },
   ],
-  exports: [PacsImportMappingGateService, AuthorizedSourceCaptureService],
+  exports: [PacsImportMappingGateService, AuthorizedSourceCaptureService, DispatchedInstanceStreamFactory],
 })
 export class PacsImportModule {}

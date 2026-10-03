@@ -1,5 +1,11 @@
 # MediQ Threat Model
 
+## DEC-019 Study transport review
+
+New surface: internal lazy opener and multi-instance multipart POST. Reject caller endpoint/credential fields, unsafe/mutated inventory/profile/length/count/duplicates before effect; configured B-only resolver and immutable copies protect the target. Downstream demand/highWaterMark 0 and sequential input readers avoid eager whole-Study collection. Abort/idle/total/header bounds handle stalled source/open/fetch, including late unopened-body cleanup; cancel/release active reader and request. A started body/response failure is ambiguous, so fixed UNKNOWN/no-retry is mandatory. Require every expected SOP exactly once in the outcome; omissions/foreign/contradictory results cannot become success. Unknown paths can still leave data on B and require later verification, not resend.
+
+Residual risks: opener is a trusted application callback, not an authorization engine; vault borrowed-buffer ownership/zeroing needs separate actual integration. Adapter bounds do not prove external fetch/OS or global multi-process memory limits. Loopback protocol evidence is not TLS, PACS interoperability, Tenant RLS or product Preflight. Fenced durable dispatch/fresh authorization, true Orthanc destination identity/byte checks and atomic evidence/terminal state remain unimplemented. No new public route, DB privilege or actual PACS mutation in this gate. DEC-019/STUDY-001–006; PACS-001 evidence §64.
+
 ## DEC-018 runtime storage/maintenance review (2026-10-03)
 
 Classification: CAPSTONE-P0. New surfaces are a private ciphertext volume, store provider and internal token-authenticated one-shot maintenance method. A forged principal or valid USER token must not cause cleanup: validate exact data fields, verify configured OIDC token, then retain per-transaction active Tenant-level SERVICE/RLS checks. Missing verifier/actor/context and dependency failure deny with fixed errors. Use one live store for capture and cleanup so physical removal also invalidates the owning process's keys/active reads. No new route, timer, SQL grant, PHI fixture or external deployment is introduced.

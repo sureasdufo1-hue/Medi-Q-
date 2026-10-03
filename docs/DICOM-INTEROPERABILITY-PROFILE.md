@@ -1,5 +1,11 @@
 # MediQ DICOM Interoperability Profile
 
+## Internal Study transport amendment — PACS-001-DEC-019
+
+CAPSTONE-P0. `storeStudyStream` sends one multipart/related POST to the configured Test B `/dicom-web/studies/{study}` resource. Each part is one PS3.10 representation in canonical Series/SOP order; approved inventory must be unique, CT Image Storage/Explicit VR Little Endian, ≤64 series/2,000 instances, 1–64 MiB each, aggregate ≤2 GiB. Metadata selectors/opener are copied before awaits; streams open only on demand and one active reader finishes before the next opens. Stream buffers belong to the trusted caller and must stay stable through consumption; the later vault bridge must prove copying/borrowed lifetime/zeroing explicitly. No Study-sized Buffer array.
+
+`STOW_STUDY` is a B-only internal transport capability, not patient authorization. Actual coordinator must enforce complete fresh Preflight and commit a durable fenced dispatch claim before invoking it. A started attempt has no automatic retry. Response must classify every expected SOP exactly once as stored/warning/failure; missing/duplicate/foreign/contradictory or unparseable/early/lost responses are unknown. Even a complete 200 is not destination byte integrity, provenance or product COMPLETED. Existing single-instance transport remains for its existing callers. No route/live Orthanc mutation is enabled by this amendment. Acceptance STUDY-001–006, decision DEC-019, PACS-001 evidence §64; actual full A→B/security/E2E remains required. Standard basis: [DICOM PS3.18 §10.5](https://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_10.5.html).
+
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** DICOM Interoperability Profile / Implementation Contract  

@@ -1,5 +1,9 @@
 # MediQ System Architecture
 
+## Internal bounded Study transport — PACS-001-DEC-019
+
+`DicomGateway.storeStudyStream` / `OrthancDicomwebAdapter` adds one same-Study multipart attempt using a bounded metadata inventory and lazy sequential owned input streams, rather than repeating `storeInstanceStream` per object. `STOW_STUDY` resolves only configured Test B. Complete minimized stored/warning/failure partitions and started-attempt UNKNOWN/no-retry feed the future coordinator; there is still no effect-capable public import route. `AuthorizedSourceCaptureService.consumeCapturedInstance` stays CREATED-only. A separate operation-bound committed-dispatch read, validated SOP Class/Transfer Syntax handoff, borrowed-buffer bridge, complete Mandatory Preflight and durable dispatch/completion composition must connect this port before actual A→B transfer. DOC/API/DB state is not promoted by adapter success. DEC-019/STUDY-001–006; implementation/evidence §28/§64.
+
 ## Current runtime composition amendment — PACS-001-DEC-018 (2026-10-03)
 
 The API imports `TemporaryImagingStorageModule` through `PacsImportModule`. It initializes one `EphemeralEncryptedTemporaryImagingStore` at the fixed private container directory `/var/lib/mediq/temporary-imaging` before provider creation completes. Source coordinator capture/authorized borrowed reads and authenticated one-shot expiry use the same live store. Scoped database quota remains bound to each capture's verified principal, not a global service identity. The runtime image creates the directory for the non-root node user (0700); Compose mounts only a dedicated ciphertext volume there. No DEK, nonce/tag registry, plaintext, bearer token or wrapped key is persisted by this wiring.

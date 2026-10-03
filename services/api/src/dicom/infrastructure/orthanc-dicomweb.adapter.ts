@@ -20,6 +20,7 @@ import type {
   RetrieveInstanceStreamRequest,
   RetrieveStudyMetadataRequest,
   StoreInstanceStreamRequest,
+  StoreStudyStreamRequest,
   VerifyDestinationStudyRequest,
   VerifyDestinationStudyResult,
 } from "../application/dicom-gateway.port.js";
@@ -32,6 +33,7 @@ import type {
   DicomEndpointResolver,
   ResolvedDicomEndpoint,
 } from "./test-orthanc-endpoint-resolver.js";
+import { awaitStowSignal, makeStudyStowBody, snapshotStudyStowRequest } from "./study-stow-body.js";
 
 const DICOMWEB_ROOT = "/dicom-web/";
 const MAX_STUDIES = 100;
@@ -106,7 +108,7 @@ export class OrthancDicomwebAdapter implements DicomGateway {
       request.context.hospitalId === TEST_HOSPITAL_A_ID
         ? ["QIDO_STUDIES", "WADO_STUDY_METADATA", "WADO_INSTANCE", "WADO_FRAME"]
         : request.context.hospitalId === TEST_HOSPITAL_B_ID
-          ? ["QIDO_STUDIES", "STOW_INSTANCE", "VERIFY_STUDY"]
+          ? ["QIDO_STUDIES", "STOW_INSTANCE", "STOW_STUDY", "VERIFY_STUDY"]
           : [];
     const operations = candidates.filter((operation) => {
       try {
@@ -316,6 +318,47 @@ export class OrthancDicomwebAdapter implements DicomGateway {
     } finally {
       scope.dispose();
       release();
+    }
+  }
+
+  async storeStudyStream(input: StoreStudyStreamRequest): Promise<DicomStowResult> {
+    const request = snapshotStudyStowRequest(input);
+    // Resolve/check target before acquiring bodies or initiating the effect.
+    const endpoint = this.#resolve(request.context, "STOW_STUDY");
+    const url = endpointUrl(endpoint, `studies/${segment(request.studyInstanceUid)}`);
+    const release = await this.#semaphore.acquire(request.context.signal);
+    const scope = createRequestScope(request.context.signal, this.#deadlines.stowHeadersMs, this.#deadlines.stowTotalMs);
+    const boundary = `mediq-${randomUUID()}`;
+    const multipart = makeStudyStowBody(request, boundary, scope, this.#deadlines.stowIdleMs);
+    let started = false;
+    let activeResponse: Response | undefined;
+    try {
+      const headers = requestHeaders(endpoint, "application/dicom+json");
+      headers.set("content-type", `multipart/related; type="application/dicom"; boundary="${boundary}"`);
+      if (scope.signal.aborted) throw new Error("DICOM_STOW_CANCELLED");
+      started = true;
+      const fetching = this.#fetch(url, { method: "POST", headers, body: multipart.body,
+        signal: scope.signal, redirect: "error", cache: "no-store", duplex: "half" } as RequestInit & { duplex: "half" });
+      void fetching.then(response => {
+        if (scope.signal.aborted) void response.body?.cancel().catch(() => undefined);
+      }, () => undefined);
+      const response = await awaitStowSignal(fetching, scope.signal);
+      activeResponse = response;
+      scope.clearHeaderTimer();
+      if (!multipart.isComplete() || (response.status !== 200 && response.status !== 202)) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error("DICOM_STOW_OUTCOME_UNKNOWN");
+      }
+      requireMediaType(response, "application/dicom+json");
+      const rows = await readJsonObject(response, 1024 * 1024, scope, this.#deadlines.stowIdleMs);
+      return projectStudyStowResult(request.instances.map(item => item.sopInstanceUid), response.status as 200 | 202, rows);
+    } catch (error) {
+      scope.abort();
+      if (activeResponse?.body && !activeResponse.body.locked) void activeResponse.body.cancel().catch(() => undefined);
+      if (started) throw new Error("DICOM_STOW_OUTCOME_UNKNOWN");
+      throw sanitizeError(error, "DICOM_STOW_FAILED");
+    } finally {
+      multipart.close(); scope.dispose(); release();
     }
   }
 
@@ -1234,6 +1277,27 @@ function projectStowResult(
     warningSopInstanceUids: warnings.filter((uid) => uid === expectedSopUid),
     failedInstances: failedInstances.filter((entry) => entry.sopInstanceUid === expectedSopUid),
   };
+}
+
+function projectStudyStowResult(expected: readonly string[], status: 200 | 202,
+  response: Record<string, unknown>): DicomStowResult {
+  const succeeded = sequenceItems(response, "00081199");
+  const failed = sequenceItems(response, "00081198");
+  const expectedSet = new Set(expected), seen = new Set<string>();
+  const stored: string[] = [], warning: string[] = [];
+  const failedInstances: { sopInstanceUid: string; code: DicomStowFailureCode }[] = [];
+  for (const item of [...succeeded, ...failed]) {
+    const uid = requiredTagString(item, "00081155", "UI");
+    if (!expectedSet.has(uid) || seen.has(uid)) throw new Error("DICOM_UPSTREAM_INVALID");
+    seen.add(uid);
+  }
+  if (seen.size !== expectedSet.size) throw new Error("DICOM_UPSTREAM_INVALID");
+  for (const item of succeeded) {
+    const uid = requiredTagString(item, "00081155", "UI");
+    (tag(item, "00081196") === undefined ? stored : warning).push(uid);
+  }
+  for (const item of failed) failedInstances.push({ sopInstanceUid: requiredTagString(item, "00081155", "UI"), code: mapStowFailure(item) });
+  return { httpStatus: status, storedSopInstanceUids: stored, warningSopInstanceUids: warning, failedInstances };
 }
 
 function sequenceItems(record: Record<string, unknown>, key: string): readonly Record<string, unknown>[] {

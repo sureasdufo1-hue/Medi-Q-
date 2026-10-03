@@ -16,6 +16,9 @@ import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrit
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { ActorTenantContextDeniedError, ActorTenantContextUnavailableError } from "../../services/api/dist/identity/identity-context.types.js";
 import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
+import { pacsTransferOperationDigest } from "../../services/api/dist/pacs/domain/pacs-transfer-operation-digest.js";
+import { DispatchedInstanceStreamFactory } from "../../services/api/dist/pacs/application/dispatched-instance-stream.factory.js";
+import { OrthancDicomwebAdapter } from "../../services/api/dist/dicom/infrastructure/orthanc-dicomweb.adapter.js";
 import { TEMPORARY_IMAGING_ROOT } from "../../services/api/dist/imaging-storage/temporary-imaging-storage.module.js";
 import { APP_CONFIG } from "../../services/api/dist/health/health.tokens.js";
 import { OIDC_TOKEN_VERIFIER } from "../../services/api/dist/authentication/authentication.tokens.js";
@@ -154,6 +157,8 @@ function studyMetadata(options = {}) {
 
 function makeHarness(options = {}) {
   let activeTransactions = 0;
+  let dispatchClaim = null;
+  let dispatchChecks = 0;
   let currentIdentity = identity;
   let authorizationCalls = 0;
   let currentScope = operationScope({
@@ -231,6 +236,18 @@ function makeHarness(options = {}) {
         query: async (statement, values = []) => {
           const sql = String(statement);
           if (sql.includes("pg_advisory_xact_lock")) return { rowCount: 1, rows: [] };
+          if (sql.includes("AS dispatch_read_claimed_at")) {
+            dispatchChecks++;
+            // Independent modeled ledger/provenance predicates, NOT SQL/RLS proof.
+            const c = dispatchClaim;
+            const good = c && c.actorId === values[2] && c.digest === values[5] && c.count === values[6] &&
+              c.version === 2 && c.claimedAt instanceof Date && c.claimedAt <= values[7] && c.claimedAt < values[8] &&
+              c.provenance && c.preflightAudit && c.dispatchAudit;
+            expect(values.slice(0, 5)).toEqual([ids.operation, ids.tenant, ids.actor, ids.session, ids.studyRef]);
+            expect(values.slice(9)).toEqual([ids.package, TEST_HOSPITAL_A_ID, TEST_HOSPITAL_B_ID]);
+            if (options.failDispatchSql === dispatchChecks) throw new Error("TEST-DISPATCH-SQL");
+            return { rowCount: good ? 1 : 0, rows: good ? [{ dispatch_read_claimed_at: c.claimedAt }] : [] };
+          }
           if (sql.includes("SELECT 1 AS capture_read_available")) {
             readPhase = ++readChecks;
             const evidence = committedEvidence.find((item) => item.integrity_id === values[6]);
@@ -419,6 +436,7 @@ function makeHarness(options = {}) {
       options.afterMetadata?.();
       if (options.metadataFailure) throw new Error("private upstream response");
       const metadata = studyMetadata({ patientId: options.metadataPatientId });
+      options.sourceMetadataMutate?.(metadata);
       switch (options.metadataShape) {
         case "EMPTY":
           metadata.series = [];
@@ -462,7 +480,7 @@ function makeHarness(options = {}) {
       if (!item) throw new Error("SYNTHETIC_INSTANCE_NOT_FOUND");
       options.onInstanceStreamOpen?.(item, request);
       if (options.instanceStreamFactory) {
-        return options.instanceStreamFactory(item, request);
+        return { transferSyntaxUid: "1.2.840.10008.1.2.1", ...await options.instanceStreamFactory(item, request) };
       }
       const body = new ReadableStream({
         pull(controller) {
@@ -476,6 +494,7 @@ function makeHarness(options = {}) {
         mediaType: "application/dicom",
         contentLength: item.bytes.byteLength,
         sopInstanceUid: item.sopInstanceUid,
+        transferSyntaxUid: "1.2.840.10008.1.2.1",
       };
     },
     storeInstanceStream: async () => {
@@ -511,6 +530,15 @@ function makeHarness(options = {}) {
     get activeTransactions() { return activeTransactions; },
     get authorizationCalls() { return authorizationCalls; },
     get readChecks() { return readChecks; },
+    get dispatchChecks() { return dispatchChecks; },
+    simulateCommittedDispatch(overrides = {}) {
+      currentScope = { ...currentScope, operation_state: "STOW_STARTED" };
+      dispatchClaim = { actorId: ids.actor, version: 2, count: 3, claimedAt: new Date(now),
+        digest: pacsTransferOperationDigest({ tenantId: ids.tenant, actorId: ids.actor, exchangeSessionId: ids.session,
+          studyRefId: ids.studyRef, consentId: ids.consent, grantId: ids.grant, action: "PACS_IMPORT" }),
+        provenance: true, preflightAudit: true, dispatchAudit: true, ...overrides };
+    },
+    changeDispatch(value) { dispatchClaim = { ...dispatchClaim, ...value }; },
     changeScope(value) { currentScope = { ...currentScope, ...value }; },
     changeIdentity(value) { currentIdentity = value === null ? null : { ...currentIdentity, ...value }; },
     changeMapping(value) { currentMapping = { ...currentMapping, ...value }; },
@@ -843,6 +871,226 @@ describe("DEC-017 R2 concrete read authorization (model DB, real engine/crypto)"
       expect(harness.readChecks).toBe(4);
       expect(harness.payloadState.expiresAt.getTime()).toBe(expiry);
       expect(harness.dicomCalls.instances).toBe(3);
+    });
+  });
+});
+
+describe("DEC-020 source transport metadata and committed read (modeled SQL; real crypto/engine)", () => {
+  it("binds actual WADO syntax and metadata class without adding them to the ordinary result", async () => {
+    const sourceMetadataMutate = metadata => { for (const item of metadata.series[0].instances) delete item.transferSyntaxUid; };
+    await withLifecycle({ sourceMetadataMutate }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      for (const item of [...handoff.expectedInstances, ...handoff.temporaryPackage.instances]) {
+        expect(item).toMatchObject({ sopClassUid: "1.2.840.10008.5.1.4.1.1.2", transferSyntaxUid: "1.2.840.10008.1.2.1" });
+        expect(Object.isFrozen(item)).toBe(true);
+      }
+    });
+    const result = await makeHarness().service.capture(command());
+    expect(Object.keys(result).sort()).toEqual(["evidenceId", "kind", "objectCount", "status"]);
+  });
+
+  it.each(["class", "syntax"])("denies unsupported metadata %s before payload WADO", async variant => {
+    const h = makeHarness({ sourceMetadataMutate: metadata => {
+      metadata.series[0].instances[0][variant === "class" ? "sopClassUid" : "transferSyntaxUid"] = "2.25.999";
+    } });
+    expect(await h.service.captureForCoordinator(command())).toEqual({ kind: "DENIED", reason: "SOURCE_METADATA_INVALID" });
+    expect(h.dicomCalls.instances).toBe(0); expect(h.committedEvidence).toHaveLength(0);
+  });
+
+  it.each([undefined, "2.25.999"])("denies missing/wrong actual WADO syntax=%s and closes input", async transferSyntaxUid => {
+    const cancelled = vi.fn();
+    const h = makeHarness({ instanceStreamFactory: item => ({ sopInstanceUid: item.sopInstanceUid, mediaType: "application/dicom", transferSyntaxUid,
+      body: new ReadableStream({ pull() {}, cancel: cancelled }, { highWaterMark: 0 }) }) });
+    await expect(h.service.captureForCoordinator(command())).rejects.toThrow("SOURCE_CAPTURE_UNAVAILABLE");
+    expect(cancelled).toHaveBeenCalledOnce(); expect(h.committedEvidence).toHaveLength(0); expect(h.dicomCalls.instances).toBe(1);
+  });
+
+  it("requires a committed claim for every original object, rechecks twice and zeroes borrowed memory", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedDispatch();
+      await expect(h.service.consumeCapturedInstance(readCommand(handoff), vi.fn())).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      for (const item of handoff.temporaryPackage.instances) {
+        let borrowed;
+        await h.service.consumeDispatchedInstance(readCommand(handoff, { objectRef: item.objectRef }), async plaintext => {
+          expect(h.activeTransactions).toBe(0); borrowed = plaintext;
+          expect(plaintext).toEqual(Buffer.from(instanceFixture.find(i => i.sopInstanceUid === item.sopInstanceUid).bytes));
+        });
+        expect(borrowed.every(byte => byte === 0)).toBe(true);
+      }
+      expect(h.dispatchChecks).toBe(6); expect(h.readChecks).toBe(6);
+      expect(h.operationState).toBe("STOW_STARTED"); expect(h.dicomCalls.destinationWrites).toBe(0); expect(h.dicomCalls.instances).toBe(3);
+    });
+  });
+
+  it.each(["CREATED", "PREFLIGHT_PASSED", "VERIFYING", "COMPLETED", "FAILED", "PARTIAL", "RESULT_UNKNOWN"])
+    ("denies non-dispatch state %s without a delivery", async operation_state => {
+      await withLifecycle({}, async h => {
+        const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); h.changeScope({ operation_state });
+        const delivered = vi.fn();
+        await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(delivered).not.toHaveBeenCalled(); expect(h.dispatchChecks).toBe(0);
+      });
+    });
+
+  const claims = [["owner", { actorId: ids.mapping }], ["digest", { digest: "0".repeat(64) }], ["count", { count: 4 }],
+    ["version", { version: 3 }], ["null timestamp", { claimedAt: null }], ["future timestamp", { claimedAt: new Date(now.getTime()+1) }],
+    ["provenance", { provenance: false }], ["preflight Audit", { preflightAudit: false }], ["dispatch Audit", { dispatchAudit: false }]];
+  it.each(claims.flatMap(([name, change]) => [1,2].map(phase => [name, phase, change])))
+    ("denies %s at check %s without delivery", async (_name, phase, change) => {
+      await withLifecycle({ beforeReadVerification: (h, current) => { if (current === phase) h.changeDispatch(change); } }, async h => {
+        const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); const delivered = vi.fn();
+        await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(delivered).not.toHaveBeenCalled(); expect(h.dispatchChecks).toBe(phase);
+      });
+    });
+
+  it.each([["withdrawn", h => h.changeAuthorization({ consentStatus: "WITHDRAWN" })],
+    ["revoked", h => h.changeAuthorization({ grantStatus: "REVOKED" })], ["mapping", h => h.changeMapping({ local_patient_id: "TEST-OTHER" })],
+    ["identity", h => h.changeIdentity({ actorId: ids.mapping })], ["purge", h => { h.payloadState.state = "PURGE_PENDING"; }],
+    ["expiry", h => { h.captureTime = new Date(now.getTime()+30*60_000); }],
+    ["claim epoch", h => { h.captureTime = new Date(now.getTime()+1000); h.changeDispatch({ claimedAt: new Date(now.getTime()+1) }); }]])
+    ("rechecks %s between decrypt and delivery", async (_name, mutate) => {
+      await withLifecycle({ beforeReadVerification: (h, phase) => { if (phase === 2) mutate(h); } }, async h => {
+        const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); const delivered = vi.fn();
+        await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(delivered).not.toHaveBeenCalled();
+      });
+    });
+
+  it.each(["failDispatchSql", "failReadAudit", "failReadCommit", "loseReadCommitAck"].flatMap(key => [1,2].map(n => [key,n])))
+    ("fails closed on %s/%s", async (key, phase) => {
+      await withLifecycle({ [key]: phase }, async h => {
+        const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); const delivered = vi.fn();
+        await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(delivered).not.toHaveBeenCalled();
+      });
+    });
+
+  it.each(["clone", "claim", "verifier"])("rejects caller %s authority", async variant => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); const delivered = vi.fn();
+      const overrides = variant === "clone" ? { handoff: { ...handoff } } : variant === "claim" ? { dispatchClaim: true } : { verifyAccess: async () => "VERIFIED" };
+      await expect(h.service.consumeDispatchedInstance(readCommand(handoff, overrides), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(delivered).not.toHaveBeenCalled(); expect(h.dispatchChecks).toBe(0);
+    });
+  });
+
+  it("never retries a dispatched object after consumer failure", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); let borrowed;
+      await expect(h.service.consumeDispatchedInstance(readCommand(handoff), async bytes => {
+        borrowed = bytes; throw new Error("TEST-PRIVATE-CONSUMER");
+      })).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(borrowed.every(byte => byte === 0)).toBe(true); const delivered = vi.fn();
+      await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(h.dispatchChecks).toBe(2); expect(delivered).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(["failReadAudit", "failReadCommit", "loseReadCommitAck"])("first-check %s never restores a positively reserved attempt", async key => {
+    await withLifecycle({ [key]: 1 }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); const delivered = vi.fn();
+      await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      await expect(h.service.consumeDispatchedInstance(readCommand(handoff), delivered)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(delivered).not.toHaveBeenCalled(); expect(h.dispatchChecks).toBe(1);
+    });
+  });
+
+  it("serializes concurrent object attempts until consumer settles, then denies replay and zeroes", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch();
+      let release, enter, borrowed;
+      const started = new Promise(resolve => { enter = resolve; });
+      const hold = new Promise(resolve => { release = resolve; });
+      const first = h.service.consumeDispatchedInstance(readCommand(handoff), async bytes => { borrowed = bytes; enter(); await hold; });
+      await started; const secondDelivered = vi.fn();
+      const second = h.service.consumeDispatchedInstance(readCommand(handoff), secondDelivered);
+      const denied = expect(second).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      try { expect(borrowed).toEqual(Buffer.from(instanceFixture[0].bytes)); }
+      finally { release(); }
+      await first; await denied; expect(secondDelivered).not.toHaveBeenCalled(); expect(borrowed.every(byte => byte === 0)).toBe(true);
+      expect(h.dispatchChecks).toBe(2);
+    });
+  });
+
+  it("lazily bridges original encrypted objects into a single Study multipart using stable owned chunks", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch();
+      const factory = new DispatchedInstanceStreamFactory(h.service);
+      const ownedChunks = [], borrows = [];
+      const original = h.service.consumeDispatchedInstance.bind(h.service);
+      const observed = vi.spyOn(h.service, "consumeDispatchedInstance").mockImplementation((input, callback) =>
+        original(input, async (plaintext, signal) => { borrows.push(plaintext); await callback(plaintext, signal); }));
+      const body = factory.open(readCommand(handoff));
+      expect(observed).not.toHaveBeenCalled();
+
+      const fetch = vi.fn(async (_url, init) => {
+        const output = init.body.getReader();
+        try {
+          await output.read(); // first multipart prefix; owned body is still lazy
+          expect(observed).not.toHaveBeenCalled();
+          const first = (await output.read()).value; ownedChunks.push(first);
+          expect(first.buffer).not.toBe(borrows[0].buffer);
+          expect(borrows[0]).toEqual(Buffer.from(instanceFixture[0].bytes));
+          await new Promise(resolve => setImmediate(resolve));
+          expect(borrows[0]).toEqual(Buffer.from(instanceFixture[0].bytes));
+          expect((await output.read()).value).toEqual(Buffer.from("\r\n")); // source EOF waits for zero
+          expect(borrows[0].every(byte => byte === 0)).toBe(true);
+          expect(first).toEqual(instanceFixture[0].bytes);
+          while (true) { const part = await output.read(); if (part.done) break;
+            if (part.value.byteLength < 10) ownedChunks.push(part.value); }
+        } finally { output.releaseLock(); }
+        return new Response(JSON.stringify({ "00081199": { vr: "SQ", Value: handoff.expectedInstances.slice(1).map(item => ({
+          "00081155": { vr: "UI", Value: [item.sopInstanceUid] },
+        })) } }), { headers: { "content-type": "application/dicom+json" } });
+      });
+      const gateway = new OrthancDicomwebAdapter({ resolve: () => ({ origin: new URL("https://orthanc-b:8042/dicom-web/"), authorization: "Basic TEST-SYNTHETIC" }) }, { fetch });
+      const expected = handoff.expectedInstances;
+      await gateway.storeStudyStream({ context: { hospitalId: TEST_HOSPITAL_B_ID, correlationId: ids.correlation, signal: new AbortController().signal },
+        studyInstanceUid: handoff.studyInstanceUid,
+        instances: expected.map(({ seriesInstanceUid, sopInstanceUid, sopClassUid, transferSyntaxUid, byteLength }) => ({
+          seriesInstanceUid, sopInstanceUid, sopClassUid, transferSyntaxUid, contentLength: byteLength })),
+        openInstance: async (item, signal) => item.sopInstanceUid === expected[0].sopInstanceUid ? body : factory.open(readCommand(handoff, {
+          objectRef: handoff.temporaryPackage.instances.find(i => i.sopInstanceUid === item.sopInstanceUid).objectRef, signal })),
+      });
+      expect(fetch).toHaveBeenCalledOnce(); expect(borrows).toHaveLength(3);
+      expect(borrows.every(b => b.every(byte => byte === 0))).toBe(true);
+      for (const fixture of instanceFixture) expect(ownedChunks.some(chunk => Buffer.from(chunk).equals(Buffer.from(fixture.bytes)))).toBe(true);
+      expect(h.dicomCalls.destinationWrites).toBe(0); expect(h.dicomCalls.instances).toBe(3); // adapter fetch is fake, no real STOW
+    });
+  });
+
+  it("snapshots bridge input, holds borrow then cancels/zeros without permitting replay", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); let borrowed;
+      const original = h.service.consumeDispatchedInstance.bind(h.service);
+      vi.spyOn(h.service, "consumeDispatchedInstance").mockImplementation((input, callback) => original(input, async (p, s) => { borrowed = p; await callback(p,s); }));
+      const inputPrincipal = { ...principal }, input = readCommand(handoff, { principal: inputPrincipal });
+      const factory = new DispatchedInstanceStreamFactory(h.service), body = factory.open(input);
+      inputPrincipal.subject = "TEST-MUTATED"; input.objectRef = ids.mapping; input.tenantCandidate = ids.mapping;
+      const reader = body.getReader(), owned = (await reader.read()).value;
+      expect(owned).toEqual(instanceFixture[0].bytes); expect(borrowed).toEqual(Buffer.from(instanceFixture[0].bytes));
+      await reader.cancel(); reader.releaseLock(); expect(borrowed.every(byte => byte === 0)).toBe(true);
+      expect(owned).toEqual(instanceFixture[0].bytes);
+      const retry = factory.open(readCommand(handoff)).getReader();
+      try { await expect(retry.read()).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE"); } finally { retry.releaseLock(); }
+    });
+  });
+
+  it("bridge parent abort errors delivery and settles/zeroes the real holding consumer", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch(); let borrowed, settled;
+      const original = h.service.consumeDispatchedInstance.bind(h.service);
+      vi.spyOn(h.service, "consumeDispatchedInstance").mockImplementation((input, callback) => {
+        const work = original(input, async (p,s) => { borrowed = p; await callback(p,s); });
+        settled = work.catch(() => undefined); return work;
+      });
+      const abort = new AbortController(), factory = new DispatchedInstanceStreamFactory(h.service);
+      const reader = factory.open(readCommand(handoff, { signal: abort.signal })).getReader();
+      await reader.read(); abort.abort();
+      await expect(reader.read()).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE");
+      await settled; reader.releaseLock(); expect(borrowed.every(byte => byte === 0)).toBe(true);
     });
   });
 });

@@ -2027,6 +2027,8 @@ if (process.argv.includes("--mediq-recovery-child")) {
       assert.deepEqual(handoff.expectedInstances, expectedInstances.map((instance) => ({
         seriesInstanceUid: manifest.seriesInstanceUID,
         sopInstanceUid: instance.sopInstanceUID,
+        sopClassUid: manifest.sopClassUID,
+        transferSyntaxUid: manifest.transferSyntaxUID,
         byteLength: instance.sizeBytes,
         sha256: `sha256:${instance.sha256}`,
       })));
@@ -2051,6 +2053,8 @@ if (process.argv.includes("--mediq-recovery-child")) {
         expectedInstances: expectedInstances.map((instance) => ({
           seriesInstanceUid: manifest.seriesInstanceUID,
           sopInstanceUid: instance.sopInstanceUID,
+          sopClassUid: manifest.sopClassUID,
+          transferSyntaxUid: manifest.transferSyntaxUID,
           byteLength: instance.sizeBytes,
           sha256: `sha256:${instance.sha256}`,
         })),

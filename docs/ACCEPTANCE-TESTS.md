@@ -1,5 +1,34 @@
 # MediQ Acceptance Test Specification
 
+## PACS-001 DEC-020 — committed-operation source reads (before implementation)
+
+CAPSTONE-P0. Initial all NOT RUN. Scope is read/metadata integration; it does not authorize STOW or close STUDY-006/full P0.
+
+| ID (`TC-PACS-001-DISPREAD-*`) | Required behavior / evidence |
+|---|---|
+| 001 | Validated source metadata CT SOP Class and actual WADO Explicit VR Little Endian syntax are copied/frozen onto each original expected/temp instance. Reject unsupported class/metadata syntax before payload; absent/wrong WADO syntax or contradictory metadata denies and closes active stream before evidence/handoff. Metadata absent syntax is allowed only when actual WADO supplies the approved syntax. Ordinary result remains four fields/no identifying transport metadata. |
+| 002 | Separate dispatched read requires original handoff and freshly committed exact operation STOW_STARTED/version 2/actor/Tenant/semantic digest/source count/timestamp, pending bound Provenance and both dispatch-state Audits. CREATED/PREFLIGHT/VERIFYING/terminal or missing/stale/wrong/malformed claim/provenance/Audit denies before plaintext delivery. Existing pre-dispatch read rejects STOW_STARTED. Exact PostgreSQL/RLS proof is separate from modeled predicates. |
+| 003 | Fresh two-phase current identity/Consent/Authorization/action/scope/recipient/Session/mapping/TTL/AVAILABLE/source-integrity checks apply to dispatched reads. Mutation or SQL/Audit/commit failure at either phase prevents delivery, returns only fixed error and zeroes any borrowed plaintext. No active Tenant transaction spans crypto/consumer. |
+| 004 | One attempted dispatched read per captured object. Duplicate/concurrent replay denies; consumer failure/cancel does not enable retry. Object clones/restart/caller verifier/claim/metadata substitutions reject. Hold borrowed lifetime until consumer settles and then zero; permit distinct objects in canonical future transport sequence. No transport or operation transition occurs here. |
+| 004-B | Internal owned-stream bridge starts no read at construction; snapshots principal/selectors; on demand copies ≤64-KiB chunks without sharing the borrowed Buffer, holds until EOF/cancel/consumer settlement and waits for zero/release before EOF. Stable copied bytes survive borrowed zeroing. Parent/purge abort stops delivery; no leaked admission, source refetch, network or transition. Real crypto + engine + Study transport fixture proves linkage, modeled SQL remains explicitly unproven as RLS/full Preflight. Lost first-check commit acknowledgement or Audit failure never enables retry after positively reserved ownership. |
+| 005 | Focused actual crypto/engine tests and full API/build/type/Port pass. Privacy/no source refetch/no STOW/no schema/grant/API mutation review. Current actual source/Orthanc coverage is NOT RUN until the changed capture path is rerun with independent observers/B/privacy/cleanup; old results are not new-code evidence. |
+| 006 | Before full coordinator release, actual PostgreSQL/RLS predicates plus fresh full Preflight/atomic dispatch and stable transport-owned chunks/borrowed lifetime must feed one real Test B Study STOW, followed by destination identity/hash and atomic integrity/provenance/Audit/terminal purge/security/E2E. Keep NOT IMPLEMENTED/NOT RUN until those actual gates; no completion from dispatched read alone. |
+
+## PACS-001 DEC-019 — bounded single-attempt Study transport (before implementation)
+
+CAPSTONE-P0 internal prerequisite for the full transfer coordinator. Initial status all NOT RUN; fake-fetch evidence does not prove real Orthanc import, authority, memory SLO or P0.
+
+Current (2026-10-03 23:55 KST): STUDY-001–005 PASS within component/native-loopback protocol scope; new 50-test suite and full 45-file/962-test API/build/type/Port run 98976 exited 0. Dense inventory rejection and unread-body terminal/cancel-hook regressions included. STUDY-006 NOT IMPLEMENTED, whole P0 PARTIAL. No new live Orthanc, crypto borrowed-lifetime, TLS/RLS, production-memory or full-transfer claim. Evidence §64 distinguishes reused DEC-018 source/persistence from current transport tests.
+
+| ID (`TC-PACS-001-STUDY-*`) | Required behavior / verification |
+|---|---|
+| 001 | Validate and snapshot context/Study/unique dense data-only Series-SOP inventory, profile, exact positive lengths, 2,000-object/64-MiB-instance/2-GiB-Study ceilings before fetch or opener. Reject A/wrong destination, malformed/duplicate inventory and unsupported profile before effects. Invalid/locked lazy streams deny delivery when opened; after dispatch their outcome is UNKNOWN (004), not a pre-effect claim. Caller mutations while waiting cannot change the validated target/inventory/opener. No caller URL/credential authority. |
+| 002 | Multiple synthetic instances produce exactly one configured B multipart POST, canonical inventory order, exact bytes and complete framing. At most one input reader open; each exact-length EOF precedes opening the next. Body construction has highWaterMark 0, no eager opener or Study Buffer. Test downstream stall/backpressure and caller mutation. |
+| 003 | Parse exact stored/warning/failed partition for all expected SOPs. Preserve well-formed 202 partial/warning outcomes; reject missing/duplicate/foreign/overlapping results or malformed response as unknown after one call. No COMPLETED inference. |
+| 004 | Mid-body error, too-short/long/empty/non-byte chunk, opener error/late opener, abort, idle/total deadline, early HTTP response and response loss fail closed as unknown after dispatch. Abort the request, cancel/release active input and close multipart. Unopened instances stay unopened; no retry. Deadline must bound fetch that ignores signal. Semaphore is released on every path; follow-up operation succeeds. |
+| 005 | Typed port rejects raw buffers/URL/credentials; full API/build/type/Port regression passes. Existing single-instance transport and source-only behavior remain unchanged. Sanitized results/errors only; no payload/PatientID/path/credential/raw upstream exception logging. |
+| 006 | Before full product PASS, connect fresh full Preflight and durable fenced dispatch ownership to a separately specified authorized post-dispatch read, validated transport metadata, real Test Orthanc Study STOW, destination byte/identity verification, atomic Integrity/Provenance/Audit/terminal state, terminal purge and full security/E2E. This clause stays NOT IMPLEMENTED until those actual tests; component 001–005 cannot satisfy it. |
+
 ## PACS-001 DEC-018 runtime storage composition — before implementation
 
 Classification: CAPSTONE-P0. All RUNTIME cases start NOT RUN. This new gate permits private provider/volume registration after DEC-017's internal evidence reconciliation (§61); it does not rewrite the historical no-registration Acceptance or permit public import/STOW.

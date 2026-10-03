@@ -1,5 +1,9 @@
 # MediQ Security Requirements Specification
 
+## DEC-019 internal Study dispatch boundary
+
+CAPSTONE-P0. A lazy Study stream/opener, inventory or B transport capability is not permission to read encrypted payload or dispatch. Preserve source pre-dispatch CREATED-only reads. Later product composition must bind post-dispatch reads to the original handoff and committed operation ownership with fresh Consent/Authorization/Grant, mapping/destination and TTL checks; no arbitrary verifier/caller principal may authorize them. The internal adapter snapshots exact selectors, limits and callback, resolves only server-configured B, opens input sequentially, and uses one HTTP attempt with no retry. It returns only a complete minimized SOP outcome partition; started failures/omissions/duplicates/foreign outcomes remain unknown. Transport success alone never creates COMPLETED. Trusted stream ownership, crypto buffer lifetime, global memory bounds and real destination verification are separate required gates; component/fake-fetch/loopback tests cannot stand in for full security/E2E. Acceptance STUDY-001–006, PACS-001 evidence §64.
+
 ## Current private runtime storage binding — PACS-001-DEC-018 (2026-10-03)
 
 Classification: CAPSTONE-P0. One process-local encrypted store shall serve source capture, authorized borrowed reads and expiry maintenance. Provider initialization must await private-root validation; an invalid/symlink/unwritable root fails startup with a fixed error. Only ciphertext may enter the fixed dedicated volume, with 0700 directories/0600 files under the non-root runtime user. Existing 64 MiB/2 GiB/2,000-object/10 GiB bounds, per-capture scoped quota, 30-minute TTL and all authorization/transaction ordering remain enforced. A root/configuration/reference is never an image permission.

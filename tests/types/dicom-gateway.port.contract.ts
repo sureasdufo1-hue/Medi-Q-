@@ -12,6 +12,7 @@ import type {
   RetrieveInstanceStreamRequest,
   RetrieveStudyMetadataRequest,
   StoreInstanceStreamRequest,
+  StoreStudyStreamRequest,
   VerifyDestinationStudyRequest,
   VerifyDestinationStudyResult,
 } from "../../services/api/src/dicom/application/dicom-gateway.port.js";
@@ -77,6 +78,11 @@ class SyntheticConformingDicomGateway implements DicomGateway {
       matchesExpected: true,
     };
   }
+
+  async storeStudyStream(request: StoreStudyStreamRequest): Promise<DicomStowResult> {
+    return { httpStatus: 200, storedSopInstanceUids: request.instances.map(i => i.sopInstanceUid),
+      warningSopInstanceUids: [], failedInstances: [] };
+  }
 }
 
 const gateway: DicomGateway = new SyntheticConformingDicomGateway();
@@ -117,3 +123,15 @@ void validStore;
 // @ts-expect-error a whole-object Buffer bypasses streaming, cancellation and backpressure
 const storeWithBuffer: StoreInstanceStreamRequest = { ...validStore, body: new Uint8Array([1, 2, 3]) };
 void storeWithBuffer;
+
+const validStudy: StoreStudyStreamRequest = { context, studyInstanceUid: validStore.studyInstanceUid,
+  instances: [{ seriesInstanceUid: validStore.seriesInstanceUid, sopInstanceUid: validStore.sopInstanceUid,
+    sopClassUid: validStore.sopClassUid, transferSyntaxUid: validStore.transferSyntaxUid, contentLength: 3 }],
+  openInstance: async () => emptyStream() };
+void validStudy;
+// @ts-expect-error lazy owned streams cannot be replaced by a whole Study Buffer
+const studyBuffer: StoreStudyStreamRequest = { ...validStudy, openInstance: async () => new Uint8Array([1]) };
+void studyBuffer;
+// @ts-expect-error endpoint and credential selectors are server-owned, not port fields
+const studyEndpoint: StoreStudyStreamRequest = { ...validStudy, endpointUrl: "https://untrusted.invalid" };
+void studyEndpoint;
