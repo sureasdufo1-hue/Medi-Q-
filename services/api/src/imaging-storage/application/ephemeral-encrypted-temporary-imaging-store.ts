@@ -9,6 +9,7 @@ import {
   rmdir,
   unlink,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { Writable } from "node:stream";
@@ -43,9 +44,29 @@ export interface TemporaryImagingStorageOptions {
   readonly rootDirectory: string;
   readonly now?: () => number;
   readonly sharedQuota?: TemporaryPayloadQuotaReservationPort;
+  /** @internal Deterministic fault injection for tests; never set by runtime wiring. */
+  readonly ciphertextIo?: TemporaryImagingCiphertextIoPort;
   /** Test-only narrowing is allowed; production ceilings cannot be raised. */
   readonly limits?: Partial<typeof TEMPORARY_IMAGING_LIMITS>;
 }
+
+/** Narrow, path-free seam around writes of already-encrypted bytes and file sync. */
+export interface TemporaryImagingCiphertextIoPort {
+  write(
+    fileHandle: Pick<FileHandle, "write">,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ readonly bytesWritten: number }>;
+  sync(fileHandle: Pick<FileHandle, "sync">): Promise<void>;
+}
+
+const NODE_CIPHERTEXT_IO = Object.freeze<TemporaryImagingCiphertextIoPort>({
+  write: (fileHandle, buffer, offset, length, position) =>
+    fileHandle.write(buffer, offset, length, position),
+  sync: (fileHandle) => fileHandle.sync(),
+});
 
 export interface TemporaryImagingPackageHandle {
   readonly storageRef: string;
@@ -263,6 +284,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
   private readonly now: () => number;
   private readonly limits: typeof TEMPORARY_IMAGING_LIMITS;
   private readonly sharedQuota: TemporaryPayloadQuotaReservationPort | undefined;
+  private readonly ciphertextIo: TemporaryImagingCiphertextIoPort;
   private readonly packages = new Map<string, StoredPackage>();
   private readonly ready: Promise<void>;
   private environmentBytes = 0;
@@ -281,6 +303,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
     this.now = options.now ?? Date.now;
     this.limits = resolveLimits(options.limits);
     this.sharedQuota = options.sharedQuota;
+    this.ciphertextIo = options.ciphertextIo ?? NODE_CIPHERTEXT_IO;
     this.ready = this.initialize();
   }
 
@@ -485,7 +508,8 @@ export class EphemeralEncryptedTemporaryImagingStore {
     const writeCiphertext = async (bytes: Buffer) => {
       let offset = 0;
       while (offset < bytes.byteLength) {
-        const result = await fileHandle!.write(
+        const result = await this.ciphertextIo.write(
+          fileHandle!,
           bytes,
           offset,
           bytes.byteLength - offset,
@@ -584,7 +608,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
         const sha256 = `sha256:${digest.digest("hex")}` as const;
         if (sha256 !== expected.sha256) storageError("INTEGRITY_FAILED");
         const authTag = cipher.getAuthTag();
-        await fileHandle!.sync();
+        await this.ciphertextIo.sync(fileHandle!);
         if (storedPackage.purgePending || storedPackage.abortController.signal.aborted) {
           storageError("STORAGE_UNAVAILABLE");
         }

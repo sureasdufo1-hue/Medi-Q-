@@ -1,5 +1,7 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
+**최신 커밋 체크포인트 (2026-10-03, DEC-011):** 암호문 I/O 장애 주입 경계와 실패 테스트를 추가했다. API build/회귀 37 files/697 tests PASS이며, 현재 DB-008 ScratchOnly 시험은 최종 종료·정리 결과 미확인이다. 아래 DEC-010 체크포인트는 이전 실행 이력이며 새 DB 장애시험의 PASS 근거가 아니다. STAGE-005 및 MEDIQ-PACS-001은 PARTIAL로 유지한다. 다음 작업은 이미 실행 중인 DB 시험 결과 확인·증거/Acceptance 동기화이며, 일정·기능 범위·runtime Gate는 변경하지 않는다. [증거 §21](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending).
+
 **작성·점검일:** 2026-10-01 (Asia/Seoul)
 
 **제출 마감:** 2026-10-05 — 사용자 지정, 제출 시각 미확정

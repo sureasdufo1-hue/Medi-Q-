@@ -1,5 +1,7 @@
 # MediQ Implementation Plan
 
+**Latest commit checkpoint — 2026-10-03, DEC-011:** Deterministic quota/ciphertext-failure tests and the internal default-preserving I/O seam are implemented. API 37 files/697 tests PASS; the current DB-008 ScratchOnly run has no confirmed final result/cleanup yet. STAGE-005 and MEDIQ-PACS-001 remain PARTIAL. This note supersedes older current counts below; keep the existing sequence and runtime-activation gates unchanged. Next: verify the already-running DB test and synchronize full fault-matrix Acceptance. [Evidence §21](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending).
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `IMPLEMENTATION-PLAN.md`

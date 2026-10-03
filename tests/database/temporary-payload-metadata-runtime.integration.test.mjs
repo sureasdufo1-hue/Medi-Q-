@@ -662,11 +662,37 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
 
     currentStage = "QUOTA_SETTLE_TO_SEALED_CIPHERTEXT_BYTES";
     const syntheticPayloadBytes = Buffer.byteLength("SYNTHETIC-PURGE-FIXTURE-NOT-REAL-DICOM-OR-PHI", "utf8");
-    await quotaRepository.settle({ ...quotaInput, writerId: quotaWriterId, actualBytes: syntheticPayloadBytes });
+    const settlementInput = { ...quotaInput, writerId: quotaWriterId, actualBytes: syntheticPayloadBytes };
+    const beforeSettlementFailure = await readQuota("BEFORE_SETTLEMENT_FAILURE");
+    const rollbackSettlementRepository = new PostgresTemporaryPayloadQuotaRepository({
+      withTenant: (tenantId, work) => quotaTransactions.withTenant(tenantId, async (client) => {
+        await work(client);
+        // Fail inside the real transaction after the fixed function changed counters.
+        await client.query("SELECT 1 / 0");
+      }),
+    });
+    await assert.rejects(rollbackSettlementRepository.settle(settlementInput), TemporaryPayloadQuotaPersistenceError);
+    assert.deepEqual(await readQuota("SETTLEMENT_ROLLED_BACK"), beforeSettlementFailure);
+
+    const lostSettlementAckRepository = new PostgresTemporaryPayloadQuotaRepository({
+      async withTenant(tenantId, work) {
+        await quotaTransactions.withTenant(tenantId, work);
+        throw new Error("injected acknowledgement loss after commit");
+      },
+    });
+    await assert.rejects(lostSettlementAckRepository.settle(settlementInput), TemporaryPayloadQuotaPersistenceError);
     quotaSnapshot = await readQuota("SETTLED");
     assert.equal(quotaSnapshot.environment_reserved, String(syntheticPayloadBytes));
     assert.equal(quotaSnapshot.package_reserved, String(syntheticPayloadBytes));
     assert.equal(quotaSnapshot.ref_reserved, String(syntheticPayloadBytes));
+    await quotaRepository.settle(settlementInput);
+    assert.deepEqual(await readQuota("SETTLEMENT_IDENTICAL_RETRY"), quotaSnapshot);
+    await assert.rejects(
+      quotaRepository.settle({ ...settlementInput, actualBytes: syntheticPayloadBytes - 1 }),
+      TemporaryPayloadQuotaPersistenceError,
+      "a settled reservation cannot be changed by a different replay",
+    );
+    assert.deepEqual(await readQuota("SETTLEMENT_CHANGED_REPLAY_DENIED"), quotaSnapshot);
     await beginTenant(privilegesClient, ids.tenantId);
     await metadataRepository.markAvailable({ binding: bindingB, storageRef: siblingRef, now: new Date() });
     await privilegesClient.query("COMMIT");
@@ -754,6 +780,54 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     assert.equal(quotaSnapshot.package_reserved, String(syntheticPayloadBytes));
     assert.equal(quotaSnapshot.ref_reserved, String(syntheticPayloadBytes));
     assert.equal(quotaSnapshot.reservation_rows, 1, "Audit rollback must retain the retryable quota reservation");
+
+    const beforeReleaseFailure = quotaSnapshot;
+    for (const failurePoint of ["before-release", "after-release"]) {
+      currentStage = `QUOTA_RELEASE_FAULT_${failurePoint}`;
+      const failedReleaseAuditId = randomUUID();
+      let releaseFaultInjected = false;
+      const faultingRunner = {
+        run(principal, tenantId, work) {
+          return tenantRunner.run(principal, tenantId, (context, client) => work(context, {
+            async query(sql, ...args) {
+              if (typeof sql === "string" && sql.includes("public.release_temporary_payload_quota(")) {
+                if (failurePoint === "after-release") await client.query(sql, ...args);
+                releaseFaultInjected = true;
+                // A real SQL error aborts the same Tenant transaction, including
+                // the preceding PURGED update and, for after-release, quota effects.
+                return client.query("SELECT 1 / 0");
+              }
+              return client.query(sql, ...args);
+            },
+          }));
+        },
+      };
+      const faultingCoordinator = new TemporaryPayloadPurgeCoordinator(
+        faultingRunner, restartedStore, () => new Date(), () => failedReleaseAuditId,
+      );
+      await assert.rejects(faultingCoordinator.purge(purgeCommand), (error) =>
+        error instanceof TemporaryPayloadPurgeUnavailableError && error.phase === "FINALIZE_AUDIT");
+      assert.equal(releaseFaultInjected, true);
+      recoveredState = await readStudyState(privilegesClient, ids.tenantId, ids.siblingStudyRefId);
+      assert.equal(recoveredState.temporary_payload_state, "PURGE_PENDING");
+      assert.equal(recoveredState.temporary_storage_ref, restartRef);
+      assert.equal(recoveredState.temporary_payload_purged_at, null);
+      await assert.rejects(stat(payloadDirectory), (error) => error?.code === "ENOENT");
+      assert.deepEqual(await readQuota(`RELEASE_${failurePoint}_ROLLBACK`), beforeReleaseFailure);
+      const observer = await inspector.connect();
+      try {
+        await beginTenant(observer, ids.tenantId);
+        const audit = await observer.query(
+          "SELECT count(*)::int AS count FROM audit_events WHERE audit_event_id=$1",
+          [failedReleaseAuditId],
+        );
+        assert.equal(audit.rows[0].count, 0, "release failure must never commit a success Audit");
+        await observer.query("COMMIT");
+      } finally {
+        await observer.query("ROLLBACK").catch(() => undefined);
+        observer.release();
+      }
+    }
 
     const purgeAuditId = randomUUID();
     const successfulCoordinator = new TemporaryPayloadPurgeCoordinator(

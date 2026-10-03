@@ -6,9 +6,11 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — identity/fence/source handoffs and scoped lifecycle/quota sub-gates pass in synthetic/scratch boundaries; exact 10 GiB environment-limit subcase passes; complete `STAGE-005` DB/filesystem/Audit fault matrix remains open |
+| 상태 | `PARTIAL` — prior scoped gates retained; DEC-011 ciphertext-I/O seam and fault tests implemented; latest API 37 files/697 tests PASS; current scratch DB run and full STAGE-005 judgment pending (latest checkpoint §11) |
 
 ## 1. 목표 및 판정 범위
+
+**Latest commit checkpoint (2026-10-03):** §11 and [TEST-EVIDENCE.md §21](TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending) supersede earlier test counts/current-status descriptions below. The earlier DB wrapper PASS applies to DEC-010 only, not the pending DEC-011 run.
 
 `PACS-001-DEC-002/003`에 따라 byte-preserving P0 transfer의 필수 source DICOM PatientID binding과 operation-time Authorization race 방지의 no-side-effect 선행 slice를 구현했다. 모든 synthetic source instance ID가 caller/application이 전달한 서버 검증 destination mapping ID와 canonical exact match일 때만 `IDENTITY_MATCHED`를 반환한다. PACS eligibility gate는 verified Tenant transaction 안에서 공통 ExchangeSession fence를 먼저 획득한 뒤 Consent/Grant/Study evidence를 다시 평가한다. 두 판정 모두 Authorization/Import permission 또는 STOW dispatch 승인이 아니다.
 
@@ -256,3 +258,19 @@ Status: PARTIAL
 | 2026-10-03 | `PARTIAL` | `PACS-001-DEC-009` physical purge ordering, restart purge-only recovery, sibling isolation, retry/Audit idempotency and scoped STAGE-007/008/013/014 passed; API 37/686, build/typecheck and final ScratchOnly clean/repeat/reset/reapply/catalog/runtime-denial/cleanup all passed. DB-002~007 intentionally skipped; runtime/service/quota/no-STOW/full coordinator remain open |
 | 2026-10-03 | `PARTIAL` | `PACS-001-DEC-010` shared quota and scoped `STAGE-005` boundary tests recorded. API 37/691 and focused store 14/14 pass; distinct-writer race and source/recipient shared-Package aggregate pass. DB-008 `-ScratchOnly` wrapper exit 0 with clean/repeat/reset/reapply and owned cleanup. Exact 10 GiB and full fault matrix remain open |
 | 2026-10-03 | `PARTIAL` | Exact 10 GiB environment boundary PASS in disposable PostgreSQL: five Packages at 2 GiB, sixth Package denied at 16 MiB with SQLSTATE `54000`, counters/ledger unchanged, no payload files allocated, and normal purge+Audit cleanup returned quota to zero. Final DB-008 `-ScratchOnly` wrapper exit 0 after clean/repeat/reset/reapply and owned cleanup. Complete injected DB/filesystem/Audit fault matrix remains open; runtime storage and coordinator remain disabled |
+
+## 11. DEC-011 current commit checkpoint
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Preserve current DEC-011 implementation and evidence as an intermediate commit
+Changed: Internal ciphertext write/sync test seam with unchanged Node default; six added store cases; scratch DB settlement/release transaction-failure cases; recommendation, Acceptance and implementation records
+Not changed: Schema/migrations/grants/OpenAPI, runtime provider/volume/worker, public routes, destination calls, STOW or patient data
+Security impact: Deterministic fail-closed tests only; no new access authority or runtime activation. Quota effects in store unit tests are modeled; PostgreSQL fault Acceptance is not yet confirmed
+Tests executed: API build/regression 37 files/697 tests PASS, both modified test-file syntax checks PASS; current DB-008 ScratchOnly run observed still in progress
+Tests not executed: No final DEC-011 DB wrapper/cleanup result verified at this checkpoint; product Orthanc/E2E tests not rerun for this commit
+Evidence: TEST-EVIDENCE.md section 21; previous sections remain historical evidence
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Full STAGE-005 failure matrix and downstream runtime/SERVICE/performance/Preflight/transfer gates remain unaccepted; observe pending scratch run and synchronize its results before any full-stage PASS
+Status: PARTIAL
+```

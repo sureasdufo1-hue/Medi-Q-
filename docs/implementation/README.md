@@ -80,6 +80,8 @@ PowerShell에서 다음 명령으로 기록을 생성한다.
 
 ## 6. 구현 기록 색인
 
+**Latest checkpoint — MEDIQ-PACS-001 (2026-10-03, DEC-011):** The current commit adds deterministic store and DB failure tests. API build/regression is **37 files / 697 tests PASS** (store suite 20 cases); the new DB-008 `-ScratchOnly` run is still unconfirmed at commit checkpoint. `STAGE-005` and the Ticket remain **PARTIAL**. This note supersedes the DEC-010 counts in the historical row below; its earlier DB PASS does not certify DEC-011. See [current report](MEDIQ-PACS-001/IMPLEMENTATION-REPORT.md#11-dec-011-current-commit-checkpoint) and [evidence §21](MEDIQ-PACS-001/TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending).
+
 | Ticket | 분류 | 제목 | 상태 | 보고서 |
 |---|---|---|---|---|
 | `MEDIQ-GOV-002` | `CAPSTONE-P0` | Recommendation-led policy decision governance and documentation | `PASS` (decision workflow/documentation) | [Implementation Report](MEDIQ-GOV-002/IMPLEMENTATION-REPORT.md) · [Test Evidence](MEDIQ-GOV-002/TEST-EVIDENCE.md) |

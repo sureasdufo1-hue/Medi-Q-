@@ -525,3 +525,39 @@ git diff --check
 | Complete injected DB/filesystem/Audit fault matrix and other `STAGE-005` failure boundaries | Not covered by this exact-cap topology | NOT RUN — remains the open `STAGE-005` sub-gate |
 
 **Judgment:** The exact 10 GiB environment-cap subcase is **PASS (scoped)**. `STAGE-005` and `MEDIQ-PACS-001` remain **PARTIAL** because the complete injected DB/filesystem/Audit fault matrix is still open. Storage remains unregistered; no runtime volume/provider/worker, route, destination call, STOW, PACS mutation or product completion claim was enabled. No persistent database, production credential, actual patient information or Orthanc A/B was used.
+
+## 20. PACS-001-DEC-011 failure-matrix pre-implementation checkpoint
+
+**Decision/Acceptance:** [PACS-001-DEC-011](../../POLICY-DECISION-LOG.md#pacs-001-dec-011--deterministic-quota-failure-boundary-acceptance) and `TC-PACS-001-STAGE-005-FAIL-001~004` were recorded before code changes. This checkpoint is intentionally pre-implementation; no new failure case is claimed PASS here.
+
+**Coverage audit:** Prior tests cover initial reserve denial, quota ceilings and binding denials, plus `STAGE-008/014` purge pending-metadata failure, physical unlink failure, Audit rollback, ambiguous commit/retry, and sibling isolation. The missing direct cases are later-block reserve denial after a successful write, ciphertext file write/sync error, settlement failure and idempotent retry, and quota-release function error rolling back final metadata/Audit.
+
+**Adopted implementation scope:** Add a narrow internal ciphertext-I/O seam used only by deterministic tests; its production default delegates directly to Node `FileHandle.write()`/`sync()` and the seam receives only the already-encrypted buffer/handle, never a path, source plaintext or caller-supplied selector. Add focused store tests for the four boundary families and extend the existing DB-008 scratch integration to inject quota-release query failure inside the actual Tenant transaction. Reuse existing Stage-008/014 evidence rather than rewriting or weakening it.
+
+**Environment and safety:** Synthetic content, local temporary filesystem and uniquely named DB-008 `-ScratchOnly` PostgreSQL only. No persistent development DB, Orthanc A/B, runtime volume/provider, network transfer, migration, direct runtime grant or STOW. `STAGE-005` remains PARTIAL until the post-change results and cleanup are recorded below.
+
+**Status before implementation:** Code/test changes NOT STARTED; the previously recorded exact 10 GiB and existing purge lifecycle evidence are unchanged.
+
+## 21. DEC-011 commit checkpoint — API verified, DB run pending
+
+**Checkpoint:** 2026-10-03 Asia/Seoul, following the user's request to commit and push the current work. This section supersedes the pre-implementation status in §20, not the historical results in §§17–19. No full-stage completion is claimed.
+
+### Changes and traceability
+
+- `PACS-001-DEC-011` / `TC-PACS-001-STAGE-005-FAIL-001~003`: added the internal ciphertext write/sync seam (default Node FileHandle behavior) and six store cases: later-block reserve denial, partial write, sync failure, cleanup obstruction/recovery, settlement rollback and lost acknowledgement/retry. Local filesystem operations are real; quota effects in these store tests are modeled, not PostgreSQL evidence. Store suite now contains 20 cases.
+- `FAIL-003/004`: extended the disposable PostgreSQL integration test with settlement rollback, committed-settlement acknowledgement loss, identical/changed replay, and SQL errors immediately before/after the release-function call. These are transaction-boundary injections, not a modified PL/pgSQL function or proof of production database outages. Final DB results remain unconfirmed at this checkpoint.
+- No migration, grant, public API, runtime registration, worker, destination call or STOW was added. The store remains unregistered and `MEDIQ-PACS-001` / `STAGE-005` remain **PARTIAL**.
+
+### Commands and observed results
+
+| Command | Observed result |
+|---|---|
+| `node --check tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs` | Exit 0 |
+| `node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs` | Exit 0; syntax only, not DB Acceptance |
+| `npm run test:api` | Commit-time rerun at 11:30:53 KST: build and 37 files / 697 tests passed, exit 0, 25.36 seconds |
+| `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` | Started before this commit request; still running when checked. Scratch PostgreSQL and role-bootstrap PASS observed. Final wrapper exit, clean/repeat/reset/reapply outcomes and owned-resource cleanup have NOT been confirmed for this revision; do not reuse §19's earlier PASS as DEC-011 evidence |
+| `git diff --check` | Exit 0 before and after documentation synchronization; no whitespace errors |
+
+**Earlier failed attempts retained:** Initial type checks rejected implicit parameter types and the overloaded `FileHandle.write` return type in the new seam; explicit port typing and a bytesWritten-only result resolved them. One API run had 696 PASS / 1 FAIL because the new test expected a value from void `purgeByReference`; correcting that assertion yielded 697/697. These failures were not treated as completion evidence.
+
+**Not verified / remaining work:** Observe the existing scratch run to final exit and cleanup, record real `FAIL-003/004` outcomes, then reconcile full `STAGE-005` Acceptance and baseline documents. Do not mark the fault matrix PASS before that. Maximum-Study/backpressure, verified Tenant SERVICE cleanup, privacy/log serialization, runtime activation, Orthanc no-side-effect integration, full coordinator/Preflight/STOW/destination verification and P0 E2E remain separate gates. No additional DB run or persistent DB/Orthanc mutation was initiated for this commit request.
