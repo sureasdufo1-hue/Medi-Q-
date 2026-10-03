@@ -1,6 +1,7 @@
 // Separate final test observer. Its migrator URL is never an application right.
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import { assertRuntimePrivilegeCatalog } from '../tests/fixtures/runtime-privilege-contract.mjs';
 import { dispatchedReadCases, dispatchedReadIds as ids, dispatchedReadDigest, dispatchedExpectedAudits } from '../tests/fixtures/dispatched-source-read-fixture.mjs';
 const check = (condition, marker) => assert.ok(condition, `DISPREAD_OBSERVER_${marker}`);
 check(/^mediq-int001-capture-[0-9a-f]{12}$/.test(process.env.MEDIQ_TEST_PROJECT ?? ''), 'PROJECT');
@@ -12,7 +13,7 @@ try {
   await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
   check((await client.query('SELECT current_user AS role')).rows[0].role === 'mediq_migrator', 'ROLE');
   await client.query("SELECT set_config('mediq.tenant_id',$1,true)", [ids.tenant]);
-  check((await client.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n === 253, 'UNCHANGED_COLUMN_RIGHTS');
+  await assertRuntimePrivilegeCatalog(client);
   check((await client.query("SELECT count(*)::int AS n FROM information_schema.table_privileges WHERE grantee IN ('PUBLIC','mediq_runtime') AND table_schema='public'")).rows[0].n === 0, 'NO_TABLE_RIGHTS');
   const baseline = (await client.query("SELECT source_digest FROM integrity_evidence WHERE operation_id='1b000000-0000-4000-8000-000000000001' AND verification_stage='SOURCE_CAPTURE'")).rows;
   check(baseline.length === 1 && /^sha256:[0-9a-f]{64}$/.test(baseline[0].source_digest), 'OLD_SOURCE_BASELINE');

@@ -213,6 +213,26 @@ COMMIT;
     return $network
 }
 
+function Assert-R3AuditReadResult {
+    param([int]$ExitCode, [string[]]$Output)
+    $summary = [string]::Join("`n", [string[]]@($Output))
+    $marker = "dispatch_audit_metadata=PASS exact_privileges=253 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true"
+    $complete = $ExitCode -eq 0
+    foreach ($required in @('tests 1', 'pass 1', 'fail 0', 'cancelled 0', 'skipped 0', 'todo 0')) {
+        $matches = [regex]::Matches($summary, '(?m)^# ' + [regex]::Escape($required) + '\r?$')
+        if ($matches.Count -ne 1) { $complete = $false }
+        $field = $required.Split(' ')[0]
+        if ([regex]::Matches($summary, '(?m)^# ' + [regex]::Escape($field) + ' [^\r\n]+\r?$').Count -ne 1) { $complete = $false }
+    }
+    if ([regex]::Matches($summary, '(?m)^# ' + [regex]::Escape($marker) + '\r?$').Count -ne 1) { $complete = $false }
+    if ([regex]::Matches($summary, '(?m)^# dispatch_audit_metadata=[^\r\n]+\r?$').Count -ne 1) { $complete = $false }
+    if (-not $complete) {
+        $failure = [regex]::Match($summary, '\bR3_AUDIT_METADATA_FAILED_(ERR_ASSERTION|42501|23503|23514|25P02|SUPPRESSED)\b').Value
+        if (-not $failure) { $failure = "R3_RESULT_UNCLASSIFIED" }
+        throw "R3 Audit metadata runtime acceptance failed (exit=$ExitCode, marker=$failure); raw output suppressed."
+    }
+}
+
 function Invoke-Migrations([string[]]$ComposeArgs) {
     Invoke-DockerQuiet -Label "DB-008 scratch migration apply" -DockerArgs ($ComposeArgs + @("--profile", "migration", "run", "--build", "--rm", "migrator"))
 }
@@ -854,7 +874,13 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
         $safeFailureSummary = if ($safeDatabaseCode) { "$safeFailureCode/$safeDatabaseCode" } else { $safeFailureCode }
         throw "DB-009 PAT-001/IAM-002/AUT-005/PAT-002 runtime integration failed (exit=$integrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, privilege_mismatch=$privilegeSummary, safe_error=$safeFailureSummary); raw output suppressed."
     }
-    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=253 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_column_insert consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_12_select_12_insert study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=20 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
+    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=253 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_insert_9_select consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_12_select_12_insert study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=20 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
+
+    $auditReadArgs = $integrationArgs + @("node", "--test", "--test-reporter=tap", "tests/database/dispatch-audit-metadata-runtime.integration.test.mjs")
+    $auditReadOutput = @(& docker @auditReadArgs 2>&1 | ForEach-Object { $_.ToString() })
+    $auditReadExitCode = $LASTEXITCODE
+    Assert-R3AuditReadResult -ExitCode $auditReadExitCode -Output $auditReadOutput
+    Write-Output "r3_audit_metadata=PASS exact_privileges=253 select=9 insert=12 forced_rls=PASS no_context_cross_tenant=DENY excluded_columns_full_projection=DENY update_delete=DENY rollback_both_tenants=PASS"
 
     $excFixture = [ordered]@{
         subjectA = $subjectA; actorA = $actorA; tenantA = $tenantA; hospitalA = $hospitalA

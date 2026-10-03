@@ -59,8 +59,11 @@ test('R3 exact Audit metadata SELECT and immutable writes obey forced Tenant RLS
     await client.query('ROLLBACK');
     const absent = await client.query('SELECT resource_id FROM audit_events WHERE resource_id=ANY($1::uuid[])',[markers]);
     assert.equal(absent.rowCount,0,'R3_NO_CONTEXT_AFTER_ROLLBACK');
-    await client.query('BEGIN'); await client.query("SELECT set_config('mediq.tenant_id',$1,true)",[fixture.tenantB]);
-    assert.equal((await client.query('SELECT resource_id FROM audit_events WHERE resource_id=ANY($1::uuid[])',[markers])).rowCount,0,'R3_NO_PERSISTED_TEST_EVENTS');
+    await client.query('BEGIN');
+    for (const tenant of [fixture.tenantA,fixture.tenantB]) {
+      await client.query("SELECT set_config('mediq.tenant_id',$1,true)",[tenant]);
+      assert.equal((await client.query('SELECT resource_id FROM audit_events WHERE resource_id=ANY($1::uuid[])',[markers])).rowCount,0,'R3_NO_PERSISTED_TEST_EVENTS');
+    }
     await client.query('ROLLBACK');
     console.log('dispatch_audit_metadata=PASS exact_privileges=253 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true');
   } catch (error) {

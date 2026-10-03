@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertRuntimePrivilegeCatalog } from "../fixtures/runtime-privilege-contract.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -1246,7 +1247,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     try {
       const role = await runtime.query("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user");
       assert.deepEqual(role.rows[0], { current_user: "mediq_runtime", rolsuper: false, rolbypassrls: false });
-      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 253);
+      await assertRuntimePrivilegeCatalog(runtime);
       assert.deepEqual((await runtime.query("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='study_references'::regclass")).rows[0], { relrowsecurity: true, relforcerowsecurity: true });
       assert.equal((await runtime.query("SELECT study_ref_id FROM study_references WHERE study_ref_id=$1", [scenario.studyRefId])).rowCount, 0, "DEC017_NO_CONTEXT_DENIED");
       await assert.rejects(runtime.query("SELECT reserved_bytes FROM temporary_payload_quota_state"), error => error?.code === "42501");
@@ -1591,7 +1592,7 @@ async function runDispatchedReadCase(scenario, principals, auth, signal) {
     try {
       const role = await runtime.query('SELECT current_user AS role,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user');
       assert.deepEqual(role.rows[0], { role: 'mediq_runtime', rolsuper: false, rolbypassrls: false });
-      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 244);
+      await assertRuntimePrivilegeCatalog(runtime);
       for (const table of ['pacs_transfer_operations','provenance_records','study_references']) {
         assert.deepEqual((await runtime.query('SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid=$1::regclass', [table])).rows[0],
           { relrowsecurity: true, relforcerowsecurity: true });

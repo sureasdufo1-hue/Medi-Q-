@@ -1,5 +1,35 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 38. User-requested R3 current-state Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Explicit user-authorized commit/push of the current CAPSTONE-P0 WIP state; not a release or deployment
+Changed: Preserve exact privilege-catalog wiring, both-Tenant rollback checks, pinned TAP/strict result guard, deterministic negative controls and harmless reporter probe; synchronize terminal failure and checkpoint records
+Not changed: No observer/product fix, extra SQL rights, persistent DB migration, PACS transfer, public API, dependencies or deployment in this Git-only task
+Security impact: Runtime rights remain the approved exact253 with Audit SELECT9/INSERT12 and forced RLS. Candidate scan excludes credentials/runtime data; bounded patterns are not exhaustive secret/PHI assurance
+Tests executed: Current checkpoint Node18 and PowerShell21 PASS; diff checks and bounded candidate scan PASS. Existing scratch18484 terminal0, fresh53311 source58/dispatch18 PASS but separate final observer42501/whole wrapper exit1; independent cleanup/development inventory/frozen300 hash verified
+Tests not executed: New heavy/API/DB reruns or observer correction; successful final dispatch observer/B-after and full original Preflight/B transfer/destination/security/E2E remain unverified
+Evidence: TEST-EVIDENCE.md sections72–74; failed historical executions retained
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Observer failure requires safe diagnosis; passing application subsets do not close R3-005 or P0. No silent privilege widening or retry-until-green
+Status: PARTIAL implementation / R3-005 FAILED / WIP checkpoint; Git outcome verified after native commit/push
+```
+
+## 37. Fresh source/read gate after terminal scratch proof — opened before execution
+
+Terminal update: original53311 exited1 after source58 and dispatched-read18 PASS. The separate final observer failed with sanitized SQLSTATE42501; new final observer and B-after acceptance are not established. Helper privacy and automatic cleanup PASS, independently no disposable resources, unchanged existing development inventories and frozen300 hash. Do not restart this completed handle or call R3-005 PASS. Evidence§73; this Git checkpoint makes no observer fix.
+
+2026-10-04 CAPSTONE-P0/MEDIQ-PACS-001. Current18484 exited0 with initial/repeat/reset-reapply, full configured runtime regression and actual R3 exact-rights/RLS/denial gates; independent owned resources0/development inventory/frozen300 hash unchanged. No persistent deployment or complete GATE-IMP-02 claim (DB-002~007 persistent commands skipped intentionally). Continue approved source58+new18 using unchanged actual harness/independent observers; no weaker predicate, owner credential in app, STOW or automatic Git action. Initial PARTIAL/NOT RUN, evidence§73; full original Preflight/real B transfer/destination/terminal evidence/security/E2E remains the goal.
+
+## 36. R3 prerequisite completion and scratch validation — opened before edits
+
+Latest scoped result: original replacement18484 remains live **after initial+repeat apply fully passed and owned scratch reset/restart**. Both accepted R3 children prove exact253/SELECT9/INSERT12/non-elevated forcedRLS/no-context/cross-Tenant/excluded-columns/full-projection/UPDATE/DELETE denial and both-Tenant rollback; operation/expiry/temporary-payload/PAT/IAM/AUT/mapping/exchange/Consent/Grant/fence/Provenance/source Integrity regressions passed in both phases. Catalog21|55|17|48, tables21/ledger27, owned reset/restart PASS and original development inventory unchanged. Reset/reapply runtime tests/final cleanup and fresh source58+dispatch18 still pending. Current continuation is progress and verified wait, not blocked/full success; only records updated, no executable/Git/DB deployment change. Inspected next composition gaps (B byte retrieval, terminal evidence/provenance, mandatory destination verification/idempotency/UNKNOWN API contract) recorded before future recommendation/implementation. Next action must resume18484, not restart.
+
+Current progress: source/observer exact-catalog wiring and runtime-test wrapper complete, legacy244/journal26 hashes preserved. API45/1026/build/type/Port, Node213, PS29/47/10 and migration check PASS. Scratch 28322 failed at the new output guard despite child exit0; independent cleanup/input/development inventory checks passed. Same-image no-network reporter probe proved default bare vs TAP-prefixed marker. R3-A pins TAP and adds actual guard regression (21 PS cases incl. contradictory summaries/native failures/privacy). No product assertion weakened. Replacement full scratch **18484 live**, frozen 300 inputs SHA256 `060e2527b986579eccb0e735d1afb48d390f6d9015da0fb3cf7a419a4166909c`; do not restart or edit executable inputs while live. Actual complete R3 and fresh58+18 not accepted; whole P0 PARTIAL.
+
+2026-10-04, CAPSTONE-P0 / MEDIQ-PACS-001. Inspected clean saved checkpoint 684bd84 and existing R3 recommendation/Acceptance. Previous goal turn made progress (additive migration and test fixture), followed by explicit successful Git checkpoint; no live process remains. Complete runtime-test wrapper wiring and replace source/observer count-only checks with the independent exact 253-tuple catalog. Inspection found the new dispatch matrix still asserted 244 while the old source case asserted 253; correct it to the already-approved exact R3 contract, not a permissive range. Strengthen rollback observation for both seeded Tenants and add deterministic migration/catalog negative controls. Run lightweight/current API gates, then frozen scratch-only DB-008 before fresh source58+dispatch18. No persistent DB migration/deployment/B STOW/public endpoint is authorized by this prerequisite slice. Initial PARTIAL/NOT RUN; evidence section 72. Full Preflight/coordinator/B transfer/destination/terminal evidence/security/E2E remain the original goal.
+
 ## 35. User-requested R2/R3 WIP Git checkpoint — 2026-10-04
 
 ```text

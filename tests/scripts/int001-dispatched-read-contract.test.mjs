@@ -118,7 +118,7 @@ test('test application receives runtime URL only; owner seed/observer are separa
   assert.match(seed,/role === 'mediq_migrator'/);
   assert.match(observer,/role === 'mediq_migrator'/);
   assert.match(observer,/REPEATABLE READ READ ONLY/);
-  assert.match(observer,/UNCHANGED_COLUMN_RIGHTS/);
+  assert.match(observer,/await assertRuntimePrivilegeCatalog\(client\)/);
   assert.match(observer,/NO_TABLE_RIGHTS/);
 });
 
