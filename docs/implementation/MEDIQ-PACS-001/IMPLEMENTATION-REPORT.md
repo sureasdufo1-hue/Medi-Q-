@@ -6,11 +6,11 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — R4 actual lifecycle 51/observer/B EMPTY/cleanup PASS; R5 preparation/unit 64 PASS, actual R5 NOT RUN; combined script 91/readiness 10 PASS; diagnostic DB rerun 51950 live; evidence §§41–46 |
+| 상태 | `PARTIAL` — DB 51950 scoped PASS; R5 90568/71400 actual 51/privacy/Audit/B assertions PASS but automatic cleanup FAIL, owned recovery complete; refined R5-C cleanup 20/Node 97/output 41/readiness 10 PASS; actual cleanup smoke/full rerun pending; evidence §49 |
 
 ## 1. 목표 및 판정 범위
 
-**Latest user-requested checkpoint (2026-10-03, 18:16 KST; supersedes current labels below):** R5 read-only live-state observer, strict projections and source-test wrapper hooks are prepared; privacy unit 64 plus replica/Grant checks total **91 PASS**, readiness **10 PASS**, JS/PowerShell syntax and diff checks PASS. Actual R5 integration has not run; the earlier 51-test R4 result is not R5 evidence. DB rerun 51950 remains live and its inputs are frozen. This checkpoint changes tests/scripts and records only, not product code, permissions, runtime wiring or STOW. Commit/push is explicitly user-requested. Full raw-log privacy, remaining lifecycle and P0 gates remain open. Evidence §§45–46; status **PARTIAL**.
+**Latest user-requested Git checkpoint (2026-10-03, 19:33 KST; supersedes current labels below):** DB 51950 scoped scratch/cleanup PASS. R5 90568 and 71400 each passed **51 source/privacy/Audit/B assertions**, but exited **1** during automatic cleanup. Exact owned recovery completed; independent checkpoint inventory is zero with existing MediQ services healthy. R5-C now uses a 30-second monotonic infrastructure-removal deadline and preserves identity-verified stop failure while still attempting normal owned cleanup. Checkpoint cleanup **20**, Node **97**, output **41**, readiness **10 PASS**. Actual Docker smoke/full wrapper after that refinement are **NOT RUN**; no active integration handle. No product/schema/grant/product-deadline change; overall **PARTIAL**. See §19 and evidence §49.
 
 **Current R4 verification (2026-10-03):** Independent replica scenario passed in the actual 51-test source suite, with separate DB/B observers and owned cleanup. It proves a replica has no usable DEK and can perform only authorized purge recovery, not host-crash recovery. Full DB session 6711 failed separately; diagnostic rerun 51950 is live. Full lifecycle/P0 remain open; §43–44.
 
@@ -380,6 +380,8 @@ These observations are preparation only. Record the next recommendation and succ
 
 ## 15. DEC-017 implementation-ready design and sequencing
 
+**R5-A opened before changes (2026-10-03):** Continue from clean committed checkpoint `bdf9579`. The same DB diagnostic run remains live in reset/reapply; keep its inputs frozen. DEC-017-R5-A and Acceptance require bounded raw source/observer output inspection and fixed failure projection, with AST/fake-Docker units before actual execution. Product source/runtime/permissions remain unchanged; evidence §47 distinguishes new preparation from actual R5 acceptance and retains platform/encoding limits.
+
 **R5 opened before changes (2026-10-03):** Previous goal turn made progress through real 51-test replica acceptance, API 893/type/Port verification and diagnostic-only correction preparation for the failed full DB run. Current session 51950 is confirmed live; all its DB/product/build inputs remain frozen. R5 recommendation/Acceptance address the remaining live-value privacy gap with a separate read-only fixture observer, exact projections and no runtime credential/grant widening. Only source-test-target files and related records change; evidence §45 must distinguish preparation/unit checks from actual privacy acceptance.
 
 **R4 replica verification opened before changes (2026-10-03):** Starting checkpoint `65084e0` is clean and remotely synchronized. Previous turn made concrete progress by publishing the reviewed R3 implementation/evidence. DB-008 session 6711 remains live and has emitted an additional PACS-007 runtime PASS marker, not a terminal full-regression result. DEC-017-R4 and Acceptance are recorded before adding an independent replica test. Only the source-test target's fixture/harness/observer/wrapper are edited; inspection of the Dockerfile confirms these are not inputs to the running database integration target. No product/schema/build-input change or parallel heavy execution. New evidence and remaining limits belong in §43; Ticket remains PARTIAL.
@@ -448,5 +450,57 @@ Tests not executed: Remaining full mapping/actor mutation/privacy/lifecycle, run
 Evidence: TEST-EVIDENCE.md sections 41–44; separate MEDIQ-GRT-003/004 reports and evidence §8 for diagnostic-only DB changes
 Implementation record: docs/implementation/MEDIQ-PACS-001/
 Remaining risks: Successful replica proof is not killed-origin/host-crash recovery or full lifecycle/P0. DB regression remains unresolved while diagnostic rerun is live; prior unexplained failures/local Temp residue and original runtime/Preflight/STOW/destination gates remain open
+Status: PARTIAL
+```
+
+## 17. R5-A output and transport verification — current change report
+
+This §17 is the earlier R5-A construction checkpoint; §18 and the top status supersede its pending DB state/counts.
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 / DEC-017-R5-A, R5 output/protocol verification before actual source integration
+Changed: Raw source/final-observer output gate, owned live-observer log inspection before cleanup, bounded fixed failure projection, actual-function PowerShell units and real loopback HTTP observer test; decisions/Acceptance/evidence/index/plan/schedule synchronized
+Not changed: Product source, current DB test/helper/wrapper inputs, schema/grants, Dockerfile/Compose/dependencies, OpenAPI, runtime activation, DICOM transfer or STOW; no automatic commit/push
+Security impact: Known synthetic identifiers, credential/token values and sensitive markers cause fixed failures before raw diagnostic projection; no privileged DB URL or new application permission; observer log failure does not bypass owned cleanup
+Tests executed: Output units 40, readiness 10, combined Node 92 (privacy 65, replica 12, Grant diagnostics 15); actual loopback HTTP uses fake snapshots, not real DB; syntax/diff/frozen-input checks PASS
+Tests not executed: Actual R5 signed source/PostgreSQL/RLS/Orthanc/live observer/cleanup matrix; full raw-log/platform/privacy/lifecycle and product Preflight/STOW/destination verification/P0 E2E. Current DB diagnostic session 51950 remains live in reset/reapply
+Evidence: TEST-EVIDENCE.md section 47; decision and Acceptance precede implementation; historical R4 51 and DB failure retained in sections 41–46
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Known plain/URI/base64 values and marker checks cannot prove arbitrary encoding, process dumps or future runtime logs; real R5, final DB cleanup and original product goals remain unaccepted
+Status: PARTIAL
+```
+
+## 18. Actual R5 diagnosis and approved schema reconciliation
+
+Historical checkpoint; §19 and the top status supersede the pending execution below.
+
+```text
+Ticket: MEDIQ-PACS-001; MEDIQ-GRT-003/004 separate records synchronized for terminal DB regression
+Scope: CAPSTONE-P0 / DEC-017-R5-A diagnostics and DEC-017-R5-B observer catalog correction
+Changed: Fixed diagnostic priority and phase/error-only probe markers; exact existing settled column/Boolean-state checks; independent approved-DDL contract regression; actual failure/RED/GREEN evidence and current status documents
+Not changed: Product source, schema/migrations, grants, API contract, runtime registration, deadlines, 51-case matrix or STOW; no automatic commit/push
+Security impact: No catalog bypass or expanded data permission; preserves strict missing/unknown/sensitive-value rejection, fixed diagnostics and owned cleanup
+Tests executed: DB 51950 all three scratch rounds/cleanup/independent zero-resource PASS; R5 71777 and 23930 FAIL (17 cases each), both cleanup PASS; independent catalog regression RED then correction GREEN; Node 97/output 41/readiness 10 PASS, syntax/diff checks PASS
+Tests not executed or incomplete: Corrected actual R5 90568 remains live; final privacy ledger/observer/B/cleanup not accepted. Persistent DB-002~007 excluded by ScratchOnly; full mapping/actor/lifecycle and original runtime/Preflight/STOW/destination/P0 remain open
+Evidence: TEST-EVIDENCE.md section 48, including exact run handles/projects, failure markers, diagnosis and pre-edit Acceptance
+Implementation record: docs/implementation/MEDIQ-PACS-001/; GRT-003/004 each section 8
+Remaining risks: Earlier DB intermittent failure cause unknown; observer fix not yet proved by corrected actual R5; bounded scans cannot prove platform dumps/arbitrary encodings/future logs
+Status: PARTIAL
+```
+
+## 19. User-requested Git checkpoint and cleanup refinement
+
+```text
+Ticket: MEDIQ-PACS-001; scoped MEDIQ-GRT-003/004 regression records
+Scope: Commit/push existing test-only work and synchronize actual terminal results
+Changed: Output privacy/diagnostic gates, approved settled-column observer contract, owner-bound cleanup with monotonic removal deadline and failure-preserving Compose down; tests and records
+Not changed: Product implementation, schema/grants/migrations, API/runtime activation, Docker/Compose/dependencies, source-case assertions, destination writes or STOW
+Security impact: No new permission; strict observer projections, sensitive-output rejection and exact-owned cleanup remain fail closed
+Tests executed: Checkpoint Node 97, cleanup 20, output 41, readiness 10 PASS; current product/DB inputs unchanged; exact failed-run/DB project inventories zero, existing stack healthy. Earlier DB 51950 scoped PASS and R5 90568/71400 assertions PASS with wrapper cleanup FAIL retained
+Tests not executed: Minimal real-Docker cleanup smoke and full wrapper after final cleanup refinement; full runtime/Preflight/STOW/destination/P0 E2E; no new heavy run for Git checkpoint
+Evidence: TEST-EVIDENCE.md sections 48–49; prior failures preserved
+Implementation record: docs/implementation/MEDIQ-PACS-001/ and scoped GRT-003/004 records
+Remaining risks: Final automatic cleanup still needs actual verification; prior DB intermittent failure cause unknown; privacy scans are bounded checks, not platform-wide proof; original product goal unfinished
 Status: PARTIAL
 ```

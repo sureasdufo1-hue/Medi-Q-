@@ -26,7 +26,7 @@ export const privacyColumnContract = Object.freeze({
   study_references: ["temporary_storage_ref", "temporary_payload_state", "temporary_payload_expires_at", "temporary_payload_purged_at"],
   temporary_payload_quota_state: ["singleton_id", "max_environment_bytes", "max_package_bytes", "reserved_bytes", "updated_at"],
   temporary_payload_package_quotas: ["package_id", "reserved_bytes", "updated_at"],
-  temporary_payload_reservations: ["storage_ref", "quota_state_id", "tenant_id", "study_ref_id", "package_id", "writer_id", "reserved_bytes", "created_at", "updated_at"],
+  temporary_payload_reservations: ["storage_ref", "quota_state_id", "tenant_id", "study_ref_id", "package_id", "writer_id", "reserved_bytes", "created_at", "updated_at", "settled"],
   integrity_evidence: ["integrity_id", "exchange_session_id", "package_id", "study_ref_id", "verification_stage", "algorithm", "source_digest", "destination_digest", "source_object_count", "destination_object_count", "status", "verified_at", "created_at", "operation_id"],
   audit_events: ["audit_event_id", "occurred_at", "actor_id", "tenant_id", "exchange_session_id", "resource_type", "resource_id", "action", "result", "reason_code", "correlation_id", "created_at"],
 });
@@ -99,7 +99,8 @@ export function assertPrivacySnapshot(snapshot, scenario, expectedDigest) {
   check(reservations.length <= 1, "RESERVATION_COUNT");
   for (const row of reservations) check(row.storage_ref === state.temporary_storage_ref && row.quota_state_id === true &&
     row.tenant_id === "02000000-0000-4000-8000-000000000002" && row.study_ref_id === scenario.studyRefId &&
-    row.package_id === scenario.packageId && uuid(row.writer_id) && number(row.reserved_bytes, 2_147_483_648) && date(row.created_at) && date(row.updated_at), "RESERVATION");
+    row.package_id === scenario.packageId && uuid(row.writer_id) && number(row.reserved_bytes, 2_147_483_648) && date(row.created_at) && date(row.updated_at) &&
+    typeof row.settled === "boolean" && (state.temporary_payload_state !== "AVAILABLE" || row.settled), "RESERVATION");
   const reserved = reservations.reduce((sum, row) => sum + Number(row.reserved_bytes), 0);
   check(reserved === Number(environment[0].reserved_bytes) && reserved === packages.reduce((sum, row) => sum + Number(row.reserved_bytes), 0), "QUOTA_TOTAL");
   if (state.temporary_payload_state === "PURGED") check(reservations.length === 0 && packages.length === 0 && reserved === 0, "FINAL_QUOTA");

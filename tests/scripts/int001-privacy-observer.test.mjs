@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
@@ -9,6 +10,25 @@ import { temporaryCaptureLifecycleCases, privacyColumnContract, privacyPhases, p
   assertPublicCaptureProjection, assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 
 const scenario = temporaryCaptureLifecycleCases[0], digest = `sha256:${"a".repeat(64)}`;
+test("privacy column contract matches independently read approved CREATE and later ADD COLUMN migrations", async () => {
+  const directory = new URL("../../services/api/src/database/migrations/", import.meta.url);
+  const columns = new Map();
+  for (const filename of (await readdir(directory)).filter(name => name.endsWith(".sql")).sort()) {
+    const sql = await readFile(new URL(filename, directory), "utf8");
+    assert.doesNotMatch(sql, /\b(?:DROP\s+COLUMN|RENAME\s+COLUMN)\b/i, "UNSUPPORTED_CATALOG_DDL_REQUIRES_EXPLICIT_TEST_UPDATE");
+    for (const match of sql.matchAll(/CREATE TABLE "([^"]+)" \(([\s\S]*?)\r?\n\);/g)) {
+      columns.set(match[1], [...match[2].matchAll(/^\s*"([^"]+)"\s/gm)].map(column => column[1]));
+    }
+    for (const match of sql.matchAll(/ALTER TABLE "([^"]+)" ADD COLUMN "([^"]+)"/g)) {
+      assert.ok(columns.has(match[1]), "ALTER_TARGET_MUST_EXIST");
+      columns.get(match[1]).push(match[2]);
+    }
+  }
+  for (const [table, expected] of Object.entries(privacyColumnContract)) {
+    const actual = columns.get(table)?.filter(column => table !== "study_references" || column.startsWith("temporary_"));
+    assert.deepEqual(actual?.sort(), [...expected].sort(), `CATALOG_CONTRACT_${table}`);
+  }
+});
 const ref = "bb000000-0000-4000-8000-000000000001", instant = new Date("2026-10-03T00:00:00Z");
 function snapshot() {
   return {
@@ -16,7 +36,7 @@ function snapshot() {
     temporary_payload_quota_state: [{ singleton_id: true, max_environment_bytes: "10737418240", max_package_bytes: "2147483648", reserved_bytes: "1024", updated_at: instant }],
     temporary_payload_package_quotas: [{ package_id: scenario.packageId, reserved_bytes: "1024", updated_at: instant }],
     temporary_payload_reservations: [{ storage_ref: ref, quota_state_id: true, tenant_id: "02000000-0000-4000-8000-000000000002",
-      study_ref_id: scenario.studyRefId, package_id: scenario.packageId, writer_id: ref, reserved_bytes: "1024", created_at: instant, updated_at: instant }],
+      study_ref_id: scenario.studyRefId, package_id: scenario.packageId, writer_id: ref, reserved_bytes: "1024", created_at: instant, updated_at: instant, settled: true }],
     integrity_evidence: [{ integrity_id: ref, exchange_session_id: scenario.sessionId, package_id: scenario.packageId, study_ref_id: scenario.studyRefId,
       verification_stage: "SOURCE_CAPTURE", algorithm: "SHA256-MANIFEST-V1", source_digest: digest, destination_digest: null,
       source_object_count: 3, destination_object_count: null, status: "PENDING", verified_at: null, created_at: instant, operation_id: scenario.operationId }],
@@ -36,6 +56,16 @@ test("privacy snapshots accept exact scoped live values and final released quota
   final.temporary_payload_package_quotas = [];
   final.temporary_payload_reservations = [];
   assert.deepEqual(assertPrivacySnapshot(final, scenario, digest), { state: "PURGED", reserved: 0 });
+});
+test("privacy settlement flag accepts staging Boolean false but denies available unsettled or non-Boolean values", () => {
+  const staging = snapshot();
+  staging.study_references[0].temporary_payload_state = "STAGING";
+  staging.temporary_payload_reservations[0].settled = false;
+  assert.equal(assertPrivacySnapshot(staging, scenario, digest).state, "STAGING");
+  for (const value of [false, "true", "false", 1, null]) {
+    const current = snapshot(); current.temporary_payload_reservations[0].settled = value;
+    rejects(() => assertPrivacySnapshot(current, scenario, digest));
+  }
 });
 for (const [table, columns] of Object.entries(privacyColumnContract)) {
   for (const column of columns) {
@@ -193,3 +223,74 @@ test("observer database failure does not leave its read-only role/transaction op
   assert.equal(run.calls.at(-1).sql, "ROLLBACK");
   assert.equal(run.released(), true);
 });
+
+test("observer actual HTTP transport enforces token/body/projection boundaries and closes its owned listener", { timeout: 10_000 }, async () => {
+  const processFake = new EventEmitter(), token = "a".repeat(64);
+  processFake.env = { MEDIQ_TEST_OBSERVATION_TOKEN: token };
+  let server, observations = 0, ready;
+  const initialized = new Promise(resolve => { ready = resolve; });
+  const run = runInNewContext(`${functions[0].getText(ast)}; servePrivacyObserver`, {
+    URL, process: processFake, createServer: handler => {
+      server = createServer(handler);
+      const listen = server.listen.bind(server);
+      server.listen = (port, host, done) => {
+        assert.equal(port, 8791); assert.equal(host, "0.0.0.0");
+        return listen(0, "127.0.0.1", () => { done(); ready(); });
+      };
+      return server;
+    },
+    databaseUrl: "postgresql://mediq_migrator@localhost/synthetic", ids: { study: scenario.studyRefId },
+    pool: { async query(sql) { return { rows: sql.includes("FROM pg_tables") ? [{ tablename: "TEST_TABLE" }]
+      : [{ status: "VALID", study_instance_uid: "2.25.1", local_patient_id: "TEST-PATIENT-007" }] }; } },
+    privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases,
+    privacySnapshot: async () => { observations++; return { state: "STAGING", reserved: 0 }; },
+    setTimeout, clearTimeout, console: { log: () => {} },
+  });
+  const completion = run();
+  try {
+    await initialized;
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    const request = async (body, suppliedToken = token, path = "/probe") => {
+      const response = await fetch(endpoint + path, { method: path === "/probe" ? "POST" : "GET",
+        headers: { "x-mediq-test-observation": suppliedToken }, body: path === "/probe" ? body : undefined,
+        signal: AbortSignal.timeout(2000) });
+      return { status: response.status, body: await response.json() };
+    };
+    assert.deepEqual(await request("{}", ""), { status: 401, body: { status: "DENIED" } });
+    assert.deepEqual(await request("{}", "b".repeat(64)), { status: 401, body: { status: "DENIED" } });
+    assert.equal(observations, 0);
+    assert.deepEqual(await request(JSON.stringify({ scenario: scenario.name, phase: "RESERVED" })), { status: 200, body: { status: "OK" } });
+    for (const body of ["{invalid", "x".repeat(1025), JSON.stringify({ scenario: scenario.name, phase: "RESERVED", sql: "TEST-RAW" })]) {
+      const result = await request(body);
+      assert.equal(result.status, 503);
+      assert.equal(result.body.status, "FAILED");
+      assert.match(result.body.code, /^DEC017_PRIVACY_[A-Z_]+$/);
+      assert.deepEqual(Object.keys(result.body).sort(), ["code", "status"]);
+    }
+    assert.equal(observations, 1);
+    assert.deepEqual(await request(undefined, token, "/summary"), { status: 503, body: { status: "INCOMPLETE" } });
+  } finally {
+    processFake.emit("SIGTERM");
+    await completion;
+    assert.equal(server.listening, false);
+  }
+});
+
+const clientSource = await readFile(new URL("../integration/authorized-source-capture.orthanc.integration.test.mjs", import.meta.url), "utf8");
+const clientAst = ts.createSourceFile("client.mjs", clientSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const probeFunction = clientAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "observePrivacy");
+for (const [phase, reply, expected] of [
+  ["RESERVED", { status: "FAILED", code: "DEC017_PRIVACY_CATALOG" }, "DEC017_PRIVACY_PROBE_RESERVED_DEC017_PRIVACY_CATALOG"],
+  ["TEST-RAW-SECRET", { status: "FAILED", code: "TEST-RAW-SECRET" }, "DEC017_PRIVACY_PROBE_UNKNOWN_DEC017_PRIVACY_OBSERVER_REJECTED"],
+]) {
+  test(`privacy probe emits only fixed sanitized failure diagnostics: ${expected}`, async () => {
+    const logs = [];
+    const probe = runInNewContext(`${probeFunction.getText(clientAst)}; observePrivacy`, {
+      URL, Buffer, AbortSignal, privacyAssert, process: { env: { MEDIQ_TEST_OBSERVATION_URL: "http://mediq-int001-capture-123456abcdef-privacy-observer:8791",
+        MEDIQ_TEST_OBSERVATION_TOKEN: "a".repeat(64) } }, console: { error: message => logs.push(message) },
+      fetch: async () => ({ ok: false, body: { async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(reply)); } } }),
+    });
+    await assert.rejects(probe(scenario, phase), error => /^DEC017_PRIVACY_[A-Z_]+$/.test(error.message));
+    assert.deepEqual(logs, [expected]);
+  });
+}

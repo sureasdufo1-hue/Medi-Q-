@@ -1,6 +1,6 @@
 # MEDIQ-GRT-004 Implementation Report
 
-**Shared harness follow-up (2026-10-03):** GRT-003-DEC-002 adds diagnostic-only connect/query markers and unit contracts to the runtime proxy shared by this Ticket's signed API tests. The current DB-008 combined run failed a GRT-003 rollback case, not an observed GRT-004 revoke assertion. No revocation implementation, permissions, timeout or acceptance assertion changes. Preserve historical scoped PASS, but do not claim the changed shared harness/full current regression accepted before rerun; see TEST-EVIDENCE §8.
+**Shared harness result (2026-10-03 18:44 KST):** Diagnostic-only proxy changes passed 15 unit contracts and all three signed HTTP/PostgreSQL GRT-003/004 rounds in DB-008 session 51950, exit 0, reset/reapply/cleanup and independently empty owned inventory. Current scratch regression is scoped PASS. Earlier combined failure was GRT-003 rollback, not a GRT-004 revoke assertion; its cause remains unproven. No revocation code, permission, timeout or assertion change; evidence §8.
 
 | 항목 | 값 |
 |---|---|
@@ -8,11 +8,11 @@
 | 제목 | Recipient-bound Grant revocation API |
 | 분류 | `CAPSTONE-P0` |
 | 작성일 | `2026-10-01` |
-| 상태 | `PARTIAL` — shared diagnostic harness revalidation pending; historical scoped PASS retained |
+| 상태 | `PASS` — scoped revocation API and current scratch shared-harness regression |
 
 ## 1. 목표
 
-**Shared diagnostic checks (2026-10-03):** Fifteen fake-client tests of the actual shared proxy passed, including preserved revoke-Audit fault, exact query/timeout forwarding and sanitized failure categories. Product revocation semantics/grants remain unchanged. Full diagnostic DB rerun **51950** is live; current regression not accepted. Evidence §8 records commands, previous combined failure and scope; no new GRT-004 product failure or fix is inferred.
+**Shared diagnostic checks (2026-10-03):** Fifteen fake-client tests preserve revoke-Audit fault, exact query/timeout forwarding and sanitized categories. Actual three-round scratch rerun **51950** exited 0 with cleanup; persistent DB-002~007 tests were excluded by ScratchOnly. Product semantics/grants remain unchanged. Evidence §8 retains the prior combined failure and scope; no GRT-004 product fix or operation-time imaging/full-P0 acceptance is inferred.
 
 P0 TransferGrant를 exact verified destination recipient `USER`만 철회할 수 있는 API를 구현한다. 만료·Consent 철회·terminal Session이 위험감소 조작을 막지 않게 하고, 상태 변경과 단일 성공 Audit을 하나의 verified Tenant transaction으로 처리한다.
 

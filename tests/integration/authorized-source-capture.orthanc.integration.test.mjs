@@ -690,7 +690,10 @@ async function observePrivacy(scenario, phase, signal) {
   }
   const result = JSON.parse(raw);
   if (!response.ok || result.status !== "OK") {
-    throw new Error(/^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "") ? result.code : "DEC017_PRIVACY_OBSERVER_REJECTED");
+    const code = /^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "") ? result.code : "DEC017_PRIVACY_OBSERVER_REJECTED";
+    const diagnosticPhase = ["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL"].includes(phase) ? phase : "UNKNOWN";
+    console.error(`DEC017_PRIVACY_PROBE_${diagnosticPhase}_${code}`);
+    throw new Error(code);
   }
 }
 

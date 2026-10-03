@@ -84,37 +84,102 @@ function Invoke-DockerQuiet([string[]]$DockerArgs, [string]$FailureCode) {
     if ($LASTEXITCODE -ne 0) { throw $FailureCode }
 }
 
-function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode) {
+function Get-ObserverRemovalElapsedMilliseconds([Diagnostics.Stopwatch]$Clock) {
+    return $Clock.ElapsedMilliseconds
+}
+
+function Stop-OwnedPrivacyObserver([string]$Name, [string]$ProjectName) {
+    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-privacy-observer") {
+        throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
+    }
+    $observerIds = @(& docker ps -aq --filter "name=$Name" | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0) { throw "INT001_PRIVACY_OBSERVER_INVENTORY_FAILED" }
+    if ($observerIds.Count -eq 0) { return }
+    if ($observerIds.Count -ne 1 -or $observerIds[0] -notmatch '^[0-9a-f]{12,64}$') {
+        throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
+    }
+    $observerId = $observerIds[0]
+    $identity = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Name}}|{{.HostConfig.AutoRemove}}' $observerId 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $identity -cne "$ProjectName|source-capture-db-observer|/$Name|true") {
+        throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
+    }
+    $null = @(& docker stop --timeout 15 $observerId 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "INT001_PRIVACY_OBSERVER_STOP_FAILED" }
+    $removalClock = [Diagnostics.Stopwatch]::StartNew()
+    while ((Get-ObserverRemovalElapsedMilliseconds $removalClock) -lt 30000) {
+        $remaining = @(& docker ps -aq --filter "id=$observerId" | Where-Object { $_ })
+        if ($LASTEXITCODE -ne 0) { throw "INT001_PRIVACY_OBSERVER_POSTSTOP_INVENTORY_FAILED" }
+        if ($remaining.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE"
+}
+
+function Assert-CaptureOutputPrivacy([string]$Output, [string[]]$SensitiveValues) {
+    if ([Text.Encoding]::UTF8.GetByteCount($Output) -gt 8MB) { throw "INT001_OUTPUT_PRIVACY_REJECTED" }
+    foreach ($value in $SensitiveValues) {
+        if ([string]::IsNullOrEmpty($value)) { throw "INT001_OUTPUT_PRIVACY_CONFIGURATION_INVALID" }
+        $variants = @($value, [uri]::EscapeDataString($value), [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value)))
+        foreach ($variant in $variants) {
+            if ($Output.Contains($variant)) { throw "INT001_OUTPUT_PRIVACY_REJECTED" }
+        }
+    }
+    $markers = '(?i)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}|/tmp/mediq-[^\s]+|[A-Z]:\\[^\r\n]*\\(?:mediq-|ciphertext)[^\r\n]*|\b[0-9a-f-]{36}\.enc\b|\b(?:dek|kek|plaintext)["'']?\s*[:=]|\bDICM\b|["'']PixelData["'']\s*:'
+    if ($Output -match $markers) { throw "INT001_OUTPUT_PRIVACY_REJECTED" }
+}
+
+function Assert-ObserverLogPrivacy([string]$Name, [string]$ProjectName, [string[]]$SensitiveValues) {
+    if ($ProjectName -notmatch '^mediq-int001-capture-[0-9a-f]{12}$' -or $Name -cne "${ProjectName}-privacy-observer") {
+        throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID"
+    }
+    $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $Name 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $owner -cne $ProjectName) { throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID" }
+    $output = @(& docker logs $Name 2>&1 | ForEach-Object { $_.ToString() })
+    if ($LASTEXITCODE -ne 0) { throw "INT001_PRIVACY_OBSERVER_LOG_INSPECTION_FAILED" }
+    Assert-CaptureOutputPrivacy -Output ([string]::Join("`n", [string[]]$output)) -SensitiveValues $SensitiveValues
+}
+
+function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]$PrivacyValues) {
     $output = @(& docker @ComposeArgs 2>&1 | ForEach-Object { $_.ToString() })
     $exitCode = $LASTEXITCODE
+    $joined = [string]::Join("`n", [string[]]$output)
+    if ($null -ne $PrivacyValues) { Assert-CaptureOutputPrivacy -Output $joined -SensitiveValues $PrivacyValues }
     if ($exitCode -ne 0) {
-        $joined = [string]::Join("`n", [string[]]$output)
         $fixtureFailure = [regex]::Match($joined, '\b(INT001_FIXTURE_SEED_FAILED):([0-9A-Z]{5}):([a-zA-Z0-9_]{1,128})\b')
         $safeCode = if ($fixtureFailure.Success) { "$($fixtureFailure.Groups[1].Value):$($fixtureFailure.Groups[2].Value):$($fixtureFailure.Groups[3].Value)" }
             else { [regex]::Match($joined, '\b(INT001_[A-Z0-9_]+|MEDIQ_[A-Z0-9_]+|APP_CONFIG_[A-Z0-9_:]+|DICOM_[A-Z0-9_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23503|23505|23514|ASSERTION_FAILED)\b').Value }
         if (-not $safeCode) { $safeCode = "UNCLASSIFIED" }
         $failedTestNames = @()
+        $failedTestLocations = @()
+        $failedAssertionMarkers = @()
+        $failedCaseMarkers = @()
         if ($FailureCode -eq "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED") {
             $failedTestNames = @(
                 [regex]::Matches($joined, '(?m)^\s*not ok \d+ - ([^\r\n]{1,160})$') |
-                    ForEach-Object { $_.Groups[1].Value }
+                    ForEach-Object { "SOURCE_CAPTURE_TEST" }
             )
             $failedTestLocations = @(
                 [regex]::Matches($joined, '(?m)^\s*location:\s*.*authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):(\d+)') |
                     ForEach-Object { "authorized-source-capture.orthanc.integration.test.mjs:$($_.Groups[1].Value):$($_.Groups[2].Value)" } |
-                    Sort-Object -Unique
+                    Sort-Object -Unique | Select-Object -First 8
             )
             $failedAssertionMarkers = @(
                 [regex]::Matches($joined, '\b(?:CAP005|DEC017)_[A-Z0-9_]{1,160}\b') |
                     ForEach-Object { $_.Value } |
-                    Sort-Object -Unique
+                    Where-Object { $_ -notmatch '^DEC017_CASE_' } |
+                    Sort-Object -Unique |
+                    Sort-Object @{ Expression = { if ($_ -match '^DEC017_PRIVACY_PROBE_') { 0 } elseif ($_ -match '^DEC017_ERROR_') { 1 } elseif ($_ -match '^DEC017_(QUERY_|ORIGIN_)') { 2 } else { 3 } } }, @{ Expression = { $_ } } |
+                    Select-Object -First 8
             )
+            $failedCaseMarkers = @([regex]::Matches($joined, '\bDEC017_CASE_[A-Z0-9_]{1,80}\b') |
+                ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 4)
             if ($failedTestNames.Count -gt 0) { $safeCode = "NODE_TEST_FAILURE" }
         }
-        $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_tests=$($failedTestNames -join ',')" } else { "" }
+        $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_test_count=$($failedTestNames.Count)" } else { "" }
         $safeLocationSummary = if ($failedTestLocations.Count -gt 0) { "; test_locations=$($failedTestLocations -join ',')" } else { "" }
         $safeAssertionSummary = if ($failedAssertionMarkers.Count -gt 0) { "; cap005_checks=$($failedAssertionMarkers -join ',')" } else { "" }
-        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary$safeLocationSummary$safeAssertionSummary); raw output suppressed."
+        $safeCaseSummary = if ($failedCaseMarkers.Count -gt 0) { "; case_context=$($failedCaseMarkers -join ',')" } else { "" }
+        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary$safeLocationSummary$safeAssertionSummary$safeCaseSummary); raw output suppressed."
     }
     return ,$output
 }
@@ -228,6 +293,8 @@ $composeBase = @(
 )
 $failure = $null
 $cleanupFailure = $null
+$privacyLogFailure = $null
+$privacyObserverOwned = $false
 $previousObservationToken = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", "Process")
 $previousObservationUrl = [Environment]::GetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", "Process")
 $privacyObserverName = "${projectName}-privacy-observer"
@@ -236,6 +303,7 @@ $random = [Security.Cryptography.RandomNumberGenerator]::Create()
 try { $random.GetBytes($observationBytes) } finally { $random.Dispose() }
 $env:MEDIQ_TEST_OBSERVATION_TOKEN = [BitConverter]::ToString($observationBytes).Replace('-', '').ToLowerInvariant()
 $env:MEDIQ_TEST_OBSERVATION_URL = "http://${privacyObserverName}:8791"
+$capturePrivacyValues = @()
 $privacyProbeScript = @'
 const response = await fetch("http://127.0.0.1:8791/" + process.argv[1], {
   headers: { "x-mediq-test-observation": process.env.MEDIQ_TEST_OBSERVATION_TOKEN }, signal: AbortSignal.timeout(3000)
@@ -245,6 +313,12 @@ if (!response.ok || body.status !== (process.argv[1] === "health" ? "READY" : "P
 '@
 
 try {
+    $manifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "data/synthetic-ct-env007/manifest.json") -Raw | ConvertFrom-Json
+    $capturePrivacyValues = @($manifest.patient.patientId, $manifest.studyInstanceUID, $manifest.seriesInstanceUID) +
+        @($manifest.instances | ForEach-Object { $_.sopInstanceUID }) +
+        @($secretKeys | Where-Object { $_ -match 'PASSWORD$' } | ForEach-Object { $settings[$_] }) +
+        @($settings["MEDIQ_DATABASE_URL"], $settings["MEDIQ_MIGRATION_DATABASE_URL"], $env:MEDIQ_TEST_OBSERVATION_TOKEN)
+    Assert-CaptureOutputPrivacy -Output '' -SensitiveValues $capturePrivacyValues
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "config", "--quiet")) "INT001_COMPOSE_VALIDATION_FAILED"
     $null = Invoke-Compose ($composeBase + @("up", "--detach", "--wait", "postgres", "orthanc-a", "orthanc-b")) "INT001_TEMPORARY_SERVICES_START_FAILED"
 
@@ -294,6 +368,7 @@ COMMIT;
         "node", "scripts/verify-int001-source-capture.mjs", "--serve-privacy")) "INT001_PRIVACY_OBSERVER_START_FAILED"
     $owner = (& docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' $privacyObserverName | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $owner -ne $projectName) { throw "INT001_PRIVACY_OBSERVER_OWNER_INVALID" }
+    $privacyObserverOwned = $true
     $privacyReady = $false
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         $null = @(& docker exec $privacyObserverName node --input-type=module -e $privacyProbeScript health 2>&1)
@@ -302,7 +377,7 @@ COMMIT;
     }
     if (-not $privacyReady) { throw "INT001_PRIVACY_OBSERVER_NOT_READY" }
     $testOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
-        "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED"
+        "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED" $capturePrivacyValues
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
@@ -310,10 +385,12 @@ COMMIT;
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
+    Write-Output "source_test_output_privacy=PASS known_values_and_markers_only=true"
     Invoke-DockerQuiet -DockerArgs @("exec", $privacyObserverName, "node", "--input-type=module", "-e", $privacyProbeScript, "summary") -FailureCode "INT001_PRIVACY_OBSERVER_INCOMPLETE"
     Write-Output "live_privacy_observer=PASS read_only=true runtime_privileges_unchanged=true"
-    $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED"
+    $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED" $capturePrivacyValues
     Write-Output "audit_and_evidence_observer=PASS"
+    Write-Output "final_observer_output_privacy=PASS known_values_and_markers_only=true"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_AFTER_PROBE_FAILED"
     Write-Output "orthanc_b_after=EMPTY"
 }
@@ -321,11 +398,32 @@ catch {
     $failure = $_.Exception.Message
 }
 finally {
+    if ($privacyObserverOwned) {
+        try {
+            Assert-ObserverLogPrivacy -Name $privacyObserverName -ProjectName $projectName -SensitiveValues $capturePrivacyValues
+            Write-Output "live_observer_output_privacy=PASS known_values_and_markers_only=true"
+        }
+        catch {
+            $privacyLogFailure = if ($_.Exception.Message -ceq "INT001_OUTPUT_PRIVACY_REJECTED") {
+                "INT001_OUTPUT_PRIVACY_REJECTED"
+            } else { "INT001_OBSERVER_OUTPUT_PRIVACY_UNVERIFIED" }
+        }
+    }
     [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_TOKEN", $previousObservationToken, "Process")
     [Environment]::SetEnvironmentVariable("MEDIQ_TEST_OBSERVATION_URL", $previousObservationUrl, "Process")
     [Array]::Clear($observationBytes, 0, $observationBytes.Length)
     try {
         Assert-OwnedResources $projectName
+        $observerStopFailure = $null
+        try {
+            if ($privacyObserverOwned) { Stop-OwnedPrivacyObserver -Name $privacyObserverName -ProjectName $projectName }
+        }
+        catch {
+            if ($_.Exception.Message -notin @('INT001_PRIVACY_OBSERVER_STOP_FAILED', 'INT001_PRIVACY_OBSERVER_AUTOREMOVE_INCOMPLETE', 'INT001_PRIVACY_OBSERVER_POSTSTOP_INVENTORY_FAILED')) { throw }
+            # Identity was already verified. Still attempt normal owned cleanup,
+            # but preserve this failure even if later inventory becomes empty.
+            $observerStopFailure = $_.Exception.Message
+        }
         $remaining = Get-ProjectResources $projectName
         if ($remaining.Containers.Count -or $remaining.Volumes.Count -or $remaining.Networks.Count) {
             Invoke-DockerQuiet -DockerArgs ($composeBase + @("down", "--volumes", "--remove-orphans", "--timeout", "15")) -FailureCode "INT001_TEMPORARY_PROJECT_CLEANUP_FAILED"
@@ -337,6 +435,7 @@ finally {
             (Compare-Object $developmentSnapshot.Networks $afterDevelopmentSnapshot.Networks)) {
             throw "INT001_EXISTING_DEVELOPMENT_STACK_CHANGED"
         }
+        if ($observerStopFailure) { throw $observerStopFailure }
         Write-Output "temporary_project_cleanup=PASS existing_mediq_stack=UNCHANGED"
     }
     catch {
@@ -345,5 +444,6 @@ finally {
 }
 
 if ($cleanupFailure) { throw $cleanupFailure }
+if ($privacyLogFailure) { throw $privacyLogFailure }
 if ($failure) { throw $failure }
 Write-Output "TC-INT-001-CAP-001/002/003/004/005/006/009/010/012/014=PASS scoped_authorized_source_capture=true"
