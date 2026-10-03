@@ -6,11 +6,11 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — DEC-016 scoped STAGE-010 PASS; DEC-017 sequences 1–2 with API 43 files/814 tests PASS; actual DB/Orthanc and concrete read verifier pending; evidence §§34–36 |
+| 상태 | `PARTIAL` — DEC-016 scoped STAGE-010 preserved; DEC-017 first signed lifecycle integration 39 PASS/observer/B EMPTY/cleanup PASS; parallel API 891 PASS/2 timeouts, unchanged-limit serial 893 PASS; evidence §§34–39 |
 
 ## 1. 목표 및 판정 범위
 
-**Current status (2026-10-03, supersedes historical checkpoints below):** DEC-016 final wrapper/cleanup remains scoped STAGE-010 PASS. DEC-017 sequences 1–2 now implement per-package quota snapshots, completion TTL/seal guards, fresh fenced STAGING reservation, immutable principal/actor-bound quota, atomic AVAILABLE/source evidence/Audit and exact-ref failure purge. Commit-time API **43 files/814 tests PASS**, API typecheck and DICOM Port contract PASS. Source tests use real encryption/AuthorizationEngine with modeled DB/registry transactions, not actual signed-OIDC/PostgreSQL/RLS/Orthanc proof. Concrete two-check read authorization and actual integration remain open. No runtime activation or STOW; Ticket PARTIAL, original P0 E2E incomplete. Historical failures/residue remain recorded. User requested commit/push; no new product implementation during that operation. See §§34–36.
+**Current status (2026-10-03, supersedes historical checkpoints below):** DEC-016 scoped STAGE-010 PASS is preserved. DEC-017 sequences 1–3 source lifecycle and concrete two-check consumer now have a first actual signed-OIDC/PostgreSQL/RLS/HTTPS-Orthanc integration slice: **39 tests PASS**, independent metadata/evidence/Audit/quota observer PASS, B EMPTY before/after and owned cleanup PASS (§38). This covers four new lifecycle scenarios, not the full LIFECYCLE/STAGE matrix. Commit-time API parallel regression had **891 PASS / 2 timeout failures**; unchanged-limit single-worker rerun had **43 files/893 tests PASS**, with API typecheck/DICOM Port PASS (§39). The timeout cause remains unproven. Complete integrated fault/concurrency/restart/privacy and updated full scratch regression remain open, followed by runtime/full coordinator/Preflight/STOW/destination verification/P0 E2E. No runtime activation or STOW; Ticket **PARTIAL**. Earlier failures and local Temp residue remain recorded; this checkpoint is committed/pushed only at the user's explicit request.
 
 **Historical user-requested Git checkpoint (2026-10-03, superseded):** Preserve the completed DEC-014/015 work and DEC-016 recommendation/Acceptance only; DEC-016 implementation had not started at that checkpoint. Commit-time API build/regression passed 40 files/732 tests, with typecheck and DICOM Port contract passing. See [evidence §28](TEST-EVIDENCE.md#28-user-requested-git-checkpoint). This checkpoint does not close MEDIQ-PACS-001 or enable runtime storage/STOW.
 
@@ -376,6 +376,10 @@ These observations are preparation only. Record the next recommendation and succ
 
 ## 15. DEC-017 implementation-ready design and sequencing
 
+**Sequence 4 opened before changes (2026-10-03):** Previous turn is progress (concrete consumer, 893 API/type/Port evidence). Dirty files are that known work and must be preserved. No old test process is live. Extend the existing disposable source harness/seed/observer with four independent lifecycle scenarios and actual signed OIDC; retain all earlier tests. Recommendation/Acceptance above precede fixture changes. Evidence §38 will distinguish test construction, actual execution, cleanup and still-open full lifecycle gates.
+
+**Sequence 3 opened before changes (2026-10-03):** Commit `02bfab5` is the verified clean starting point; previous goal turn made progress through source implementation/evidence and user-requested remote checkpoint. DEC-017-R2 records the concrete two-check consumer, private weak capture binding and admission-Audit semantics before code. Preserve ordinary/handoff schemas and existing storage/source tests. Product and test changes require evidence §37; no new DB wrapper or runtime activation is implied.
+
 **Sequence 2 checkpoint:** Durable reservation, immutable principal/actor-bound quota, common-expiry AVAILABLE/evidence/Audit completion, post-commit deadline checks and exact-ref purge are implemented. Source suite expanded from 57 to 84 cases; full API 814/type/Port PASS. Real encryption and AuthorizationEngine run with model transactions/registry; actual signed-OIDC/RLS/Orthanc and concrete read verifier remain open (§36).
 
 **Sequence 2 opened before source edits (2026-10-03):** Previous turn is progress: original DEC-016 completion was verified and sequence-1 store/metadata code passed API 787/type/Port checks. Current worktree retains those uncommitted changes; no live test needs waiting/restarting. Implement the already approved durable source reservation, authenticated per-capture quota, final AVAILABLE/evidence/Audit transaction and exact-ref failure purge. Extend existing model tests without replacing their success/denial assertions. Real PostgreSQL/Orthanc acceptance, concrete read verifier and the full P0 goal remain open; no PASS from wiring alone. See decision detail and evidence §36.
@@ -401,22 +405,22 @@ These observations are preparation only. Record the next recommendation and succ
 | 0 — scoped PASS | Original DEC-016 session 77695 exited 0; all three rounds, reset/reapply and owned cleanup verified | Evidence §34; persistent DB-002~007 scripts excluded by ScratchOnly |
 | 1 — implemented, integration pending | Reserved package quota snapshots, one post-settlement expiry, single in-flight seal/purge denial and mandatory-expiry metadata transition | Focused 82 and full API 787/type/Port PASS, no schema/grant expansion; new real-DB proof remains required |
 | 2 — implemented, integration pending | Source service now uses fresh fenced exact-ref reservation, actor-bound quota, atomic AVAILABLE/evidence/Audit and purge saga; snapshots issuer/subject and preserves ordinary response | 84 source unit/model cases and full API 814/type/Port PASS (§36); actual signed-OIDC/PostgreSQL/RLS/Orthanc proof for LIFECYCLE-001/003/004/005/010/013 still required |
-| 3 | Add internal authorized temporary consumer with concrete two-check Authorization, exact current metadata/source evidence and borrowed plaintext lifetime | LIFECYCLE-006/007/008/009; no caller-provided verifier; actual denial/revocation/expiry/tamper/restart evidence |
-| 4 | Extend isolated source-capture fixture/tests/independent observer without deleting existing source cases; use generated DICOM and Test Orthanc only | LIFECYCLE-003~014 and original STAGE-002/003/004/011/012; actual OIDC/registry/Authorization/RLS/files, privacy scans, B EMPTY/no writes, final owned cleanup and unchanged existing stack |
+| 3 — implemented, integration pending | Source-service concrete two-check borrowed consumer with private weak provenance, current graph/mapping/AVAILABLE/evidence and admission Audit; no new handoff fields or caller verifier | 74 added source and 5 Audit-denial cases, full API 893/type/Port PASS; actual LIFECYCLE-006~010/014 integration still required (§37) |
+| 4 — first actual slice scoped PASS; full matrix open | Existing 35 cases plus four signed-OIDC/real RLS/HTTPS-Orthanc lifecycle cases; independent metadata/evidence/Audit/quota observer, B EMPTY and owned cleanup pass | Evidence §38. Full LIFECYCLE-003~014 and original STAGE/privacy/fault/concurrency/restart/updated scratch gates are not closed by four cases |
 | 5 | Reconcile remaining storage gates, then separately implement runtime wiring/full coordinator/Preflight/dispatch/reconciliation/verification and product E2E | Existing IMPLEMENTATION-PLAN and original P0 success condition; no completion inferred from this storage slice |
 
 Concrete privacy reconciliation is recorded in normative Data Model/Security/Acceptance: preserve and compare approved source UID/PatientMapping columns while prohibiting new copies elsewhere. A broad "no UID anywhere in DB" scan would contradict the approved source-reference model and cannot replace this precise inspection. Crash-dump/platform hardening remains explicitly unproven.
 
 ```text
 Ticket: MEDIQ-PACS-001
-Scope: DEC-016 final acceptance; DEC-017/R1 sequences 1–2 store, metadata and optional source lifecycle prerequisites
-Changed: Quota snapshots, TTL/seal guards, expiry completion, fenced source reservation/identity-bound quota/atomic evidence-Audit/failure purge; 9 lifecycle, 14 metadata and 27 added source cases; normative/evidence records
-Not changed: Concrete read verifier, DB schema/grants/migrations, OpenAPI, scripts/Compose/runtime registration, real patient data or PACS writes
-Security impact: Immutable quota identity/methods, exact reservation before files, bounded common expiry and fail-closed uncertain-commit cleanup; no expanded authority. Actual DB/RLS/Orthanc proof remains required
-Tests executed: Original DEC-016 wrapper exit 0/cleanup before edits; sequence-1 focused 82 PASS; current API 43 files/814 tests PASS, typecheck and DICOM Port PASS; earlier RED/timeouts retained
-Tests not executed: New SQL against real PostgreSQL, integrated source lifecycle and read Authorization/Orthanc/privacy gates, post-edit full scratch regression, product STOW/destination verification/P0 E2E
-Evidence: TEST-EVIDENCE.md sections 33–36
+Scope: User-requested checkpoint of DEC-017 sequence-3 consumer and first sequence-4 actual integration slice
+Changed: Source consumer/private binding/two-check Authorization and Audit rules; 74 source and 5 Audit tests; shared synthetic selector module, seed/fault cases, 39-case integration harness, independent observer, wrapper diagnostics/count and test-image COPY; evidence/status documents
+Not changed: Additional product implementation for this Git task, public/handoff schemas, DB schema/grants/migrations, Compose/runtime registration, OpenAPI, real patient data or PACS writes
+Security impact: Source provenance is not authority; fresh fenced checks at both read phases, immutable selectors, fail-closed Audit/expiry/commit/cancel handling, no new serialized identifiers or permissions
+Tests executed: Actual integration 39 PASS plus independent observer/B EMPTY/cleanup. Parallel API 891 PASS/2 timeouts; unchanged-limit single-worker 43 files/893 PASS. Typecheck, DICOM Port, JS/PowerShell syntax and diff checks PASS; earlier failures retained
+Tests not executed: Remaining full integrated fault/concurrency/restart/privacy gates, post-edit full scratch regression, product STOW/destination verification/P0 E2E
+Evidence: TEST-EVIDENCE.md sections 34–39
 Implementation record: docs/implementation/MEDIQ-PACS-001/
-Remaining risks: Model DB/registry tests are not actual identity/RLS proof; concrete read verifier and runtime/Preflight/STOW/destination verification/P0 E2E incomplete; earlier timeouts and policy-denied synthetic residue retained
+Remaining risks: Four integrated cases do not close the full matrix; parallel timeout cause/reproducibility and local Temp residue remain recorded; full runtime/Preflight/STOW/destination verification/P0 E2E incomplete
 Status: PARTIAL
 ```

@@ -105,7 +105,7 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode) {
                     Sort-Object -Unique
             )
             $failedAssertionMarkers = @(
-                [regex]::Matches($joined, '\bCAP005_[A-Z0-9_]{1,160}\b') |
+                [regex]::Matches($joined, '\b(?:CAP005|DEC017)_[A-Z0-9_]{1,160}\b') |
                     ForEach-Object { $_.Value } |
                     Sort-Object -Unique
             )
@@ -128,7 +128,17 @@ function Invoke-ScratchPsql([string]$Network, [string]$User, [string]$Database, 
         if ($exitCode -ne 0) {
             $joined = [string]::Join("`n", [string[]]$output)
             $sqlState = [regex]::Match($joined, '\b[0-9A-Z]{5}\b').Value
-            throw "INT001_TEMPORARY_DATABASE_BOOTSTRAP_FAILED (exit=$exitCode, sqlstate=$sqlState); database output suppressed."
+            $connectionClass = switch -Regex ($joined) {
+                'could not translate host|Name or service not known|Temporary failure in name resolution' { 'DNS_FAILURE'; break }
+                'password authentication failed' { 'AUTHENTICATION_DENIED'; break }
+                'no pg_hba.conf entry' { 'HBA_DENIED'; break }
+                'database .+ does not exist' { 'DATABASE_MISSING'; break }
+                'Connection refused' { 'CONNECTION_REFUSED'; break }
+                'timeout expired|Connection timed out' { 'CONNECTION_TIMEOUT'; break }
+                'server closed the connection unexpectedly' { 'CONNECTION_CLOSED'; break }
+                default { 'UNCLASSIFIED' }
+            }
+            throw "INT001_TEMPORARY_DATABASE_BOOTSTRAP_FAILED (exit=$exitCode, sqlstate=$sqlState, connection_class=$connectionClass); database output suppressed."
         }
     }
     finally {
@@ -247,7 +257,7 @@ COMMIT;
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "35" -or $testFail -ne "0") {
+    if ($testPass -ne "39" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"

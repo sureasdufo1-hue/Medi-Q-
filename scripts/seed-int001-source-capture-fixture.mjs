@@ -1,4 +1,5 @@
 import pg from "pg";
+import { temporaryCaptureLifecycleCases } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
@@ -393,7 +394,7 @@ try {
      VALUES ($1, $2, 'study:pacs-transfer')`,
     [ids.grantInFlightRevocationScope, ids.grantInFlightRevocation],
   );
-  for (const scenario of cap012Cases) {
+  for (const scenario of [...cap012Cases, ...temporaryCaptureLifecycleCases]) {
     await client.query(
       `INSERT INTO exchange_sessions
         (session_id, patient_ref_id, source_hospital_id, destination_hospital_id,
@@ -494,7 +495,7 @@ try {
       "1b000000-0000-4000-8000-000000000016"],
   );
 
-  for (const scenario of cap012Cases) {
+  for (const scenario of [...cap012Cases, ...temporaryCaptureLifecycleCases]) {
     await client.query(
       `INSERT INTO pacs_transfer_operations
         (operation_id, tenant_id, exchange_session_id, study_ref_id, actor_id,
@@ -516,7 +517,12 @@ try {
       IF (NEW.correlation_id = '1d000000-0000-4000-8000-000000000029'::uuid
           AND NEW.action = 'PACS_SOURCE_CAPTURE_STARTED')
          OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000031'::uuid
-          AND NEW.action = 'PACS_SOURCE_CAPTURED') THEN
+          AND NEW.action = 'PACS_SOURCE_CAPTURED')
+         OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000103'::uuid
+          AND NEW.action = 'PACS_SOURCE_CAPTURED')
+         OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000104'::uuid
+          AND NEW.action = 'PACS_TEMPORARY_READ_AUTHORIZED'
+          AND NEW.reason_code = 'BEFORE_DELIVERY') THEN
         RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'INT001_CAP012_TEST_FAULT';
       END IF;
       RETURN NEW;

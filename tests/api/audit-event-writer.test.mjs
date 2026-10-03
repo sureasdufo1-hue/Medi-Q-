@@ -60,6 +60,9 @@ describe("AuditEvent", () => {
       ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_CANCELLED"],
       ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_DEADLINE"],
       ["PACS_SOURCE_CAPTURE_FAILED", "STUDY", "FAILURE", "SOURCE_CAPTURE_PERSISTENCE_FAILED"],
+      ["PACS_TEMPORARY_READ_AUTHORIZED", "STUDY", "ALLOW", "BEFORE_DECRYPT"],
+      ["PACS_TEMPORARY_READ_AUTHORIZED", "STUDY", "ALLOW", "BEFORE_DELIVERY"],
+      ["PACS_TEMPORARY_READ_FAILED", "STUDY", "FAILURE", "TEMPORARY_READ_FAILED"],
     ];
 
     for (const [action, resourceType, result, reasonCode] of allowed) {
@@ -69,6 +72,11 @@ describe("AuditEvent", () => {
 
   it.each([
     ["unknown action", { action: "VIEWER_OPENED" }],
+    ["read admission is not delivery", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "BEFORE_DELIVERY" }],
+    ["read reason cannot contain identifiers", { action: "PACS_TEMPORARY_READ_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "TEST-PRIVATE-PATIENT" }],
+    ["read admission requires phase", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: null }],
+    ["read admission requires Session", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: "BEFORE_DECRYPT", exchangeSessionId: null }],
+    ["read admission requires resource", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: "BEFORE_DECRYPT", resourceId: null }],
     ["action/result mismatch", { action: "SESSION_CREATED", result: "ALLOW" }],
     ["GRANT_DENIED result mismatch", { action: "GRANT_DENIED", result: "FAILURE", reasonCode: "GRANT_ISSUE_DENIED" }],
     ["resource mismatch", { action: "CONSENT_APPROVED", resourceType: "EXCHANGE_SESSION" }],

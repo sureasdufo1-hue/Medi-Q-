@@ -2354,7 +2354,7 @@ Prohibited flows include Patient ID-only global PACS search, Assignment-to-Grant
 
 # P0 Source Capture / Temporary Lifecycle Integration — DEC-017
 
-**Status:** Sequence-1 store/metadata and sequence-2 optional source lifecycle wiring are implemented with unit/model API evidence (§§35–36). Exact reservation, identity-bound quota, completion transaction and failure purge are connected; actual PostgreSQL/RLS/Orthanc proof and the concrete read verifier remain pending. `TC-PACS-001-LIFECYCLE-001~014` integrated Acceptance remains NOT RUN. This unregistered pre-dispatch prerequisite is not the A→B transfer; preserve the original P0 E2E success condition.
+**Status:** Sequences 1–3 implement store/metadata/source lifecycle and the concrete borrowed consumer (evidence §§35–37). Source-issued weak provenance plus two fresh Authorization/Session-fence checks enforce current graph/mapping/AVAILABLE/evidence, with committed read admissions before physical decrypt and callback. No extra serialized PatientID or caller verifier. API/model tests pass; actual signed-OIDC/PostgreSQL/RLS/Orthanc integration remains NOT RUN. This unregistered pre-dispatch prerequisite is not A→B transfer or the original P0 E2E completion.
 
 ```text
 Authenticated caller + strict internal operation/Consent/Grant refs

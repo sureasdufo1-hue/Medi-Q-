@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -147,6 +147,7 @@ function studyMetadata(options = {}) {
 
 function makeHarness(options = {}) {
   let activeTransactions = 0;
+  let currentIdentity = identity;
   let authorizationCalls = 0;
   let currentScope = operationScope({
     operation_state: options.operationState ?? "CREATED",
@@ -189,6 +190,7 @@ function makeHarness(options = {}) {
   const committedEvidence = [];
   const rollbackReasons = [];
   const lifecycleEvents = [];
+  let readChecks = 0;
   const observedPrincipals = [];
   const reservationExpiries = [];
   let committedPayload = options.existingPayload ? { ...options.existingPayload } : null;
@@ -206,6 +208,7 @@ function makeHarness(options = {}) {
       if (tenantCandidate !== ids.tenant) throw new Error("ACTOR_TENANT_CONTEXT_DENIED");
       observedPrincipals.push({ ...capturePrincipal });
       if (capturePrincipal.issuer !== issuer || capturePrincipal.subject !== subject) throw new ActorTenantContextDeniedError();
+      if (!currentIdentity) throw new ActorTenantContextDeniedError();
       if (options.denyIdentityAfterReservation && committedPayload) throw new ActorTenantContextDeniedError();
       activeTransactions += 1;
       lifecycleEvents.push("transaction:begin");
@@ -216,10 +219,28 @@ function makeHarness(options = {}) {
       let didReserve = false;
       let didComplete = false;
       let committed = false;
+      let readPhase = 0;
       const client = {
         query: async (statement, values = []) => {
           const sql = String(statement);
           if (sql.includes("pg_advisory_xact_lock")) return { rowCount: 1, rows: [] };
+          if (sql.includes("SELECT 1 AS capture_read_available")) {
+            readPhase = ++readChecks;
+            const evidence = committedEvidence.find((item) => item.integrity_id === values[6]);
+            expect(values.slice(0, 3)).toEqual([ids.studyRef, ids.package, TEST_HOSPITAL_A_ID]);
+            expect(values[7]).toBe(ids.operation);
+            expect(values[8]).toBe(ids.session);
+            expect(values[12]).toBe(ids.tenant);
+            if (options.failReadSql === readPhase) throw new Error("TEST_PRIVATE_READ_SQL_FAILURE");
+            const valid = txPayload?.state === "AVAILABLE" && txPayload.storageRef === values[3] &&
+              txPayload.expiresAt.getTime() === values[4].getTime() && txPayload.expiresAt > values[5] &&
+              evidence?.status === "PENDING" && evidence.verified_at === null &&
+              evidence.algorithm === values[9] && evidence.source_digest === values[10] &&
+              evidence.source_object_count === values[11] && evidence.operation_id === values[7] &&
+              evidence.exchange_session_id === values[8] && evidence.package_id === values[1] &&
+              evidence.study_ref_id === values[0] && evidence.verification_stage === "SOURCE_CAPTURE";
+            return { rowCount: valid ? 1 : 0, rows: valid ? [{ capture_read_available: 1 }] : [] };
+          }
           // Transaction model for ordering/rollback, not PostgreSQL/RLS proof.
           // Handle UPDATEs before their nested FROM operation-graph predicates.
           if (sql.includes("UPDATE study_references AS sr")) {
@@ -296,6 +317,9 @@ function makeHarness(options = {}) {
           }
           if (sql.includes("INSERT INTO audit_events")) {
             const action = values[7];
+            if (action === "PACS_TEMPORARY_READ_AUTHORIZED" && options.failReadAudit === readPhase) {
+              throw new Error("TEST_PRIVATE_READ_AUDIT_FAILURE");
+            }
             if (options.failAuditAction === action) {
               throw new Error("synthetic Audit sink failure");
             }
@@ -334,8 +358,9 @@ function makeHarness(options = {}) {
 
       try {
         const workIdentity = options.changeIdentityAfterReservation && committedPayload
-          ? { ...identity, actorId: "02000000-0000-4000-8000-000000000099" } : identity;
+          ? { ...identity, actorId: "02000000-0000-4000-8000-000000000099" } : currentIdentity;
         const result = await work(workIdentity, client);
+        if (readPhase && options.failReadCommit === readPhase) throw new ActorTenantContextUnavailableError();
         if (didReserve && options.failReservationCommit) throw new Error("TEST_RESERVATION_COMMIT_FAILURE");
         if (
           options.failFinalCommit === true &&
@@ -349,6 +374,8 @@ function makeHarness(options = {}) {
         committedQuota = txQuota;
         committed = true;
         lifecycleEvents.push("transaction:commit");
+        if (readPhase && options.loseReadCommitAck === readPhase) throw new ActorTenantContextUnavailableError();
+        if (readPhase) options.afterReadCommit?.(readPhase);
         if ((didReserve && options.loseReservationCommitAck) || (didComplete && options.loseFinalCommitAck)) {
           throw new ActorTenantContextUnavailableError();
         }
@@ -475,6 +502,11 @@ function makeHarness(options = {}) {
     dicomCalls,
     get activeTransactions() { return activeTransactions; },
     get authorizationCalls() { return authorizationCalls; },
+    get readChecks() { return readChecks; },
+    changeScope(value) { currentScope = { ...currentScope, ...value }; },
+    changeIdentity(value) { currentIdentity = value === null ? null : { ...currentIdentity, ...value }; },
+    changeMapping(value) { currentMapping = { ...currentMapping, ...value }; },
+    changeAuthorization(value) { currentAuthorization = { ...currentAuthorization, ...value }; },
     get operationState() { return currentScope.operation_state; },
     set consentStatus(value) { currentAuthorization = { ...currentAuthorization, consentStatus: value }; },
   };
@@ -539,6 +571,21 @@ async function withLifecycle(options, check) {
       if (options.afterSeal) await options.afterSeal(harness, receipt);
       return receipt;
     },
+    async consumeInstance(input, verify, consume) {
+      expect(harness.activeTransactions).toBe(0);
+      let checks = 0;
+      await store.consumeInstance(input, async (request, signal) => {
+        checks += 1;
+        await options.beforeReadVerification?.(harness, checks);
+        const result = await verify(request, signal);
+        expect(harness.activeTransactions).toBe(0);
+        await options.afterReadVerification?.(harness, checks);
+        return result;
+      }, async (plaintext, signal) => {
+        expect(harness.activeTransactions).toBe(0);
+        await consume(plaintext, signal);
+      });
+    },
     async purgeByReference(input) {
       expect(harness.activeTransactions).toBe(0);
       expect(["PURGE_PENDING", "PURGED"]).toContain(harness.payloadState?.state);
@@ -562,6 +609,199 @@ async function withLifecycle(options, check) {
     await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
   }
 }
+
+function readCommand(handoff, overrides = {}) {
+  return { principal, tenantCandidate: ids.tenant, correlationId: ids.correlation,
+    consentId: ids.consent, grantId: ids.grant, handoff,
+    objectRef: handoff.temporaryPackage.instances[0].objectRef, ...overrides };
+}
+
+describe("DEC-017 R2 concrete read authorization (model DB, real engine/crypto)", () => {
+  it("checks twice outside I/O, records admission not delivery, returns no bytes and zeroes borrowed memory", async () => {
+    await withLifecycle({}, async (harness) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      let borrowed;
+      const callback = vi.fn(async (bytes) => {
+        borrowed = bytes;
+        expect(harness.activeTransactions).toBe(0);
+        expect([...bytes]).toEqual([...instanceFixture[0].bytes]);
+        expect(harness.readChecks).toBe(2);
+        expect(auditActions(harness).slice(-2)).toEqual([
+          { action: "PACS_TEMPORARY_READ_AUTHORIZED", result: "ALLOW", reason: "BEFORE_DECRYPT" },
+          { action: "PACS_TEMPORARY_READ_AUTHORIZED", result: "ALLOW", reason: "BEFORE_DELIVERY" },
+        ]);
+      });
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).resolves.toBeUndefined();
+      expect(callback).toHaveBeenCalledOnce();
+      expect(borrowed.every((byte) => byte === 0)).toBe(true);
+      expect(harness.authorizationCalls).toBe(5);
+      expect(harness.operationState).toBe("CREATED");
+      expect(harness.dicomCalls.destinationWrites).toBe(0);
+      expect(JSON.stringify(handoff)).not.toMatch(/TEST-PATIENT|localPatientId|patientRefId/);
+    });
+  });
+
+  it.each([
+    ["clone", (h) => ({ handoff: { ...h } })],
+    ["unknown object", () => ({ objectRef: ids.patient })],
+    ["caller verifier", () => ({ verifyAccess: async () => "VERIFIED" })],
+    ["purpose override", () => ({ purpose: "VIEW" })],
+    ["operation override", () => ({ operationId: ids.operation })],
+    ["missing principal", () => ({ principal: null })],
+  ])("denies %s before any read Authorization", async (_name, overrides) => {
+    await withLifecycle({}, async (harness) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      const callback = vi.fn();
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff, overrides(handoff)), callback))
+        .rejects.toMatchObject({ message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+      expect(harness.readChecks).toBe(0);
+      expect(harness.authorizationCalls).toBe(3);
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects the issued handoff in another service instance", async () => {
+    await withLifecycle({}, async (harness, store) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      const restarted = makeHarness({ temporaryImagingStore: store });
+      const callback = vi.fn();
+      await expect(restarted.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(restarted.authorizationCalls).toBe(0);
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  const changes = [
+    ["inactive actor", h => h.changeIdentity(null)],
+    ["actor changed", h => h.changeIdentity({ actorId: ids.mapping })],
+    ["Hospital changed", h => h.changeIdentity({ hospitalId: TEST_HOSPITAL_A_ID })],
+    ["Tenant changed", h => h.changeIdentity({ tenantId: ids.mapping })],
+    ["expired Grant", h => h.changeAuthorization({ grantExpiresAt: new Date(now.getTime() - 1) })],
+    ["Consent withdrawal", h => { h.consentStatus = "WITHDRAWN"; }],
+    ["Grant revocation", h => h.changeAuthorization({ grantStatus: "REVOKED" })],
+    ["mapping local ID", h => h.changeMapping({ local_patient_id: "TEST-CHANGED" })],
+    ["mapping reference", h => h.changeMapping({ mapping_id: ids.patient })],
+    ["mapping revocation", h => h.changeMapping({ status: "REVOKED" })],
+    ["patient", h => h.changeScope({ patient_ref_id: ids.mapping })],
+    ["package", h => h.changeScope({ package_id: ids.mapping })],
+    ["Study", h => h.changeScope({ study_ref_id: ids.mapping })],
+    ["source", h => h.changeScope({ source_hospital_id: TEST_HOSPITAL_B_ID })],
+    ["destination", h => h.changeScope({ destination_hospital_id: TEST_HOSPITAL_A_ID })],
+    ["Session", h => h.changeScope({ exchange_session_id: ids.mapping })],
+    ["operation state", h => h.changeScope({ operation_state: "STOW_STARTED" })],
+    ["pending purge", h => { h.payloadState.state = "PURGE_PENDING"; }],
+    ["storage ref", h => { h.payloadState.storageRef = ids.mapping; }],
+    ["metadata expiry", h => { h.payloadState.expiresAt = new Date(now.getTime() + 60_000); }],
+    ["expired clock", h => { h.captureTime = new Date(now.getTime() + 30 * 60_000); }],
+    ["evidence digest", h => { h.committedEvidence[0].source_digest = `sha256:${"0".repeat(64)}`; }],
+    ["evidence count", h => { h.committedEvidence[0].source_object_count = 4; }],
+    ["evidence stage", h => { h.committedEvidence[0].verification_stage = "DESTINATION"; }],
+    ["evidence status", h => { h.committedEvidence[0].status = "VERIFIED"; }],
+  ];
+  it.each(changes.flatMap(([name, mutate]) => [1, 2].map(phase => [name, phase, mutate])))
+    ("denies %s before read phase %s without callback", async (_name, phase, mutate) => {
+      await withLifecycle({ beforeReadVerification: (h, n) => { if (n === phase) mutate(h); } }, async (harness) => {
+        const { handoff } = await harness.service.captureForCoordinator(command());
+        const callback = vi.fn();
+        await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(callback).not.toHaveBeenCalled();
+        expect(auditActions(harness).filter(e => e.action === "PACS_TEMPORARY_READ_AUTHORIZED")).toHaveLength(phase - 1);
+        expect(harness.dicomCalls.instances).toBe(3);
+      });
+    });
+
+  it.each(["failReadSql", "failReadAudit", "failReadCommit", "loseReadCommitAck"].flatMap(key => [1, 2].map(n => [key, n])))
+    ("fails closed for %s at check %s", async (key, n) => {
+      await withLifecycle({ [key]: n }, async (harness) => {
+        const { handoff } = await harness.service.captureForCoordinator(command());
+        const callback = vi.fn();
+        await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        expect(callback).not.toHaveBeenCalled();
+        expect(harness.payloadState.state).toBe("AVAILABLE");
+        expect(harness.operationState).toBe("CREATED");
+      });
+    });
+
+  it("snapshots principal/selectors before awaits", async () => {
+    const inputPrincipal = { ...principal };
+    let input;
+    await withLifecycle({ afterReadVerification: (_h, n) => {
+      if (n === 1) { inputPrincipal.subject = "TEST-OTHER"; input.tenantCandidate = ids.mapping; input.objectRef = ids.mapping; }
+    } }, async (harness) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      input = readCommand(handoff, { principal: inputPrincipal });
+      const callback = vi.fn(async () => {});
+      await harness.service.consumeCapturedInstance(input, callback);
+      expect(callback).toHaveBeenCalledOnce();
+      expect(harness.observedPrincipals.every(p => p.subject === subject)).toBe(true);
+    });
+  });
+
+  it("rejects corrupted ciphertext without a callback or delivery admission", async () => {
+    await withLifecycle({}, async (harness, _store, root) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      const pkg = handoff.temporaryPackage;
+      const path = join(root, pkg.storageRef, `${pkg.instances[0].objectRef}.enc`);
+      const bytes = await readFile(path); bytes[0] ^= 1; await writeFile(path, bytes);
+      const callback = vi.fn();
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(callback).not.toHaveBeenCalled();
+      expect(harness.readChecks).toBe(1);
+    });
+  });
+
+  it("holds and zeroes borrowed plaintext after consumer rejection", async () => {
+    await withLifecycle({}, async (harness) => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      let borrowed;
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff), async bytes => {
+        borrowed = bytes; throw new Error("TEST_PRIVATE_CONSUMER_FAILURE");
+      })).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(borrowed.every(byte => byte === 0)).toBe(true);
+    });
+  });
+
+  it.each(["before", "between", "after-final-commit"])("denies cancellation %s without callback", async timing => {
+    const abort = new AbortController();
+    await withLifecycle({
+      afterReadVerification: (_h, n) => { if (timing === "between" && n === 1) abort.abort(); },
+      afterReadCommit: n => { if (timing === "after-final-commit" && n === 2) abort.abort(); },
+    }, async harness => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      if (timing === "before") abort.abort();
+      const callback = vi.fn();
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff, { signal: abort.signal }), callback))
+        .rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  it("denies expiry during final commit before callback", async () => {
+    let running;
+    await withLifecycle({ afterReadCommit: n => {
+      if (n === 2) running.captureTime = new Date(now.getTime() + 30 * 60_000);
+    } }, async harness => {
+      running = harness;
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      const callback = vi.fn();
+      await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rechecks replay without extending expiry or repeating source retrieval", async () => {
+    await withLifecycle({}, async harness => {
+      const { handoff } = await harness.service.captureForCoordinator(command());
+      const expiry = harness.payloadState.expiresAt.getTime();
+      await harness.service.consumeCapturedInstance(readCommand(handoff), async () => {});
+      harness.captureTime = new Date(now.getTime() + 60_000);
+      await harness.service.consumeCapturedInstance(readCommand(handoff), async () => {});
+      expect(harness.readChecks).toBe(4);
+      expect(harness.payloadState.expiresAt.getTime()).toBe(expiry);
+      expect(harness.dicomCalls.instances).toBe(3);
+    });
+  });
+});
 
 describe("DEC-017 source lifecycle wiring (real store/AuthorizationEngine, modeled DB)", () => {
   it("commits reservation before allocation, quota before writes, and AVAILABLE with evidence/Audit", async () => {

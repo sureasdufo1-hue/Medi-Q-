@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import pg from "pg";
+import { temporaryCaptureLifecycleCases } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
@@ -120,6 +121,22 @@ sourceAuditScopes.set(ids.cap012SuccessAuditFailure, {
   studyRefId: ids.cap012SuccessAuditStudy,
 });
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
+async function inspectLifecycleQuota(scenario) {
+  // mediq_migrator is NOINHERIT. Its already approved owner membership is
+  // explicit, transaction-local and used only by this independent observer.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL ROLE mediq_quota_owner");
+    await client.query("SELECT set_config('mediq.tenant_id',$1,true)", [ids.tenant]);
+    return (await client.query(`SELECT reserved_bytes::text AS environment_reserved,
+      (SELECT count(*)::int FROM temporary_payload_reservations WHERE study_ref_id=$1) AS refs,
+      (SELECT count(*)::int FROM temporary_payload_package_quotas WHERE package_id=$2) AS packages
+      FROM temporary_payload_quota_state`, [scenario.studyRefId, scenario.packageId])).rows[0];
+  } finally {
+    try { await client.query("ROLLBACK"); } finally { client.release(); }
+  }
+}
 try {
   const auditResult = await pool.query(
     `SELECT correlation_id::text AS correlation_id, action, result, reason_code, count(*)::integer AS count
@@ -323,6 +340,72 @@ try {
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_cap010_success_capture=PASS evidence=pending_one success_audit=one operation_state=CREATED response_allowlist=true");
   console.log("int001_cap012_insert_failures=PASS start_no_wado=true final_transaction_rollback=true operation_state=CREATED evidence=none");
+
+  // Separate observer process: these privileged reads are not application rights.
+  const baselineDigest = (await pool.query("SELECT source_digest FROM integrity_evidence WHERE operation_id=$1 AND verification_stage='SOURCE_CAPTURE'", [ids.operation])).rows[0].source_digest;
+  for (const scenario of temporaryCaptureLifecycleCases) {
+    const rows = await pool.query(`SELECT op.state,op.version,op.stow_started_at,
+      sr.temporary_storage_ref::text,sr.temporary_payload_state,sr.temporary_payload_purged_at,
+      sr.temporary_payload_expires_at,sr.study_instance_uid,
+      p.state AS package_state,p.storage_ref,p.study_count,p.patient_ref_id::text,
+      p.source_hospital_id::text, p.deleted_at,
+      g.status AS grant_status,
+      (SELECT count(*)::int FROM integrity_evidence ie WHERE ie.operation_id=op.operation_id) AS evidence_count
+      FROM pacs_transfer_operations op JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
+      JOIN imaging_packages p ON p.package_id=sr.package_id JOIN transfer_grants g ON g.grant_id=$2
+      WHERE op.operation_id=$1`, [scenario.operationId, scenario.grantId]);
+    assert.equal(rows.rowCount, 1, "DEC017_OBSERVER_GRAPH");
+    const row = rows.rows[0];
+    assert.equal(row.state, "CREATED"); assert.equal(row.version, 0); assert.equal(row.stow_started_at, null);
+    assert.equal(row.temporary_payload_state, "PURGED");
+    assert.match(row.temporary_storage_ref, /^[0-9a-f-]{36}$/);
+    assert.ok(row.temporary_payload_purged_at instanceof Date && row.temporary_payload_expires_at instanceof Date);
+    assert.equal(row.study_instance_uid, "2.25.139413224574575433810421680499794275977");
+    assert.equal(row.package_state, "AVAILABLE"); assert.equal(row.storage_ref, null);
+    assert.equal(row.study_count, 1); assert.equal(row.deleted_at, null);
+    assert.equal(row.patient_ref_id, "15000000-0000-4000-8000-000000000001");
+    assert.equal(row.source_hospital_id, "04000000-0000-4000-8000-000000000001");
+    assert.equal(row.grant_status, scenario.name === "read_revoked" ? "REVOKED" : "ACTIVE");
+    const completionFailed = scenario.name === "completion_audit_failure";
+    assert.equal(row.evidence_count, completionFailed ? 0 : 1);
+    if (!completionFailed) {
+      const evidence = (await pool.query(`SELECT verification_stage,status,verified_at,source_digest,source_object_count
+        FROM integrity_evidence WHERE operation_id=$1`, [scenario.operationId])).rows;
+      assert.deepEqual(evidence, [{ verification_stage: "SOURCE_CAPTURE", status: "PENDING", verified_at: null,
+        source_digest: baselineDigest, source_object_count: 3 }]);
+    }
+    const audits = (await pool.query(`SELECT actor_id::text,tenant_id::text,exchange_session_id::text,
+      resource_type,resource_id::text,action,result,reason_code,correlation_id::text
+      FROM audit_events WHERE correlation_id=ANY($1::uuid[])`, [[scenario.correlationId, scenario.revokeCorrelationId]])).rows;
+    const observed = {};
+    for (const audit of audits) {
+      assert.equal(audit.actor_id, ids.actor); assert.equal(audit.tenant_id, ids.tenant);
+      assert.equal(audit.exchange_session_id, scenario.sessionId);
+      const revoke = audit.action === "GRANT_REVOKED";
+      assert.equal(audit.resource_type, revoke ? "TRANSFER_GRANT" : "STUDY");
+      assert.equal(audit.resource_id, revoke ? scenario.grantId : scenario.studyRefId);
+      assert.equal(audit.correlation_id, revoke ? scenario.revokeCorrelationId : scenario.correlationId);
+      const key = `${audit.action}|${audit.result}|${audit.reason_code ?? "NULL"}`;
+      observed[key] = (observed[key] ?? 0) + 1;
+    }
+    const expected = { "PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL": 1,
+      [`PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|${completionFailed ? "CAPTURE_FAILURE" : "EXPLICIT_CLOSE"}`]: 1 };
+    if (completionFailed) expected["PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] = 1;
+    else {
+      expected["PACS_SOURCE_CAPTURED|SUCCESS|NULL"] = 1;
+      expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DECRYPT"] = scenario.name === "roundtrip" ? 3 : 1;
+      if (scenario.name === "roundtrip") expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DELIVERY"] = 3;
+      else expected["PACS_TEMPORARY_READ_FAILED|FAILURE|TEMPORARY_READ_FAILED"] = 1;
+      if (scenario.name === "read_revoked") expected["GRANT_REVOKED|SUCCESS|NULL"] = 1;
+    }
+    assert.deepEqual(observed, expected, "DEC017_OBSERVER_EXACT_AUDIT");
+    assert.doesNotMatch(JSON.stringify(audits), /2\.25\.|TEST-PATIENT|PRIVATE KEY|credential|password|\.enc|\/tmp\//i);
+    assert.deepEqual(await inspectLifecycleQuota(scenario), { environment_reserved: "0", refs: 0, packages: 0 });
+  }
+  assert.deepEqual((await pool.query("SELECT local_patient_id,status FROM patient_mappings WHERE mapping_id='15000000-0000-4000-8000-000000000002'")).rows, [{ local_patient_id: "TEST-PATIENT-007", status: "VALID" }]);
+  assert.equal((await pool.query(`SELECT count(*)::int AS n FROM study_references WHERE study_ref_id=ANY($1::uuid[])
+    AND (temporary_storage_ref IS NOT NULL OR temporary_payload_state IS NOT NULL OR temporary_payload_expires_at IS NOT NULL OR temporary_payload_purged_at IS NOT NULL)`, [[ids.study, ids.studyOther, ids.studyMissingCount]])).rows[0].n, 0);
+  console.log("int001_lifecycle_observer=PASS cases=4 purge_audits=4 quota_released=true operations_created=true approved_identifiers_unchanged=true");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code

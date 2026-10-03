@@ -1360,6 +1360,8 @@ FAILED
 
 # 42. AuditEvent
 
+**PACS-001-DEC-017-R2 internal read admissions:** `PACS_TEMPORARY_READ_AUTHORIZED` is a STUDY/ALLOW event requiring Session and internal StudyReference, with only `BEFORE_DECRYPT` or `BEFORE_DELIVERY` reason. It records committed admission, not delivered bytes or completed transfer. A failure to persist it prevents that phase. `PACS_TEMPORARY_READ_FAILED` is STUDY/FAILURE with the fixed reason `TEMPORARY_READ_FAILED`, recorded best-effort only under a valid Tenant context; Audit failure never turns denial into success. Neither event includes storage/object refs, DICOM identifiers, PatientID, keys, paths or plaintext. Existing resource/action/result column schema and RLS grants remain unchanged; no wildcard Audit action/reason is allowed by the domain constructor.
+
 ## Definition
 
 `AuditEvent`는 MediQ에서 발생한 보안·업무 Event를 재구성할 수 있도록 기록하는 Domain Entity다.

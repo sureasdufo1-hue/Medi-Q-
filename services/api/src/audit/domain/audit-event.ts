@@ -156,6 +156,20 @@ const EVENT_RULES: Readonly<Record<string, EventRule>> = Object.freeze({
       "PROCESS_RESTART",
     ],
   },
+  PACS_TEMPORARY_READ_AUTHORIZED: {
+    resourceType: "STUDY",
+    result: "ALLOW",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: ["BEFORE_DECRYPT", "BEFORE_DELIVERY"],
+  },
+  PACS_TEMPORARY_READ_FAILED: {
+    resourceType: "STUDY",
+    result: "FAILURE",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: ["TEMPORARY_READ_FAILED"],
+  },
 });
 
 const ALLOWED_KEYS = new Set([

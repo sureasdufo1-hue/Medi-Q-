@@ -51,6 +51,7 @@ import type {
   TemporaryImagingInstanceReceipt,
   TemporaryImagingPackageBinding,
   TemporaryImagingPackageReceipt,
+  TemporaryImagingInstanceConsumer,
 } from "../../imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import {
   PostgresTemporaryPayloadMetadataRepository,
@@ -87,6 +88,13 @@ export class AuthorizedSourceCaptureUnavailableError extends Error {
   constructor() {
     super("SOURCE_CAPTURE_UNAVAILABLE");
     this.name = "AuthorizedSourceCaptureUnavailableError";
+  }
+}
+
+export class AuthorizedTemporaryImagingReadUnavailableError extends Error {
+  constructor() {
+    super("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+    this.name = "AuthorizedTemporaryImagingReadUnavailableError";
   }
 }
 
@@ -155,7 +163,7 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
 type TemporaryImagingCaptureStore = Pick<
   EphemeralEncryptedTemporaryImagingStore,
   "beginReservedPackage" | "beginInstance" | "sealPackage" | "purgeByReference"
->;
+> & Partial<Pick<EphemeralEncryptedTemporaryImagingStore, "consumeInstance">>;
 
 export type AuthorizedSourceCaptureCoordinatorResult =
   | Readonly<{
@@ -555,7 +563,9 @@ function createAudit(input: {
     | "PACS_SOURCE_CAPTURE_STARTED"
     | "PACS_SOURCE_CAPTURED"
     | "PACS_SOURCE_CAPTURE_DENIED"
-    | "PACS_SOURCE_CAPTURE_FAILED";
+    | "PACS_SOURCE_CAPTURE_FAILED"
+    | "PACS_TEMPORARY_READ_AUTHORIZED"
+    | "PACS_TEMPORARY_READ_FAILED";
   readonly result: "ALLOW" | "SUCCESS" | "DENY" | "FAILURE";
   readonly reasonCode: string | null;
   readonly now: Date;
@@ -585,6 +595,14 @@ function recordAudit(
 }
 
 export class AuthorizedSourceCaptureService {
+  // Provenance only, never an Authorization capability. No PatientID is added
+  // to the serializable handoff; clones/restarted services have no binding.
+  readonly #captureBindings = new WeakMap<AuthorizedSourceCaptureCoordinatorHandoff, Readonly<{
+    identity: VerifiedActorTenantContext;
+    scope: SourceCaptureScope;
+    mapping: DestinationMappingBinding;
+  }>>();
+
   constructor(
     private readonly operationExecutor: Pick<
       AuthorizationGatedOperationExecutor,
@@ -603,6 +621,118 @@ export class AuthorizedSourceCaptureService {
 
   captureForCoordinator(input: unknown): Promise<AuthorizedSourceCaptureCoordinatorResult> {
     return this.captureInternal(input, true);
+  }
+
+  /** Internal pre-dispatch borrowed read; never accepts a caller access verifier. */
+  async consumeCapturedInstance(input: unknown, consume: TemporaryImagingInstanceConsumer): Promise<void> {
+    let command: CaptureCommand | undefined;
+    try {
+      if (!input || typeof input !== "object" || Array.isArray(input) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(input)) ||
+        typeof consume !== "function" || typeof this.temporaryImagingStore?.consumeInstance !== "function") {
+        throw new Error("INVALID_READ_INPUT");
+      }
+      const fields = Object.getOwnPropertyDescriptors(input);
+      const required = ["principal", "tenantCandidate", "correlationId", "consentId", "grantId", "handoff", "objectRef"];
+      if (required.some((name) => !Object.hasOwn(fields, name)) ||
+        Reflect.ownKeys(fields).some((key) => typeof key !== "string" ||
+          (!required.includes(key) && key !== "signal") ||
+          !Object.hasOwn(fields[key]!, "value") || !fields[key]!.enumerable)) {
+        throw new Error("INVALID_READ_INPUT");
+      }
+      const handoff = fields.handoff!.value as AuthorizedSourceCaptureCoordinatorHandoff;
+      const binding = this.#captureBindings.get(handoff);
+      if (!binding) throw new Error("UNKNOWN_CAPTURE");
+      const temporary = handoff.temporaryPackage;
+      const objectRef = fields.objectRef!.value;
+      if (!temporary || !validUuid(objectRef)) throw new Error("UNKNOWN_CAPTURE");
+      const instance = temporary.instances.find((item) => item.objectRef === objectRef.toLowerCase());
+      if (!instance) throw new Error("UNKNOWN_OBJECT");
+      command = exactCommand({
+        principal: fields.principal!.value, tenantCandidate: fields.tenantCandidate!.value,
+        correlationId: fields.correlationId!.value, consentId: fields.consentId!.value,
+        grantId: fields.grantId!.value, operationId: binding.scope.operationId,
+        ...(fields.signal ? { signal: fields.signal.value } : {}),
+      });
+      const readCommand = command;
+      const expiresAt = new Date(temporary.expiresAt);
+      const assertLive = () => {
+        const now = this.clock().getTime();
+        if (readCommand.signal?.aborted || !Number.isFinite(now) ||
+          !Number.isFinite(expiresAt.getTime()) || now >= expiresAt.getTime()) throw new Error("READ_EXPIRED");
+      };
+      let phase = 0;
+      await this.temporaryImagingStore.consumeInstance({
+        storageRef: temporary.storageRef, objectRef: instance.objectRef,
+        packageBinding: Object.freeze({ tenantId: handoff.tenantId,
+          exchangeSessionId: handoff.exchangeSessionId, packageId: handoff.packageId, purpose: "PACS_IMPORT" }),
+        instanceBinding: Object.freeze({ studyRefId: handoff.studyRefId,
+          seriesInstanceUid: instance.seriesInstanceUid, sopInstanceUid: instance.sopInstanceUid }),
+        expectedByteLength: instance.byteLength, expectedSha256: instance.sha256,
+        ...(readCommand.signal ? { signal: readCommand.signal } : {}),
+      }, async () => {
+        assertLive();
+        phase += 1;
+        if (phase > 2) throw new Error("INVALID_READ_PHASE");
+        await this.operationExecutor.executeWithResolvedSessionFence(
+          readCommand.principal, readCommand.tenantCandidate,
+          async (identity, transaction) => {
+            const scope = await this.resolveScope(transaction, readCommand.operationId, identity.tenantId);
+            if (!sameCaptureIdentity(identity, binding.identity) || !this.isSupportedScope(identity, scope) ||
+              !sameSourceCaptureBinding(binding.scope, scope)) throw new AuthorizationDeniedError();
+            return AuthorizationContext.create({ identity, exchangeSessionId: scope.exchangeSessionId,
+              resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
+              consentId: readCommand.consentId, grantId: readCommand.grantId });
+          },
+          async (identity, transaction) => {
+            assertLive();
+            const scope = await this.resolveScope(transaction, readCommand.operationId, identity.tenantId);
+            if (!sameSourceCaptureBinding(binding.scope, scope) ||
+              scope.operationState !== "CREATED" || !IMPORTABLE_SESSION_STATES.has(scope.sessionState)) {
+              throw new Error("READ_GRAPH_CHANGED");
+            }
+            const mapping = await mappingBinding(scope, transaction);
+            if (!mapping || mapping.mappingId !== binding.mapping.mappingId ||
+              mapping.localPatientId !== binding.mapping.localPatientId) throw new Error("READ_MAPPING_CHANGED");
+            const available = await transaction.query(
+              `SELECT 1 AS capture_read_available
+                 FROM study_references AS sr
+                 JOIN integrity_evidence AS ie ON ie.study_ref_id = sr.study_ref_id
+                WHERE sr.study_ref_id = $1::uuid AND sr.package_id = $2::uuid
+                  AND sr.source_hospital_id = $3::uuid
+                  AND sr.temporary_storage_ref = $4::uuid
+                  AND sr.temporary_payload_state = 'AVAILABLE'
+                  AND sr.temporary_payload_purged_at IS NULL
+                  AND sr.temporary_payload_expires_at = $5::timestamptz
+                  AND sr.temporary_payload_expires_at > $6::timestamptz
+                  AND ie.integrity_id = $7::uuid AND ie.operation_id = $8::uuid
+                  AND ie.exchange_session_id = $9::uuid AND ie.package_id = sr.package_id
+                  AND ie.verification_stage = 'SOURCE_CAPTURE' AND ie.status = 'PENDING'
+                  AND ie.verified_at IS NULL AND ie.algorithm = $10
+                  AND ie.source_digest = $11 AND ie.source_object_count = $12
+                  AND NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = $13::uuid`,
+              [scope.studyRefId, scope.packageId, scope.sourceHospitalId, temporary.storageRef,
+                expiresAt, this.clock(), handoff.sourceEvidence.evidenceId, scope.operationId,
+                scope.exchangeSessionId, handoff.sourceEvidence.algorithm,
+                handoff.sourceEvidence.aggregateDigest, handoff.sourceEvidence.objectCount, scope.tenantId],
+            );
+            if (available.rowCount !== 1 || available.rows.length !== 1) throw new Error("READ_METADATA_CHANGED");
+            await recordAudit(transaction, { actorId: identity.actorId, tenantId: identity.tenantId, scope,
+              correlationId: readCommand.correlationId, action: "PACS_TEMPORARY_READ_AUTHORIZED", result: "ALLOW",
+              reasonCode: phase === 1 ? "BEFORE_DECRYPT" : "BEFORE_DELIVERY", now: this.clock(), createId: this.createId });
+          },
+        );
+        assertLive();
+        return "VERIFIED";
+      }, async (plaintext, signal) => {
+        if (phase !== 2) throw new Error("READ_NOT_AUTHORIZED");
+        assertLive();
+        await consume(plaintext, signal);
+      });
+    } catch {
+      if (command) await this.bestEffortAudit(command, "PACS_TEMPORARY_READ_FAILED", "FAILURE", "TEMPORARY_READ_FAILED");
+      throw new AuthorizedTemporaryImagingReadUnavailableError();
+    }
   }
 
   private captureInternal(
@@ -1206,6 +1336,10 @@ export class AuthorizedSourceCaptureService {
         completion.kind === "CAPTURED_FOR_COORDINATOR" &&
         temporaryPackageReceipt
       ) {
+        if (!initialIdentity || !initialScope || !initialMapping) throw new AuthorizedSourceCaptureUnavailableError();
+        this.#captureBindings.set(completion.handoff, Object.freeze({
+          identity: initialIdentity, scope: initialScope, mapping: initialMapping,
+        }));
         keepTemporaryPackage = true;
       }
       return completion;
@@ -1298,7 +1432,8 @@ export class AuthorizedSourceCaptureService {
     command: CaptureCommand,
     action:
       | "PACS_SOURCE_CAPTURE_DENIED"
-      | "PACS_SOURCE_CAPTURE_FAILED",
+      | "PACS_SOURCE_CAPTURE_FAILED"
+      | "PACS_TEMPORARY_READ_FAILED",
     result: "DENY" | "FAILURE",
     reasonCode: string,
   ): Promise<void> {

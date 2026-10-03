@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join, dirname, basename, resolve } from "node:path";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { temporaryCaptureLifecycleCases } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
+import { RemoteJwksOidcTokenVerifier } from "../../services/api/dist/authentication/oidc-jwt.verifier.js";
+import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
+import { TemporaryPayloadPurgeCoordinator } from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
 import { test } from "node:test";
 import {
   safeDatabaseErrorClass,
@@ -256,12 +264,16 @@ function createHarness({
   metadataFault,
   observeInstanceStreams = false,
   revokeGrantAfterInstanceBytes = false,
+  oidcAuthentication,
+  temporaryImagingStore,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
-  const config = databaseUrl
-    ? Object.freeze({ ...parsedConfig, databaseUrl })
-    : parsedConfig;
+  const config = Object.freeze({ ...parsedConfig,
+    ...(databaseUrl ? { databaseUrl } : {}),
+    ...(oidcAuthentication ? { oidcAuthentication } : {}),
+  });
   const database = new RuntimeDatabaseService(config);
+  let quotaReservations = 0;
   const databaseFailures = [];
   const databaseForContext = Object.freeze({
     connect: async () => {
@@ -272,6 +284,7 @@ function createHarness({
         databaseFailures.push(`CONNECT_${safeDatabaseErrorClass(error)}`);
         throw error;
       }
+      let recordedCaptureStart = false;
       return new Proxy(client, {
         get(target, property) {
           if (property === "query") {
@@ -301,7 +314,18 @@ function createHarness({
                               ? "TENANT_SETUP"
                               : "OTHER_QUERY";
               const queryStartedAt = performance.now();
-              return Reflect.apply(target.query, target, args).catch((error) => {
+              return Reflect.apply(target.query, target, args).then((result) => {
+                if (statement.includes("reserve_temporary_payload_quota")) quotaReservations += 1;
+                if (statement === "BEGIN" || statement === "ROLLBACK") recordedCaptureStart = false;
+                if (statement.includes("INSERT INTO audit_events") && args[1]?.[7] === "PACS_SOURCE_CAPTURE_STARTED" && result.rowCount === 1) {
+                  recordedCaptureStart = true;
+                }
+                if (statement === "COMMIT" && recordedCaptureStart) {
+                  initialAuthorizationCommitted = true;
+                  recordedCaptureStart = false;
+                }
+                return result;
+              }).catch((error) => {
                 const failureClass = safeDatabaseErrorClass(error);
                 const durationBucket = safeQueryDurationBucket(performance.now() - queryStartedAt);
                 databaseFailures.push(`${queryLabel}_${failureClass}_${durationBucket}`);
@@ -364,12 +388,9 @@ function createHarness({
         throw error;
       } finally {
         activeTenantTransactions -= 1;
-        // Capture can make more than one scoped Tenant transaction during a
-        // single call (for example, a fail-closed audit path). Before the
-        // first upstream request, any completed transaction in this fresh
-        // harness can only be the shared Session fence, PACS_IMPORT decision,
-        // and start-Audit transaction.
-        if (committed) initialAuthorizationCommitted = true;
+        // A metadata observer or failed cross-Tenant attempt can also commit.
+        // Only the per-client start-Audit + successful COMMIT observer above
+        // establishes the initial source-admission checkpoint.
       }
     },
   });
@@ -556,6 +577,9 @@ function createHarness({
     executor,
     actorContext,
     dicomGateway,
+    undefined,
+    undefined,
+    temporaryImagingStore,
   );
 
   return Object.freeze({
@@ -564,6 +588,7 @@ function createHarness({
     actorContext,
     counters: () => Object.freeze({
       tenantContextRuns,
+      quotaReservations,
       activeTenantTransactions,
       initialAuthorizationCommitted,
       sourceRequests: [...sourceRequests],
@@ -625,6 +650,186 @@ function captureCommand(
     consentId: authorization.consentId ?? fixture.consentId,
     grantId: authorization.grantId ?? fixture.grantId,
   });
+}
+
+async function runTemporaryLifecycleCase(scenario) {
+  const keys = await generateKeyPair("RS256", { modulusLength: 2048 });
+  const jwk = { ...await exportJWK(keys.publicKey), kid: "TEST-LIFECYCLE", alg: "RS256", use: "sig" };
+  let jwksRequests = 0;
+  const server = createServer((request, response) => {
+    if (request.url !== "/jwks") return response.writeHead(404).end();
+    jwksRequests += 1;
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ keys: [jwk] }));
+  });
+  let root, store, harness, signedPrincipal;
+  const attempted = [];
+  let callbacks = 0;
+  try {
+    await new Promise((done, fail) => { server.once("error", fail); server.listen(0, "127.0.0.1", done); });
+    const auth = { issuer: fixture.issuer, audience: "TEST-SOURCE-LIFECYCLE",
+      jwksUri: `http://127.0.0.1:${server.address().port}/jwks` };
+    const verifier = new RemoteJwksOidcTokenVerifier(auth);
+    const token = (subject, audience = auth.audience) => new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: jwk.kid, typ: "at+jwt" })
+      .setIssuer(auth.issuer).setAudience(audience).setSubject(subject)
+      .setNotBefore(Math.floor(Date.now() / 1000) - 1).setExpirationTime("5m").sign(keys.privateKey);
+    await assert.rejects(verifier.verify(await token(fixture.subject, "TEST-WRONG-AUDIENCE")), { message: "AUTHENTICATION_TOKEN_INVALID" });
+    const signedToken = await token(fixture.subject);
+    const invalidSignature = signedToken.split(".");
+    invalidSignature[2] = (invalidSignature[2][0] === "A" ? "B" : "A") + invalidSignature[2].slice(1);
+    await assert.rejects(verifier.verify(invalidSignature.join(".")), { message: "AUTHENTICATION_TOKEN_INVALID" });
+    signedPrincipal = await verifier.verify(signedToken);
+    const crossPrincipal = await verifier.verify(await token(fixture.otherTenantSubject));
+    assert.ok(jwksRequests > 0, "DEC017_REAL_JWKS_FETCH");
+
+    root = await mkdtemp(join(tmpdir(), "mediq-orthanc-lifecycle-"));
+    const storageRoot = join(root, "ciphertext");
+    const currentMetadata = () => harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
+      const result = await client.query(`SELECT temporary_storage_ref::text, temporary_payload_state,
+        temporary_payload_expires_at, temporary_payload_purged_at FROM study_references WHERE study_ref_id=$1`, [scenario.studyRefId]);
+      assert.equal(result.rowCount, 1, "DEC017_METADATA_VISIBLE");
+      return result.rows[0];
+    });
+    store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, ciphertextIo: {
+      async write(file, buffer, offset, length, position) {
+        assert.equal(harness.counters().activeTenantTransactions, 0, "DEC017_WRITE_OUTSIDE_OWN_TRANSACTION");
+        assert.ok(harness.counters().quotaReservations > 0, "DEC017_COMMITTED_QUOTA_BEFORE_WRITE");
+        return file.write(buffer, offset, length, position);
+      },
+      sync: file => file.sync(),
+    } });
+    const port = {
+      async beginReservedPackage(binding, ref, quota) {
+        assert.equal(harness.counters().activeTenantTransactions, 0);
+        const state = await currentMetadata();
+        assert.equal(state.temporary_payload_state, "STAGING", "DEC017_RESERVED_BEFORE_ALLOCATION");
+        assert.equal(state.temporary_storage_ref, ref);
+        attempted.push({ storageRef: ref, binding });
+        return store.beginReservedPackage(binding, ref, quota);
+      },
+      beginInstance: input => store.beginInstance(input),
+      sealPackage: input => store.sealPackage(input),
+      async purgeByReference(input) {
+        assert.equal(harness.counters().activeTenantTransactions, 0);
+        const state = await currentMetadata();
+        assert.ok(["PURGE_PENDING", "PURGED"].includes(state.temporary_payload_state));
+        assert.equal(state.temporary_storage_ref, input.storageRef);
+        await store.purgeByReference(input);
+        assert.deepEqual(await readdir(storageRoot), [], "DEC017_PHYSICAL_PURGE_BEFORE_FINALIZE");
+      },
+      async consumeInstance(input, verify, consume) {
+        let phase = 0;
+        await store.consumeInstance(input, async (...args) => {
+          const result = await verify(...args);
+          assert.equal(harness.counters().activeTenantTransactions, 0);
+          phase += 1;
+          if (phase === 1 && scenario.name === "read_revoked") {
+            const outcome = await new GrantRevocationService(harness.actorContext).revoke({
+              principal: signedPrincipal, tenantCandidate: fixture.tenantId, sessionId: scenario.sessionId,
+              grantId: scenario.grantId, correlationId: scenario.revokeCorrelationId, hasUnexpectedInput: false,
+            });
+            assert.equal(outcome.grant.status, "REVOKED", "DEC017_REAL_REVOCATION_COMMITTED");
+          }
+          return result;
+        }, consume);
+      },
+    };
+    harness = createHarness({ temporaryImagingStore: port, oidcAuthentication: auth, observeInstanceStreams: true });
+    const runtime = await harness.database.connect();
+    try {
+      const role = await runtime.query("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user");
+      assert.deepEqual(role.rows[0], { current_user: "mediq_runtime", rolsuper: false, rolbypassrls: false });
+      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 244);
+      assert.deepEqual((await runtime.query("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='study_references'::regclass")).rows[0], { relrowsecurity: true, relforcerowsecurity: true });
+      assert.equal((await runtime.query("SELECT study_ref_id FROM study_references WHERE study_ref_id=$1", [scenario.studyRefId])).rowCount, 0, "DEC017_NO_CONTEXT_DENIED");
+      await assert.rejects(runtime.query("SELECT reserved_bytes FROM temporary_payload_quota_state"), error => error?.code === "42501");
+    } finally { runtime.release(); }
+    const input = { ...captureCommand(scenario.correlationId, scenario.operationId, scenario), principal: signedPrincipal };
+    // Bilateral Study visibility is not ownership of the Tenant-B operation.
+    const cross = await harness.service.captureForCoordinator({ ...input, principal: crossPrincipal, tenantCandidate: fixture.otherTenantId });
+    assert.equal(cross.kind, "DENIED");
+    assert.equal(harness.counters().instanceCalls, 0);
+
+    if (scenario.name === "completion_audit_failure") {
+      await assert.rejects(harness.service.captureForCoordinator(input), { message: "SOURCE_CAPTURE_UNAVAILABLE" });
+    } else {
+      const result = await harness.service.captureForCoordinator(input);
+      assert.equal(result.kind, "CAPTURED_FOR_COORDINATOR", "DEC017_CAPTURE_SUCCEEDED");
+      const { handoff } = result, temporary = handoff.temporaryPackage;
+      assert.ok(temporary);
+      const state = await currentMetadata();
+      assert.equal(state.temporary_payload_state, "AVAILABLE");
+      assert.equal(state.temporary_payload_expires_at.toISOString(), temporary.expiresAt, "DEC017_EXACT_EXPIRY");
+      assert.equal(handoff.sourceEvidence.aggregateDigest, expectedSourceManifestDigest(manifest));
+      const readInput = objectRef => ({ principal: signedPrincipal, tenantCandidate: fixture.tenantId,
+        correlationId: scenario.correlationId, consentId: scenario.consentId, grantId: scenario.grantId, handoff, objectRef });
+      const consume = async bytes => { callbacks += 1; assert.equal(harness.counters().activeTenantTransactions, 0); };
+      if (scenario.name === "roundtrip") {
+        for (const instance of temporary.instances) {
+          const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
+          assert.ok(known);
+          assert.equal(basename(known.file), known.file, "DEC017_FIXTURE_PATH_BOUNDED");
+          const expected = await readFile(join(dirname(manifestPath), known.file));
+          const encrypted = await readFile(join(storageRoot, temporary.storageRef, `${instance.objectRef}.enc`));
+          assert.equal(encrypted.equals(expected), false, "DEC017_NOT_PLAINTEXT_ON_DISK");
+          assert.equal(encrypted.byteLength, expected.byteLength);
+          let borrowed;
+          await harness.service.consumeCapturedInstance(readInput(instance.objectRef), async bytes => {
+            await consume(bytes); borrowed = bytes;
+            assert.ok(bytes.equals(expected), "DEC017_EXACT_KNOWN_DICOM_BYTES");
+            assert.equal(createHash("sha256").update(bytes).digest("hex"), known.sha256);
+          });
+          assert.ok(borrowed.every(byte => byte === 0), "DEC017_BORROWED_ZEROED");
+        }
+        assert.equal(callbacks, manifest.instanceCount);
+        // Clone rejection must not turn handoff data into a capability.
+        await assert.rejects(harness.service.consumeCapturedInstance({ ...readInput(temporary.instances[0].objectRef), handoff: { ...handoff } }, consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+        await assert.rejects(harness.service.consumeCapturedInstance({ ...readInput(temporary.instances[0].objectRef), principal: crossPrincipal, tenantCandidate: fixture.otherTenantId }, consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+        assert.equal(callbacks, manifest.instanceCount);
+      } else {
+        await assert.rejects(harness.service.consumeCapturedInstance(readInput(temporary.instances[0].objectRef), consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+        assert.equal(callbacks, 0, "DEC017_DENIED_BEFORE_CALLBACK");
+      }
+      const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, port);
+      const purgeInput = { principal: signedPrincipal, tenantCandidate: fixture.tenantId,
+        binding: { operationId: scenario.operationId, tenantId: fixture.tenantId, exchangeSessionId: scenario.sessionId,
+          packageId: scenario.packageId, studyRefId: scenario.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID },
+        storageRef: temporary.storageRef, correlationId: scenario.correlationId, reason: "EXPLICIT_CLOSE" };
+      assert.deepEqual(await purge.purge(purgeInput), { kind: "PURGED" });
+      assert.deepEqual(await purge.purge(purgeInput), { kind: "ALREADY_PURGED" });
+    }
+    const finalState = await currentMetadata();
+    assert.equal(finalState.temporary_payload_state, "PURGED", "DEC017_FINAL_PURGED");
+    assert.ok(finalState.temporary_payload_purged_at instanceof Date);
+    assert.deepEqual(await readdir(storageRoot), []);
+    const counts = harness.counters();
+    assert.equal(counts.instanceCalls, 3);
+    assert.equal(counts.activeTenantTransactions, 0);
+    assert.equal(counts.stowCalls, 0);
+    assert.equal(counts.forbiddenEndpointAttempts, 0);
+    assert.equal(counts.destinationVerificationCalls, 0);
+    assert.equal(counts.maximumActiveInstanceStreams, 1);
+    assert.equal(counts.observedInstanceStreams.length, 3);
+    const checkedOut = await harness.database.connect();
+    try { assert.ok(["", null].includes((await checkedOut.query("SELECT current_setting('mediq.tenant_id',true) AS tenant")).rows[0].tenant)); }
+    finally { checkedOut.release(); }
+  } finally {
+    // Fixture teardown cannot count as product purge. The assertions above
+    // run first; failures remain failures even when owned scratch data is removed.
+    try {
+      if (store) for (const target of attempted) await store.purgeByReference(target);
+      if (root) {
+        assert.equal(resolve(dirname(root)), resolve(tmpdir()));
+        assert.ok(basename(root).startsWith("mediq-orthanc-lifecycle-"));
+        await rm(root, { recursive: true, force: true });
+        await assert.rejects(stat(root), { code: "ENOENT" });
+      }
+    } finally {
+      await harness?.database.onModuleDestroy();
+      server.closeAllConnections();
+      await new Promise(done => server.close(done));
+    }
+  }
 }
 
 test("authorized source capture uses only A WADO after database-backed authorization and never writes B", async (t) => {
@@ -1331,6 +1536,10 @@ test("authorized source capture uses only A WADO after database-backed authoriza
       await harness.database.onModuleDestroy();
     }
   });
+
+  for (const scenario of temporaryCaptureLifecycleCases) {
+    await t.test(`DEC017 signed lifecycle ${scenario.name}`, { timeout: 120_000 }, () => runTemporaryLifecycleCase(scenario));
+  }
 
   assert.equal(TEST_HOSPITAL_A_ID, "04000000-0000-4000-8000-000000000001");
   assert.equal(TEST_HOSPITAL_B_ID, "04000000-0000-4000-8000-000000000002");
