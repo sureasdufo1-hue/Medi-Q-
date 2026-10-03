@@ -38,6 +38,12 @@ function fixture() {
     "sourceTenantId", "sourceActorId", "sourceStudyRefId",
   ];
   assert.ok(required.every((key) => typeof value[key] === "string"), "TEMP_PAYLOAD_FIXTURE_INVALID");
+  assert.ok(
+    Array.isArray(value.quotaEnvironmentFillTargets) && value.quotaEnvironmentFillTargets.length === 5,
+    "TEMP_PAYLOAD_QUOTA_ENVIRONMENT_FILL_FIXTURE_INVALID",
+  );
+  assert.ok(value.quotaEnvironmentProbe && typeof value.quotaEnvironmentProbe === "object",
+    "TEMP_PAYLOAD_QUOTA_ENVIRONMENT_PROBE_FIXTURE_INVALID");
   return value;
 }
 
@@ -86,11 +92,11 @@ function operationBinding(ids, operation, studyRefId = operation.snapshot.studyR
   });
 }
 
-function reserveInput(binding, storageRef = randomUUID()) {
+function reserveInput(binding, storageRef = randomUUID(), ttlMilliseconds = 60_000) {
   return {
     binding,
     storageRef,
-    expiresAt: new Date(Date.now() + 60_000),
+    expiresAt: new Date(Date.now() + ttlMilliseconds),
   };
 }
 
@@ -107,7 +113,7 @@ async function readStudyState(client, tenantId, studyRefId) {
 }
 
 test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
-  timeout: 30_000,
+  timeout: 120_000,
 }, async () => {
   const connectionString = process.env.MEDIQ_TEST_DATABASE_URL;
   assert.ok(connectionString, "TEMP_PAYLOAD_DATABASE_URL_MISSING");
@@ -295,6 +301,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
 
     async function readQuota(label, {
       tenantId = ids.tenantId,
+      packageId = ids.packageId,
       storageRef = siblingRef,
     } = {}) {
       const client = await inspector.connect();
@@ -318,7 +325,7 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
              LEFT JOIN temporary_payload_package_quotas pq ON pq.package_id=$1::uuid
              LEFT JOIN temporary_payload_reservations r ON r.storage_ref=$3
             WHERE q.singleton_id=true`,
-          [ids.packageId, tenantId, storageRef],
+          [packageId, tenantId, storageRef],
         );
         currentStage = `QUOTA_READ_${label}_COMMIT`;
         await client.query("COMMIT");
@@ -949,6 +956,154 @@ test("PACS-001 DEC-008 temporary payload metadata PostgreSQL/RLS Acceptance", {
     );
     assert.deepEqual(packageState.rows[0], { state: "AVAILABLE", deleted_at: null });
     await privilegesClient.query("COMMIT");
+
+    currentStage = "QUOTA_EXACT_10_GIB_ENVIRONMENT_CEILING_SETUP";
+    const environmentLimitBytes = 10 * 1024 * 1024 * 1024;
+    const packageLimitBytes = 2 * 1024 * 1024 * 1024;
+    const blocksPerPackage = packageLimitBytes / reservationBlock;
+    await setQuotaCaps(environmentLimitBytes, packageLimitBytes);
+    quotaSnapshot = await readQuota("ENVIRONMENT_EXACT_BASELINE");
+    assert.equal(quotaSnapshot.environment_reserved, "0", "exact environment test must start with an empty quota ledger");
+    assert.equal(quotaSnapshot.reservation_rows, 0);
+
+    async function prepareEnvironmentQuotaTarget(target) {
+      const targetIds = {
+        ...ids,
+        tenantId: target.tenantId,
+        actorId: target.actorId,
+        sessionId: target.sessionId,
+        packageId: target.packageId,
+      };
+      const operation = await createOperation(privilegesClient, targetIds, target.studyRefId);
+      const binding = operationBinding(targetIds, operation, target.studyRefId);
+      const storageRef = randomUUID();
+      const targetWriterId = randomUUID();
+      const metadataClient = await pool.connect();
+      try {
+        await beginTenant(metadataClient, targetIds.tenantId);
+        await new PostgresTemporaryPayloadMetadataRepository(metadataClient)
+          .reserveStaging(reserveInput(binding, storageRef, 60 * 60 * 1000));
+        await metadataClient.query("COMMIT");
+      } catch (error) {
+        await metadataClient.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        metadataClient.release();
+      }
+      return {
+        tenantId: targetIds.tenantId,
+        actorId: targetIds.actorId,
+        packageId: targetIds.packageId,
+        studyRefId: target.studyRefId,
+        binding,
+        storageRef,
+        writerId: targetWriterId,
+      };
+    }
+
+    const environmentFillTargets = [];
+    for (const target of ids.quotaEnvironmentFillTargets) {
+      environmentFillTargets.push(await prepareEnvironmentQuotaTarget(target));
+    }
+    const environmentProbe = await prepareEnvironmentQuotaTarget(ids.quotaEnvironmentProbe);
+    assert.equal(new Set(environmentFillTargets.map((target) => target.packageId)).size, 5);
+    assert.equal(new Set(environmentFillTargets.map((target) => target.studyRefId)).size, 5);
+    assert.equal(new Set([...environmentFillTargets, environmentProbe].map((target) => target.storageRef)).size, 6);
+
+    currentStage = "QUOTA_EXACT_10_GIB_ENVIRONMENT_CEILING_FILL";
+    const exactFillClient = await pool.connect();
+    try {
+      await beginTenant(exactFillClient, ids.tenantId);
+      for (const target of environmentFillTargets) {
+        assert.equal(target.tenantId, ids.tenantId, "all exact-cap fixtures use one verified Tenant context");
+        for (let block = 0; block < blocksPerPackage; block += 1) {
+          await exactFillClient.query(
+            "SELECT public.reserve_temporary_payload_quota($1::uuid,$2::uuid,$3::uuid,$4::bigint)",
+            [target.studyRefId, target.storageRef, target.writerId, reservationBlock],
+          );
+        }
+      }
+      await exactFillClient.query("COMMIT");
+    } catch (error) {
+      await exactFillClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      exactFillClient.release();
+    }
+
+    currentStage = "QUOTA_EXACT_10_GIB_ENVIRONMENT_CEILING_ASSERT";
+    for (const target of environmentFillTargets) {
+      quotaSnapshot = await readQuota("ENVIRONMENT_PACKAGE_FULL", {
+        tenantId: target.tenantId,
+        packageId: target.packageId,
+        storageRef: target.storageRef,
+      });
+      assert.equal(quotaSnapshot.max_environment_bytes, String(environmentLimitBytes));
+      assert.equal(quotaSnapshot.max_package_bytes, String(packageLimitBytes));
+      assert.equal(quotaSnapshot.environment_reserved, String(environmentLimitBytes));
+      assert.equal(quotaSnapshot.package_reserved, String(packageLimitBytes));
+      assert.equal(quotaSnapshot.ref_reserved, String(packageLimitBytes));
+      assert.equal(quotaSnapshot.reservation_rows, 5);
+    }
+
+    currentStage = "QUOTA_EXACT_10_GIB_ENVIRONMENT_OVERFLOW_DENIAL";
+    const overflowClient = await pool.connect();
+    let environmentOverflowError;
+    try {
+      await beginTenant(overflowClient, environmentProbe.tenantId);
+      await overflowClient.query("SAVEPOINT quota_environment_overflow_probe");
+      environmentOverflowError = await overflowClient.query(
+        "SELECT public.reserve_temporary_payload_quota($1::uuid,$2::uuid,$3::uuid,$4::bigint)",
+        [environmentProbe.studyRefId, environmentProbe.storageRef, environmentProbe.writerId, reservationBlock],
+      ).then(() => null, (error) => error);
+      await overflowClient.query("ROLLBACK TO SAVEPOINT quota_environment_overflow_probe");
+      await overflowClient.query("RELEASE SAVEPOINT quota_environment_overflow_probe");
+      await overflowClient.query("COMMIT");
+    } finally {
+      if (overflowClient.getTransactionStatus?.() !== 0) {
+        await overflowClient.query("ROLLBACK").catch(() => undefined);
+      }
+      overflowClient.release();
+    }
+    assert.equal(environmentOverflowError?.code, "54000",
+      "the next valid 16 MiB reservation must be rejected by the exact 10 GiB environment cap");
+    quotaSnapshot = await readQuota("ENVIRONMENT_OVERFLOW_DENIED", {
+      tenantId: environmentProbe.tenantId,
+      packageId: environmentProbe.packageId,
+      storageRef: environmentProbe.storageRef,
+    });
+    assert.equal(quotaSnapshot.environment_reserved, String(environmentLimitBytes));
+    assert.equal(quotaSnapshot.package_reserved, "0", "probe Package must have headroom to isolate environment denial");
+    assert.equal(quotaSnapshot.ref_reserved, "0");
+    assert.equal(quotaSnapshot.reservation_rows, 5, "rejected overflow must not create a ledger row");
+
+    currentStage = "QUOTA_EXACT_10_GIB_ENVIRONMENT_FIXTURE_PURGE";
+    for (const target of [...environmentFillTargets, environmentProbe]) {
+      await assert.rejects(
+        stat(join(storageRoot, target.storageRef)),
+        (error) => error?.code === "ENOENT",
+        "quota-only fixture must not have created any ciphertext file",
+      );
+      await beginTenant(privilegesClient, target.tenantId);
+      await metadataRepository.markPurgePending({
+        binding: target.binding,
+        storageRef: target.storageRef,
+      });
+      const finalized = await metadataRepository.finalizePurgeAndAudit({
+        binding: target.binding,
+        storageRef: target.storageRef,
+        actorId: target.actorId,
+        correlationId: randomUUID(),
+        auditEventId: randomUUID(),
+        reason: "CAPTURE_FAILURE",
+        now: new Date(),
+      });
+      assert.equal(finalized, "PURGED");
+      await privilegesClient.query("COMMIT");
+    }
+    quotaSnapshot = await readQuota("ENVIRONMENT_TEST_CLEANUP");
+    assert.equal(quotaSnapshot.environment_reserved, "0", "product purge path must restore the pre-test environment quota");
+    assert.equal(quotaSnapshot.reservation_rows, 0);
   } catch (error) {
     const code =
       typeof error === "object" && error !== null && "code" in error

@@ -490,3 +490,38 @@ npm run test:api
 - After restoring reduced-cap headroom before the later binding-denial probes, the complete DB-008 `-ScratchOnly` wrapper was rerun. It exited **0**, emitted clean/repeat/reset/reapply PASS sentinels, preserved catalog `21|55|17|48`, and completed owned scratch-project cleanup. Persistent `mediq`, Orthanc A/B and DB-002~007 production-stack regressions were not accessed (`-ScratchOnly` explicitly skipped the latter).
 
 **Judgment:** Concurrent distinct-writer same-ref collision and source/recipient cross-Tenant Package aggregate cases are **PASS** in the disposable scratch scope. `STAGE-005` remains **PARTIAL**: exact 10 GiB exhaustion and the complete injected DB/filesystem/Audit fault matrix remain open. Storage remains unregistered; no route, worker, runtime volume, destination call or STOW was enabled.
+
+## 19. STAGE-005 exact 10 GiB environment quota boundary
+
+**Recommendation/Acceptance recorded before implementation:** `PACS-001-DEC-010` exact-cap recommendation and the scoped Acceptance were recorded in the policy log and `ACCEPTANCE-TESTS.md` before adding this fixture. The selected topology uses disposable PostgreSQL only: five independent synthetic Packages, each filled with 128 × 16 MiB reservations to the existing 2 GiB Package cap, plus a sixth zero-use Package as the environment-overflow probe. It creates no 10 GiB ciphertext/payload files and does not change limits or product scope.
+
+### Commands and results
+
+```powershell
+node --check tests/database/temporary-payload-metadata-runtime.integration.test.mjs
+npm run test:api
+./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly
+git diff --check
+```
+
+- `node --check` exited `0`. `npm run test:api` exited `0`: **37 files / 691 tests** passed.
+- The first full scratch-wrapper attempt reached the exact quota assertions but a later PROV-001 regression failed because the initial test fixture reused a StudyReference and conflicted on `(exchange_session_id, study_ref_id)`. This was isolated to fixture setup. The test now creates six dedicated synthetic quota-only Sessions, Packages and StudyReferences, avoiding all existing PACS/provenance/integrity fixtures.
+- The final `scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` exited `0`. Its clean/repeat/reset/reapply acceptance rounds emitted `pacs001_temporary_payload_runtime=PASS`; DB-009, EXC/Consent/Grant, PACS Session fence, PROV-001, INT-001, policy-conformance and schema-validation sentinels passed, and the owned disposable Compose project was removed. Final scratch catalog was `21|55|17|48`, with 20 forced-RLS tables, zero direct runtime quota-table privileges and 244 runtime column grants. Persistent `mediq` was not accessed; DB-002~007 persistent regressions were skipped by the explicit `-ScratchOnly` scope; Orthanc A/B was not started or modified.
+
+### Exact-limit assertions and cleanup
+
+- The database quota functions accepted 128 reservations of 16 MiB for each of five separate Packages. The measured per-Package counters were exactly `2,147,483,648` bytes and the global counter exactly `10,737,418,240` bytes.
+- A sixth otherwise-valid Package with zero reserved bytes attempted its first 16 MiB reservation. The function rejected with PostgreSQL SQLSTATE `54000`. The environment counter stayed exactly at 10 GiB; the probe Package/ref counters stayed zero and no probe reservation-ledger row was created.
+- The probe takes place at reservation time before any ciphertext for that block can be written. No 10 GiB payload files were created. The test confirmed its package ciphertext paths were absent, then released only test-owned quota through the normal `PURGED` + success-Audit cleanup path. It verified the global/package counters and dedicated reservation rows returned to zero; no direct counter rollback was used.
+- The fixture is run in each applicable clean/repeat/reset-reapply integration phase. The first failed aggregate attempt and corrected isolated-fixture rerun are both retained above; only the final complete wrapper exit `0` is the completion evidence.
+
+### Acceptance boundary
+
+| Acceptance | Evidence | Judgment |
+|---|---|---|
+| Five independent 2 GiB Package reservations reach the exact 10 GiB environment ceiling | Disposable PostgreSQL integration; exact `2,147,483,648` bytes per Package and `10,737,418,240` global bytes | PASS — quota accounting only; no 10 GiB disk-capacity or throughput claim |
+| Sixth Package cannot reserve a valid next 16 MiB quantum; denial is atomic | SQLSTATE `54000`; unchanged global/probe counters and absent probe ledger row; reserve function rejects before ciphertext write | PASS — fail-closed environment-cap subcase |
+| Test-only usage is cleaned by the product quota lifecycle | Ciphertext paths absent; normal `PURGED`+success-Audit release; all test-owned counters/rows return to zero | PASS — scoped scratch PostgreSQL/RLS lifecycle |
+| Complete injected DB/filesystem/Audit fault matrix and other `STAGE-005` failure boundaries | Not covered by this exact-cap topology | NOT RUN — remains the open `STAGE-005` sub-gate |
+
+**Judgment:** The exact 10 GiB environment-cap subcase is **PASS (scoped)**. `STAGE-005` and `MEDIQ-PACS-001` remain **PARTIAL** because the complete injected DB/filesystem/Audit fault matrix is still open. Storage remains unregistered; no runtime volume/provider/worker, route, destination call, STOW, PACS mutation or product completion claim was enabled. No persistent database, production credential, actual patient information or Orthanc A/B was used.

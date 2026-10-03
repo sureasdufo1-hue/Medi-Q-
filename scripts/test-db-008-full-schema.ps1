@@ -377,6 +377,24 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsFenceStudyRefId = [guid]::NewGuid().ToString()
     $pacsTempSiblingStudyRefId = [guid]::NewGuid().ToString()
     $pacsQuotaSourceTenantStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillOneSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillOnePackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillOneStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillTwoSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillTwoPackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillTwoStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillThreeSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillThreePackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillThreeStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFourSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFourPackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFourStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFiveSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFivePackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentFillFiveStudyRefId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentProbeSessionId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentProbePackageId = [guid]::NewGuid().ToString()
+    $pacsQuotaEnvironmentProbeStudyRefId = [guid]::NewGuid().ToString()
     $pacsFenceConsentId = [guid]::NewGuid().ToString()
     $pacsFenceGrantId = [guid]::NewGuid().ToString()
     $provenanceSessionId = [guid]::NewGuid().ToString()
@@ -391,6 +409,12 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsFenceStudyUid = "2.25.310.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
     $pacsTempSiblingStudyUid = "2.25.315.$([Convert]::ToUInt64($token.Substring(18, 12), 16))"
     $pacsQuotaSourceStudyUid = "2.25.316.$([Convert]::ToUInt64($token.Substring(20, 12), 16))"
+    $pacsQuotaEnvironmentFillOneStudyUid = "2.25.318.$([Convert]::ToUInt64($token.Substring(4, 12), 16))"
+    $pacsQuotaEnvironmentFillTwoStudyUid = "2.25.319.$([Convert]::ToUInt64($token.Substring(8, 12), 16))"
+    $pacsQuotaEnvironmentProbeStudyUid = "2.25.320.$([Convert]::ToUInt64($token.Substring(12, 12), 16))"
+    $pacsQuotaEnvironmentFillThreeStudyUid = "2.25.321.$([Convert]::ToUInt64($token.Substring(16, 12), 16))"
+    $pacsQuotaEnvironmentFillFourStudyUid = "2.25.322.$([Convert]::ToUInt64($token.Substring(20, 12), 16))"
+    $pacsQuotaEnvironmentFillFiveStudyUid = "2.25.323.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
     $provenanceStudyUid = "2.25.311.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
     $provenanceLateStudyUid = "2.25.312.$([Convert]::ToUInt64($token.Substring(16, 15), 16))"
     $integrityStudyUid = "2.25.313.$([Convert]::ToUInt64($token.Substring(8, 15), 16))"
@@ -470,6 +494,33 @@ VALUES
  ('$pacsFenceStudyRefId','$pacsFencePackageId','$hospitalA','$pacsFenceStudyUid','CT',1,1,now()),
  ('$pacsTempSiblingStudyRefId','$pacsFencePackageId','$hospitalA','$pacsTempSiblingStudyUid','MR',1,1,now()),
  ('$pacsQuotaSourceTenantStudyRefId','$pacsFencePackageId','$hospitalA','$pacsQuotaSourceStudyUid','CT',1,1,now());
+INSERT INTO exchange_sessions
+ (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
+VALUES
+ ('$pacsQuotaEnvironmentFillOneSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 exact quota fill one','AUTHORIZED',now(),now(),gen_random_uuid()),
+ ('$pacsQuotaEnvironmentFillTwoSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 exact quota fill two','AUTHORIZED',now(),now(),gen_random_uuid()),
+ ('$pacsQuotaEnvironmentFillThreeSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 exact quota fill three','AUTHORIZED',now(),now(),gen_random_uuid()),
+ ('$pacsQuotaEnvironmentFillFourSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 exact quota fill four','AUTHORIZED',now(),now(),gen_random_uuid()),
+ ('$pacsQuotaEnvironmentFillFiveSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 exact quota fill five','AUTHORIZED',now(),now(),gen_random_uuid()),
+ ('$pacsQuotaEnvironmentProbeSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic DEC010 environment overflow probe','AUTHORIZED',now(),now(),gen_random_uuid());
+INSERT INTO imaging_packages
+ (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at)
+VALUES
+ ('$pacsQuotaEnvironmentFillOnePackageId','$pacsQuotaEnvironmentFillOneSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now()),
+ ('$pacsQuotaEnvironmentFillTwoPackageId','$pacsQuotaEnvironmentFillTwoSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now()),
+ ('$pacsQuotaEnvironmentFillThreePackageId','$pacsQuotaEnvironmentFillThreeSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now()),
+ ('$pacsQuotaEnvironmentFillFourPackageId','$pacsQuotaEnvironmentFillFourSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now()),
+ ('$pacsQuotaEnvironmentFillFivePackageId','$pacsQuotaEnvironmentFillFiveSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now()),
+ ('$pacsQuotaEnvironmentProbePackageId','$pacsQuotaEnvironmentProbeSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now());
+INSERT INTO study_references
+ (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
+VALUES
+ ('$pacsQuotaEnvironmentFillOneStudyRefId','$pacsQuotaEnvironmentFillOnePackageId','$hospitalA','$pacsQuotaEnvironmentFillOneStudyUid','CT',1,1,now()),
+ ('$pacsQuotaEnvironmentFillTwoStudyRefId','$pacsQuotaEnvironmentFillTwoPackageId','$hospitalA','$pacsQuotaEnvironmentFillTwoStudyUid','MR',1,1,now()),
+ ('$pacsQuotaEnvironmentFillThreeStudyRefId','$pacsQuotaEnvironmentFillThreePackageId','$hospitalA','$pacsQuotaEnvironmentFillThreeStudyUid','CT',1,1,now()),
+ ('$pacsQuotaEnvironmentFillFourStudyRefId','$pacsQuotaEnvironmentFillFourPackageId','$hospitalA','$pacsQuotaEnvironmentFillFourStudyUid','MR',1,1,now()),
+ ('$pacsQuotaEnvironmentFillFiveStudyRefId','$pacsQuotaEnvironmentFillFivePackageId','$hospitalA','$pacsQuotaEnvironmentFillFiveStudyUid','CT',1,1,now()),
+ ('$pacsQuotaEnvironmentProbeStudyRefId','$pacsQuotaEnvironmentProbePackageId','$hospitalA','$pacsQuotaEnvironmentProbeStudyUid','CT',1,1,now());
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
 VALUES ('$provenanceSessionId','$patientRefId','$hospitalA','$hospitalB','$actorB','Synthetic Provenance persistence test','AUTHORIZED',now(),now(),gen_random_uuid());
@@ -655,7 +706,20 @@ ROLLBACK;
         sourceTenantId = $tenantA; sourceActorId = $actorA
         sourceStudyRefId = $pacsQuotaSourceTenantStudyRefId
         sourceHospitalId = $hospitalA
-    } | ConvertTo-Json -Compress
+        quotaEnvironmentFillTargets = @(
+            [ordered]@{ tenantId = $tenantB; actorId = $exc003ActorB; sessionId = $pacsQuotaEnvironmentFillOneSessionId; packageId = $pacsQuotaEnvironmentFillOnePackageId; studyRefId = $pacsQuotaEnvironmentFillOneStudyRefId },
+            [ordered]@{ tenantId = $tenantB; actorId = $exc003ActorB; sessionId = $pacsQuotaEnvironmentFillTwoSessionId; packageId = $pacsQuotaEnvironmentFillTwoPackageId; studyRefId = $pacsQuotaEnvironmentFillTwoStudyRefId },
+            [ordered]@{ tenantId = $tenantB; actorId = $exc003ActorB; sessionId = $pacsQuotaEnvironmentFillThreeSessionId; packageId = $pacsQuotaEnvironmentFillThreePackageId; studyRefId = $pacsQuotaEnvironmentFillThreeStudyRefId },
+            [ordered]@{ tenantId = $tenantB; actorId = $exc003ActorB; sessionId = $pacsQuotaEnvironmentFillFourSessionId; packageId = $pacsQuotaEnvironmentFillFourPackageId; studyRefId = $pacsQuotaEnvironmentFillFourStudyRefId },
+            [ordered]@{ tenantId = $tenantB; actorId = $exc003ActorB; sessionId = $pacsQuotaEnvironmentFillFiveSessionId; packageId = $pacsQuotaEnvironmentFillFivePackageId; studyRefId = $pacsQuotaEnvironmentFillFiveStudyRefId }
+        )
+        quotaEnvironmentProbe = [ordered]@{
+            tenantId = $tenantB; actorId = $exc003ActorB
+            sessionId = $pacsQuotaEnvironmentProbeSessionId
+            packageId = $pacsQuotaEnvironmentProbePackageId
+            studyRefId = $pacsQuotaEnvironmentProbeStudyRefId
+        }
+    } | ConvertTo-Json -Depth 6 -Compress
     $provenanceFixture = [ordered]@{
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $actorB
         sessionId = $provenanceSessionId; studyRefId = $provenanceStudyRefId
