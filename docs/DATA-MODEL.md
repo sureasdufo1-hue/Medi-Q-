@@ -1240,6 +1240,8 @@ INDEX temporary_payload_state, temporary_payload_expires_at
 
 Temporary payload lifecycle checks require the four fields to be all NULL before first staging, all active fields (`storage_ref`, state, expiry) to be present with `purged_at=NULL` in `STAGING/AVAILABLE/PURGE_PENDING`, and all four fields to be present with `purged_at` set in `PURGED`. `temporary_storage_ref` is unique when non-NULL. Runtime updates are limited to these four fields; other StudyReference columns remain read-only.
 
+**DEC-017 completion timing (approved design, implementation NOT STARTED):** STAGING expiry is the single source-capture deadline (invocation + 30 minutes). After exact-byte capture, fsync and quota settlement, one trusted completion timestamp establishes the sealed receipt's expiry (completion + 30 minutes). A still-valid exact STAGING row may install that same expiry only in the fresh-authorized AVAILABLE transaction together with source evidence and Audit. No read/replay or already-AVAILABLE update may extend retention. This uses existing four columns/grants, not a migration; staging cannot be revived after expiry. Cancellation or uncertain final commit does not release a handoff and retains exact-ref purge recovery. See DEC-017 and `LIFECYCLE-004/005/013`.
+
 ---
 
 # 34. DICOM UID Treatment
@@ -1253,6 +1255,8 @@ Authorization Credential
 ```
 
 UID를 알고 있다는 이유만으로 Resource 접근을 허용하지 않는다.
+
+**DEC-017 privacy verification boundary:** The existing approved `study_instance_uid` and Hospital-local PatientMapping identity columns are needed for scoped source lookup and matching; they remain read-only to this capture integration. STAGE-002/011 tests must prove those baseline values remain unchanged and that no new UID/PatientID, per-instance manifest, payload, key or path is copied into temporary lifecycle/quota metadata, Audit, diagnostics or ordinary capture responses. Existing approved identifiers are not a database-wide identifier-free claim. Internal in-memory handoff data is sensitive and is not an access credential or public serialization contract.
 
 ---
 

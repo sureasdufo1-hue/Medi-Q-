@@ -2490,6 +2490,20 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 
 P0 temporary payload expiry cleanup (DEC-016) is a separate internal per-Tenant batch path: fresh trusted principal → active Tenant-level SERVICE registry/RLS context → bounded expired metadata discovery → committed transaction → sequential existing purge saga with SERVICE/expiry revalidation → aggregate outcome. No DB transaction spans filesystem I/O and no scheduler/provider is activated in this slice. Tenant selection for future scheduling must be server-owned; the helper does not authenticate arbitrary principal objects.
 
+### DEC-017 integrated source lifecycle — approved design, not implemented
+
+The next slice connects the existing components; it does not add a public storage API or dispatch permission. Start code changes after DEC-016's current full-wrapper acceptance. The normal source-capture projection remains unchanged.
+
+| Component | Planned integrated responsibility |
+|---|---|
+| AuthorizedSourceCaptureService | Snapshot command identity; initial authorization/metadata validation; fresh fenced exact-graph reservation; same source stream into hash/encryption; final fresh-authorized AVAILABLE/evidence/Audit transaction; handoff only after known commit and cancellation/deadline checks |
+| Temporary payload metadata repository | Reserve exact Study/ref with the original capture deadline; completion transition with exact receipt expiry; fresh AVAILABLE/ref/graph/evidence read validation; no new schema or broad privileges |
+| Reserved encrypted package + quota adapter | Explicit per-capture immutable identity/Tenant-bound quota runner retained by the package; each reserve/settle revalidates registry/RLS; fsync/settlement precede the one seal-completion timestamp; no ambient identity or primitive fallback |
+| Internal authorized temporary-payload consumer | Build both actual Consent/Grant/RLS access checks itself, snapshot source-produced handoff and exact object selectors, authenticate before callback, preserve borrowed-buffer admission/zeroing; CREATED/pre-dispatch only in this slice |
+| Existing purge coordinator and SERVICE expiry runner | Known exact-ref cleanup after any failed/ambiguous stage; durable pending first, physical absence next, atomic metadata/quota/Audit last; retry without claiming immediate remote recall or forensic erasure |
+
+No DB transaction spans source HTTP, filesystem work or the consumer callback. Read permission does not become STOW permission. Runtime provider/volume/scheduler activation, full Mandatory Preflight, result-unknown reconciliation and destination-byte verification remain later gates. The isolated source-capture harness must exercise the full connected path with actual signed identity, authorization, PostgreSQL/RLS, HTTPS Orthanc A, encrypted files and independent B/DB observers; unit fakes alone cannot satisfy these gates.
+
 ## P1 Mobile Viewer Path
 
 ```text

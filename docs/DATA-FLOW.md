@@ -2351,3 +2351,30 @@ Audit + Provenance + Integrity Read
 ```
 
 Prohibited flows include Patient ID-only global PACS search, Assignment-to-Grant conversion, Notification-to-access conversion, Pixel/Document copy into Handoff Packet and Browser-to-PACS direct access.
+
+# P0 Source Capture / Temporary Lifecycle Integration — DEC-017
+
+**Status:** Approved design; implementation NOT STARTED; `TC-PACS-001-LIFECYCLE-001~014` NOT RUN. This is a pre-dispatch prerequisite, not the A→B transfer itself. Preserve the original P0 E2E success condition.
+
+```text
+Authenticated caller + strict internal operation/Consent/Grant refs
+  → Snapshot identity and one source-capture deadline
+  → Tenant registry/RLS + Session-fenced Authorization + mapping
+  → A-only metadata retrieval and exact PatientID/Study validation
+  → Fresh fenced Authorization + exact STAGING ref reservation [commit]
+  → beginReservedPackage with explicit principal/Tenant-bound quota
+  → A WADO chunks → same-byte hash + quota-before-write + AES-GCM/fsync
+  → Quota settlement → one seal-completion timestamp/expiry
+  → Fresh fenced Authorization + AVAILABLE/evidence/Audit [commit]
+  → Known commit + deadline/cancellation check → internal handoff
+  → Concrete fresh Authorization + metadata/evidence check [commit]
+  → Authenticate/decrypt one bounded instance
+  → Concrete fresh Authorization + metadata/evidence check [commit]
+  → Borrowed internal consumer → zero buffer after callback settles
+```
+
+Reservation/finalization failure or uncertain commit never produces a successful handoff. Preserve the attempted server-generated ref; exact-ref PURGE_PENDING commit precedes physical cleanup and atomic PURGED/quota/Audit finalization. If caller identity is no longer active, do not substitute elevated authority: retain recovery metadata for the separately verified Tenant SERVICE expiry path. A competing attempt may not clean another attempt's ref. No transaction is held across the depicted source, crypto/filesystem or consumer I/O.
+
+Staging ends no later than the original invocation+30-minute deadline; completed payload expiry is seal completion+30 minutes, identical in DB/receipt/store. Reads do not extend it. Existing approved Study UID/PatientMapping values remain unchanged; new temporary metadata and outputs must not duplicate those identifiers or expose keys, paths or payload. Ordinary capture output retains its existing allowlist.
+
+This path does not call B, STOW or destination verification, and cannot set PREFLIGHT_PASSED/STOW_STARTED/COMPLETED. Isolated validation must prove B EMPTY independently, retain the existing no-destination network boundary and clean only test-owned resources. Later transfer still requires full Mandatory Preflight and independent destination integrity/provenance/Audit evidence.

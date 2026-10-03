@@ -2549,6 +2549,8 @@ erDiagram
 
 The operation-to-Study relationship is resolved by the exact `(exchange_session_id, study_ref_id)` scope; the new fields do not create a direct FK or grant authority. Metadata inherits the existing forced Tenant RLS boundary on `study_references`; runtime SELECT/UPDATE is limited to exact columns. `PACS_TEMPORARY_OBJECT_PURGED` Audit records use the internal StudyReference UUID, never the DICOM Study UID. Purge leaves ImagingPackage metadata and sibling Study payloads unchanged.
 
+DEC-017 (approved design, NOT IMPLEMENTED) adds no entity, FK, migration or grant. It connects existing relations to source capture: initial STAGING expiry is the original capture deadline; the authorized completion transaction changes the exact row to AVAILABLE with the sealed receipt's completion-based expiry and source evidence/Audit atomically. The approved `study_instance_uid` remains an unchanged lookup field, never copied into temporary metadata or purge Audit. See DATA-MODEL timing/privacy notes and LIFECYCLE-001~014.
+
 ---
 
 # P0 Operation-bound Pending Provenance ERD Amendment — 2026-10-01

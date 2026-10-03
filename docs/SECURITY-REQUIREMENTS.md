@@ -1212,6 +1212,10 @@ Service-to-service 인증 강화를 위해 mTLS 적용을 고려한다.
 
 MediQ Temporary Imaging Copy는 Application Authorization을 우회한 직접 접근으로부터 보호되어야 한다. Storage primitive 자체는 Authorization capability가 아니며 모든 사용 전에 verified Tenant·Consent·Grant·purpose 검사와 server-owned reference resolution이 필요하다.
 
+**DEC-017 integration design — NOT IMPLEMENTED:** A lifecycle-enabled source capture must commit an exact fresh-authorized STAGING reservation before file allocation/instance-byte retrieval, use explicit per-capture principal/Tenant-bound DB quota, and atomically finalize AVAILABLE/source evidence/Audit before handoff. Failure uses the exact-ref purge saga; missing identity/DB/physical cleanup evidence leaves retryable metadata rather than fabricated success. A concrete internal consumer, not caller-provided or allow-all callbacks, must execute real Consent/Grant/Authorization and exact AVAILABLE/expiry/source-evidence checks both before decrypt and before delivery. Transactions end before physical I/O/callbacks; later STOW still needs independent Mandatory Preflight. `TC-PACS-001-LIFECYCLE-001~014` are NOT RUN until implemented and tested.
+
+Privacy tests preserve only the exact previously approved source-reference and PatientMapping fields described in DATA-MODEL §§32–34/58, checking their values unchanged. They forbid new identifier/payload/key/path copies into lifecycle/quota/Audit/log/error/ordinary-response surfaces. This does not claim that existing PostgreSQL control metadata is identifier-free, relax disclosure controls, authorize crash dumps, or permit public handoff serialization.
+
 **Acceptance:** `TC-PACS-001-STAGE-002/004/006/011` (`ACCEPTANCE-TESTS.md`; NOT RUN)
 
 ---
@@ -1225,7 +1229,7 @@ Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry d
 
 구체적인 Production Retention 기간은 P0에서 고정하지 않는다.
 
-**Acceptance:** `TC-PACS-001-STAGE-007/008` scoped internal filesystem + PostgreSQL/RLS PASS under `PACS-001-DEC-009`; `STAGE-010` is PARTIAL: DEC-016 internal runner and unit/model tests implemented, first real integration failed and the corrected observer rerun remains pending (`ACCEPTANCE-TESTS.md`, PACS-001 evidence §29). No runtime storage/scheduler activation is authorized.
+**Acceptance:** `TC-PACS-001-STAGE-007/008` scoped internal filesystem + PostgreSQL/RLS PASS under `PACS-001-DEC-009`; `STAGE-010` is PARTIAL: after the recorded initial failure and observer correction, the replacement's first real integration round passed, but full repeat/reset/reapply/exit/cleanup remains pending (`ACCEPTANCE-TESTS.md`, PACS-001 evidence §§29–31). No runtime storage/scheduler activation is authorized.
 
 ---
 

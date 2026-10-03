@@ -1,6 +1,6 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
-**현재 DEC-016 진행 (2026-10-03, 아래 이력보다 우선):** Tenant SERVICE 만료 정리의 제한 조회·순차 실행·신원/TTL 재검증을 구현했다. API 41 files/764 tests 및 타입·Port 검사는 통과했다. 합성 OIDC·실제 RLS·암호문 통합시험은 현재 DB-008 ScratchOnly 실행에서 최종 결과를 기다리고 있다. STAGE-010과 MEDIQ-PACS-001은 PARTIAL이며 운영 스케줄러·STOW는 활성화하지 않는다. [증거 §29](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#29-dec-016-implementation-and-verification).
+**현재 진행 (2026-10-03, 아래 이력보다 우선):** DEC-016 만료 정리 통합시험은 두 회차를 통과했지만 기존 DB-008 전체 종료·정리는 진행 중이므로 STAGE-010/Ticket은 PARTIAL이다. DEC-017 권고안·Acceptance 14개를 바탕으로 제품 코드보다 단위 계약 7개를 먼저 작성했고, 미구현 계약 6개는 RED다. 전체 API 순차 시험은 765 PASS/6 FAIL이며 기존 764개는 통과했다. 기본 병렬 시험에서 추가 발생한 기존 3개 시간 초과도 실패 기록으로 보존했다. 시간 제한을 늘리거나 실패를 숨기지 않는다. 제품 소스 연결 변경은 현재 Gate 종료 후 시작하고 운영 스케줄러·STOW는 활성화하지 않는다. [증거 §32](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#32-dec-017-test-first-preparation-and-dec-016-second-round-audit).
 
 **최신 실행 체크포인트 (2026-10-03, 아래 이력보다 우선):** STAGE-005 DB 장애시험은 기존 실행의 최종 종료·정리까지 확인되어 scoped PASS다. STAGE-009는 multipart 선행 읽기·취소·느린 소비자 EOF 결함 수정 후 2 GiB/2,000-object 실제 adapter→암호화→검증 후 복호화 시험과 정리를 통과했다. 최종 API 40 files/732 tests, 타입·Port 검사 및 격리 컨테이너 의존성 확인도 PASS다. MEDIQ-PACS-001은 PARTIAL이며 다음은 STAGE-010 Tenant별 SERVICE 만료 정리, 이후 개인정보·무부작용·runtime/coordinator Gate다. 실제 PACS 전송·STOW는 미구현 상태를 유지한다. [증거 §26](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#26-dec-014-implementation-and-integrated-workload).
 
