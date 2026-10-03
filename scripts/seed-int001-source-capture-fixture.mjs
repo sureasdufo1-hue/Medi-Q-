@@ -1,5 +1,5 @@
 import pg from "pg";
-import { temporaryCaptureLifecycleCases } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
+import { allSourceLifecycleCases as temporaryCaptureLifecycleCases } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;

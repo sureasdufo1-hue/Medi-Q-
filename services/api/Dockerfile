@@ -62,6 +62,8 @@ CMD ["node", "--test", "tests/integration/orthanc-dicomweb.orthanc.integration.t
 
 FROM build AS authorized-source-capture-test
 
+COPY tests/fixtures/source-capture-mutation-fixture.mjs tests/fixtures/source-capture-mutation-fixture.mjs
+COPY scripts/int001-fixture-mutation-controller.mjs scripts/int001-fixture-mutation-controller.mjs
 COPY tests/fixtures/temporary-capture-lifecycle-fixture.mjs tests/fixtures/temporary-capture-lifecycle-fixture.mjs
 COPY tests/integration/authorized-source-capture.orthanc.integration.test.mjs tests/integration/authorized-source-capture.orthanc.integration.test.mjs
 COPY tests/integration/safe-database-diagnostics.mjs tests/integration/safe-database-diagnostics.mjs

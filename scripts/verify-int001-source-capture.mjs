@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import pg from "pg";
-import { temporaryCaptureLifecycleCases, privacyColumnContract, privacyAssert, privacyTokenMatches,
+import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases, privacyColumnContract, privacyAssert, privacyTokenMatches,
   parsePrivacyProbe, assertPrivacySnapshot } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
+import { mutationExpectedAudit } from "../tests/fixtures/source-capture-mutation-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
@@ -139,7 +140,7 @@ async function inspectLifecycleQuota(scenario) {
     try { await client.query("ROLLBACK"); } finally { client.release(); }
   }
 }
-async function privacySnapshot(scenario, baseline) {
+async function privacySnapshot(scenario, baseline, phase) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -158,8 +159,18 @@ async function privacySnapshot(scenario, baseline) {
     const approved = (await client.query(`SELECT sr.study_instance_uid,pm.local_patient_id,pm.status
       FROM study_references sr CROSS JOIN patient_mappings pm WHERE sr.study_ref_id=$1
         AND pm.mapping_id='15000000-0000-4000-8000-000000000002'`, [scenario.studyRefId])).rows;
+    const changed = scenario.mutation && ["MUTATED", "DENIED"].includes(phase);
     privacyAssert(approved.length === 1 && approved[0].study_instance_uid === baseline.studyUid &&
-      approved[0].local_patient_id === baseline.patientId && approved[0].status === "VALID", "APPROVED_IDENTIFIERS");
+      approved[0].local_patient_id === (changed && scenario.mutation === "MAPPING_REBOUND" ? "TEST-R6-REBOUND" : baseline.patientId) &&
+      approved[0].status === (changed && scenario.mutation === "MAPPING_REVOKED" ? "REVOKED" : "VALID"), "APPROVED_IDENTIFIERS");
+    if (scenario.mutation) {
+      const actors = (await client.query(`SELECT actor_id,tenant_id,hospital_id,actor_type,external_subject,status
+        FROM actors WHERE actor_id=$1`, [ids.actor])).rows;
+      privacyAssert(actors.length === 1 && actors[0].actor_id === ids.actor && actors[0].tenant_id === ids.tenant &&
+        actors[0].hospital_id === '04000000-0000-4000-8000-000000000002' && actors[0].actor_type === 'USER' &&
+        actors[0].external_subject === 'synthetic-int001-source-capture-actor' &&
+        actors[0].status === (changed && scenario.mutation === "ACTOR_INACTIVE" ? "INACTIVE" : "ACTIVE"), "REGISTRY_MUTATION");
+    }
     const expectedDigest = (await client.query("SELECT source_digest FROM integrity_evidence WHERE operation_id=$1 AND verification_stage='SOURCE_CAPTURE'", [ids.operation])).rows[0]?.source_digest;
     const snapshot = {
       study_references: (await client.query(`SELECT temporary_storage_ref,temporary_payload_state,temporary_payload_expires_at,temporary_payload_purged_at
@@ -195,11 +206,8 @@ async function servePrivacyObserver() {
     if (!privacyTokenMatches(observationToken, request.headers["x-mediq-test-observation"])) return reply(401, { status: "DENIED" });
     if (request.method === "GET" && request.url === "/health") return reply(200, { status: "READY" });
     if (request.method === "GET" && request.url === "/summary") {
-      const complete = temporaryCaptureLifecycleCases.every(scenario => {
-        const captureFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure"].includes(scenario.name);
-        return ["RESERVED", "QUOTA", "PHYSICAL_ABSENT", "FINAL", ...(captureFailed ? [] : ["AVAILABLE", "READ_RESULT"])]
-          .every(phase => observed.has(`${scenario.name}:${phase}`));
-      });
+      const complete = allSourceLifecycleCases.every(scenario => expectedPrivacyPhases(scenario)
+        .every(phase => observed.has(`${scenario.name}:${phase}`)));
       return reply(!failed && complete && active === 0 ? 200 : 503, { status: !failed && complete && active === 0 ? "PRIVACY_OBSERVER_PASS" : "INCOMPLETE" });
     }
     if (request.method !== "POST" || request.url !== "/probe") return reply(404, { status: "DENIED" });
@@ -213,12 +221,16 @@ async function servePrivacyObserver() {
         body += chunk.toString("utf8");
       }
       const { scenario, phase } = parsePrivacyProbe(JSON.parse(body));
-      const result = await privacySnapshot(scenario, baseline);
+      const result = await privacySnapshot(scenario, baseline, phase);
       if (phase === "RESERVED") privacyAssert(result.state === "STAGING" && result.reserved === 0, "RESERVED_PHASE");
       if (phase === "QUOTA") privacyAssert(result.state === "STAGING" && result.reserved > 0, "QUOTA_PHASE");
       if (phase === "AVAILABLE") privacyAssert(result.state === "AVAILABLE" && result.reserved > 0, "AVAILABLE_PHASE");
       if (phase === "PHYSICAL_ABSENT") privacyAssert(["PURGE_PENDING", "PURGED"].includes(result.state), "PURGE_PHASE");
-      if (phase === "FINAL") privacyAssert(result.state === "PURGED" && result.reserved === 0, "FINAL_PHASE");
+      if (phase === "FINAL") privacyAssert(result.state === (scenario.boundary === "METADATA" ? null : "PURGED") && result.reserved === 0, "FINAL_PHASE");
+      if (["MUTATED", "DENIED", "RESTORED"].includes(phase)) {
+        const expected = scenario.boundary === "METADATA" ? null : scenario.boundary === "RESERVED" ? "STAGING" : "AVAILABLE";
+        privacyAssert(result.state === expected && (expected === "AVAILABLE" ? result.reserved > 0 : result.reserved === 0), "MUTATION_PHASE");
+      }
       observed.add(`${scenario.name}:${phase}`);
       reply(200, { status: "OK" });
     } catch (error) {
@@ -453,7 +465,7 @@ try {
 
   // Separate observer process: these privileged reads are not application rights.
   const baselineDigest = (await pool.query("SELECT source_digest FROM integrity_evidence WHERE operation_id=$1 AND verification_stage='SOURCE_CAPTURE'", [ids.operation])).rows[0].source_digest;
-  for (const scenario of temporaryCaptureLifecycleCases) {
+  for (const scenario of allSourceLifecycleCases) {
     const rows = await pool.query(`SELECT op.state,op.version,op.stow_started_at,
       sr.temporary_storage_ref::text,sr.temporary_payload_state,sr.temporary_payload_purged_at,
       sr.temporary_payload_expires_at,sr.study_instance_uid,
@@ -468,9 +480,14 @@ try {
     assert.equal(rows.rowCount, 1, "DEC017_OBSERVER_GRAPH");
     const row = rows.rows[0];
     assert.equal(row.state, "CREATED"); assert.equal(row.version, 0); assert.equal(row.stow_started_at, null);
-    assert.equal(row.temporary_payload_state, "PURGED");
-    assert.match(row.temporary_storage_ref, /^[0-9a-f-]{36}$/);
-    assert.ok(row.temporary_payload_purged_at instanceof Date && row.temporary_payload_expires_at instanceof Date);
+    const noAllocation = scenario.boundary === "METADATA";
+    assert.equal(row.temporary_payload_state, noAllocation ? null : "PURGED");
+    if (noAllocation) {
+      assert.equal(row.temporary_storage_ref, null); assert.equal(row.temporary_payload_purged_at, null); assert.equal(row.temporary_payload_expires_at, null);
+    } else {
+      assert.match(row.temporary_storage_ref, /^[0-9a-f-]{36}$/);
+      assert.ok(row.temporary_payload_purged_at instanceof Date && row.temporary_payload_expires_at instanceof Date);
+    }
     assert.equal(row.study_instance_uid, "2.25.139413224574575433810421680499794275977");
     assert.equal(row.package_state, "AVAILABLE"); assert.equal(row.storage_ref, null);
     assert.equal(row.study_count, 1); assert.equal(row.deleted_at, null);
@@ -478,7 +495,7 @@ try {
     assert.equal(row.source_hospital_id, "04000000-0000-4000-8000-000000000001");
     assert.equal(row.grant_status, scenario.name === "read_revoked" ? "REVOKED" : "ACTIVE");
     assert.equal(row.consent_status, scenario.name === "read_withdrawn" ? "WITHDRAWN" : "ACTIVE");
-    const completionFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure"].includes(scenario.name);
+    const completionFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure", "capture_mapping_revoked", "capture_actor_inactive"].includes(scenario.name);
     assert.equal(row.evidence_count, completionFailed ? 0 : 1);
     if (!completionFailed) {
       const evidence = (await pool.query(`SELECT verification_stage,status,verified_at,source_digest,source_object_count
@@ -522,14 +539,20 @@ try {
       if (scenario.name === "read_withdrawn") expected["CONSENT_WITHDRAWN|SUCCESS|NULL"] = 1;
       if (competing || replay) expected["PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] = 1;
     }
-    assert.deepEqual(observed, expected, "DEC017_OBSERVER_EXACT_AUDIT");
+    if (scenario.mutation) {
+      const mutationAudits = Object.fromEntries(Object.entries(mutationExpectedAudit(scenario, true)).map(([key, count]) => [key.endsWith('|') ? key + 'NULL' : key, count]));
+      if (!noAllocation) mutationAudits["PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|EXPLICIT_CLOSE"] = 1;
+      assert.deepEqual(observed, mutationAudits, "DEC017_OBSERVER_MUTATION_AUDIT");
+    } else assert.deepEqual(observed, expected, "DEC017_OBSERVER_EXACT_AUDIT");
     assert.doesNotMatch(JSON.stringify(audits), /2\.25\.|TEST-PATIENT|PRIVATE KEY|credential|password|\.enc|\/tmp\//i);
     assert.deepEqual(await inspectLifecycleQuota(scenario), { environment_reserved: "0", refs: 0, packages: 0 });
   }
   assert.deepEqual((await pool.query("SELECT local_patient_id,status FROM patient_mappings WHERE mapping_id='15000000-0000-4000-8000-000000000002'")).rows, [{ local_patient_id: "TEST-PATIENT-007", status: "VALID" }]);
+  assert.deepEqual((await pool.query("SELECT actor_id,status FROM actors ORDER BY actor_id")).rows,
+    [1,2,3].map(n => ({ actor_id: `0a000000-0000-4000-8000-${String(n).padStart(12,'0')}`, status: 'ACTIVE' })));
   assert.equal((await pool.query(`SELECT count(*)::int AS n FROM study_references WHERE study_ref_id=ANY($1::uuid[])
     AND (temporary_storage_ref IS NOT NULL OR temporary_payload_state IS NOT NULL OR temporary_payload_expires_at IS NOT NULL OR temporary_payload_purged_at IS NOT NULL)`, [[ids.study, ids.studyOther, ids.studyMissingCount]])).rows[0].n, 0);
-  console.log("int001_lifecycle_observer=PASS cases=16 purge_audits=17 quota_released=true operations_created=true approved_identifiers_unchanged=true");
+  console.log("int001_lifecycle_observer=PASS cases=22 purge_audits=22 quota_released=true operations_created=true approved_identifiers_restored=true");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code

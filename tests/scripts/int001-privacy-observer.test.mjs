@@ -5,7 +5,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { temporaryCaptureLifecycleCases, privacyColumnContract, privacyPhases, privacyAssert,
+import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases, privacyColumnContract, privacyPhases, privacyAssert,
   privacyTokenMatches, parsePrivacyProbe, assertPrivacyText, assertPrivacySnapshot,
   assertPublicCaptureProjection, assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 
@@ -67,6 +67,26 @@ test("privacy settlement flag accepts staging Boolean false but denies available
     rejects(() => assertPrivacySnapshot(current, scenario, digest));
   }
 });
+test("R6 metadata-denial privacy requires null metadata and no allocation/evidence/quota", () => {
+  const noAllocation = allSourceLifecycleCases.find(item => item.name === 'capture_mapping_revoked');
+  const empty = snapshot();
+  empty.study_references = [Object.fromEntries(privacyColumnContract.study_references.map(key => [key, null]))];
+  empty.temporary_payload_quota_state[0].reserved_bytes = '0';
+  empty.temporary_payload_reservations = []; empty.temporary_payload_package_quotas = [];
+  empty.integrity_evidence = []; empty.audit_events = [];
+  assert.deepEqual(assertPrivacySnapshot(empty, noAllocation, digest), { state: null, reserved: 0 });
+  assert.throws(() => assertPrivacySnapshot(empty, scenario, digest), /^Error: DEC017_PRIVACY_/);
+  const changed = structuredClone(empty); changed.study_references[0].temporary_storage_ref = scenario.studyRefId;
+  assert.throws(() => assertPrivacySnapshot(changed, noAllocation, digest), /^Error: DEC017_PRIVACY_/);
+});
+test("R6 invalidation phases are required and cannot be claimed for an original scenario", () => {
+  for (const current of allSourceLifecycleCases.filter(item => item.mutation)) {
+    for (const phase of ['MUTATED','DENIED','RESTORED']) assert.equal(parsePrivacyProbe({scenario:current.name,phase}).scenario, current);
+    assert.ok(expectedPrivacyPhases(current).includes('FINAL'));
+  }
+  assert.throws(() => parsePrivacyProbe({scenario:scenario.name,phase:'MUTATED'}), {message:'DEC017_PRIVACY_PROTOCOL'});
+  assert.throws(() => parsePrivacyProbe({scenario:'capture_mapping_revoked',phase:'QUOTA'}), {message:'DEC017_PRIVACY_PROTOCOL'});
+});
 for (const [table, columns] of Object.entries(privacyColumnContract)) {
   for (const column of columns) {
     test(`privacy rejects patient and key sentinels in ${table}.${column}`, () => {
@@ -127,7 +147,7 @@ async function serverHarness() {
   const server = new EventEmitter(), processFake = new EventEmitter();
   const token = "a".repeat(64);
   processFake.env = { MEDIQ_TEST_OBSERVATION_TOKEN: token };
-  let handler, observations = 0, ready, requestedPhase;
+  let handler, observations = 0, ready, requestedPhase, requestedScenario;
   const initialized = new Promise(resolve => { ready = resolve; });
   server.listen = (_port, _host, done) => { done(); ready(); };
   server.closeAllConnections = () => {};
@@ -137,9 +157,17 @@ async function serverHarness() {
     databaseUrl: "postgresql://mediq_migrator@localhost/synthetic", ids: { study: scenario.studyRefId },
     pool: { async query(sql) { return { rows: sql.includes("FROM pg_tables") ? [{ tablename: "TEST_TABLE" }]
       : [{ status: "VALID", study_instance_uid: "2.25.1", local_patient_id: "TEST-PATIENT-007" }] }; } },
-    privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases,
+    privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases,
     privacySnapshot: async () => {
       observations++;
+      if (requestedScenario?.mutation) {
+        const boundary = requestedScenario.boundary;
+        const state = requestedPhase === 'FINAL' ? (boundary === 'METADATA' ? null : 'PURGED')
+          : requestedPhase === 'PHYSICAL_ABSENT' ? 'PURGE_PENDING'
+          : ['RESERVED','QUOTA'].includes(requestedPhase) ? 'STAGING'
+          : boundary === 'METADATA' ? null : boundary === 'RESERVED' ? 'STAGING' : 'AVAILABLE';
+        return { state, reserved: state === null || state === 'PURGED' || requestedPhase === 'RESERVED' || boundary === 'RESERVED' ? 0 : 1024 };
+      }
       return { state: { RESERVED: "STAGING", QUOTA: "STAGING", AVAILABLE: "AVAILABLE", READ_RESULT: "AVAILABLE",
         PHYSICAL_ABSENT: "PURGE_PENDING", FINAL: "PURGED" }[requestedPhase], reserved: ["RESERVED", "FINAL"].includes(requestedPhase) ? 0 : 1024 };
     },
@@ -150,6 +178,7 @@ async function serverHarness() {
   return { observations: () => observations, async request({ method = "POST", url = "/probe", suppliedToken = token, body = {} } = {}) {
     let response;
     requestedPhase = body?.phase;
+    requestedScenario = allSourceLifecycleCases.find(item => item.name === body?.scenario);
     const request = { method, url, headers: { "x-mediq-test-observation": suppliedToken },
       async *[Symbol.asyncIterator]() { yield Buffer.from(typeof body === "string" ? body : JSON.stringify(body)); } };
     const reply = { writeHead(code) { this.httpStatus = code; return this; }, end(text) { response = { httpStatus: this.httpStatus, ...JSON.parse(text) }; } };
@@ -180,8 +209,8 @@ test("observer successful probes return fixed status only and incomplete ledger 
 test("observer summary requires every registered phase and returns no stored values", async () => {
   const run = await serverHarness();
   try {
-    for (const current of temporaryCaptureLifecycleCases) {
-      for (const phase of privacyPhases) assert.equal((await run.request({ body: { scenario: current.name, phase } })).status, "OK");
+    for (const current of allSourceLifecycleCases) {
+      for (const phase of expectedPrivacyPhases(current)) assert.equal((await run.request({ body: { scenario: current.name, phase } })).status, "OK");
     }
     assert.deepEqual(await run.request({ method: "GET", url: "/summary" }), { httpStatus: 200, status: "PRIVACY_OBSERVER_PASS" });
   } finally { await run.close(); }
@@ -242,7 +271,7 @@ test("observer actual HTTP transport enforces token/body/projection boundaries a
     databaseUrl: "postgresql://mediq_migrator@localhost/synthetic", ids: { study: scenario.studyRefId },
     pool: { async query(sql) { return { rows: sql.includes("FROM pg_tables") ? [{ tablename: "TEST_TABLE" }]
       : [{ status: "VALID", study_instance_uid: "2.25.1", local_patient_id: "TEST-PATIENT-007" }] }; } },
-    privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases,
+    privacyAssert, privacyTokenMatches, parsePrivacyProbe, temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases,
     privacySnapshot: async () => { observations++; return { state: "STAGING", reserved: 0 }; },
     setTimeout, clearTimeout, console: { log: () => {} },
   });

@@ -6,11 +6,11 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — DB 51950 scoped PASS; R5 90568/71400 actual 51/privacy/Audit/B assertions PASS but automatic cleanup FAIL, owned recovery complete; refined R5-C cleanup 20/Node 97/output 41/readiness 10 PASS; actual cleanup smoke/full rerun pending; evidence §49 |
+| 상태 | `PARTIAL` — R6 seed/test/observer/test-image partially wired; wrapper/controller lifecycle still missing, actual 57-case suite NOT RUN; 197 lightweight tests PASS; original runtime/STOW/P0 gates open |
 
 ## 1. 목표 및 판정 범위
 
-**Latest user-requested Git checkpoint (2026-10-03, 19:33 KST; supersedes current labels below):** DB 51950 scoped scratch/cleanup PASS. R5 90568 and 71400 each passed **51 source/privacy/Audit/B assertions**, but exited **1** during automatic cleanup. Exact owned recovery completed; independent checkpoint inventory is zero with existing MediQ services healthy. R5-C now uses a 30-second monotonic infrastructure-removal deadline and preserves identity-verified stop failure while still attempting normal owned cleanup. Checkpoint cleanup **20**, Node **97**, output **41**, readiness **10 PASS**. Actual Docker smoke/full wrapper after that refinement are **NOT RUN**; no active integration handle. No product/schema/grant/product-deadline change; overall **PARTIAL**. See §19 and evidence §49.
+**Latest checkpoint (2026-10-03 20:12 KST; supersedes historical labels below):** R5 actual 8073 51/privacy/Audit/B/cleanup PASS remains valid. R6 test-only controller and six descriptors implemented, guard RED retained and corrected: controller **27**, combined Node **124**, cleanup **20**, output **41**, readiness **10 PASS**. Fake SQL and real loopback protocol do not prove actual mapping/actor revocation. No Docker/seed/source wiring or real R6 mutation yet; no product/schema/grant/runtime change. Next complete the independent live/final observers and six actual source scenarios without reducing old 51 coverage. §21/evidence §51; overall **PARTIAL**.
 
 **Current R4 verification (2026-10-03):** Independent replica scenario passed in the actual 51-test source suite, with separate DB/B observers and owned cleanup. It proves a replica has no usable DEK and can perform only authorized purge recovery, not host-crash recovery. Full DB session 6711 failed separately; diagnostic rerun 51950 is live. Full lifecycle/P0 remain open; §43–44.
 
@@ -491,6 +491,8 @@ Status: PARTIAL
 
 ## 19. User-requested Git checkpoint and cleanup refinement
 
+Historical checkpoint; §20 supersedes its pending real-Docker/full-wrapper result.
+
 ```text
 Ticket: MEDIQ-PACS-001; scoped MEDIQ-GRT-003/004 regression records
 Scope: Commit/push existing test-only work and synchronize actual terminal results
@@ -503,4 +505,52 @@ Evidence: TEST-EVIDENCE.md sections 48–49; prior failures preserved
 Implementation record: docs/implementation/MEDIQ-PACS-001/ and scoped GRT-003/004 records
 Remaining risks: Final automatic cleanup still needs actual verification; prior DB intermittent failure cause unknown; privacy scans are bounded checks, not platform-wide proof; original product goal unfinished
 Status: PARTIAL
+```
+
+## 20. R5 actual acceptance and next R6 gate
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-017-R5 actual privacy/catalog/automatic-cleanup gate; R6 pre-implementation recommendation/Acceptance
+Changed: Actual smoke/full-run evidence, scoped R5 acceptance, remaining mapping/actor-change cases and current status documents
+Not changed: Executable/product/schema/grant/API/runtime/Docker/Compose/dependency files; no destination write/STOW or automatic commit/push
+Security impact: Existing read-only privacy observer, least privilege, exact-owned cleanup and fixed fail-closed assertions verified without relaxation. R6 fixture mutation must stay separate from runtime and privacy observer
+Tests executed: Actual helper smoke 76390 exit 0, idempotent absence, no network/volume/port. Full source 8073 exit 0: 51 tests, live/final privacy/output/Audit, B EMPTY, automatic cleanup. Independent zero-resource and eight input hash checks PASS; prior API 893/type/Port and DB 51950 baselines unchanged
+Tests not executed: R6 actual mapping/actor invalidation, remaining full lifecycle and original runtime/coordinator/Preflight/STOW/reconciliation/destination/Viewer/Download/security/P0 E2E. No R6 executable or mutation listener
+Evidence: TEST-EVIDENCE.md sections 50–51; earlier failures retained in sections 48–49
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Scoped privacy checks do not prove OS dumps/arbitrary encodings/in-flight recall; replica proof is not original-process death; earlier DB intermittent cause unknown; original product goal unachieved
+Status: PARTIAL overall; DEC-017-R5/R5-A/B/C scoped PASS; R6 NOT STARTED
+```
+
+## 21. R6 fixture-controller construction
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-017-R6 test-only mutation controller, before actual integration
+Changed: Three new files: fixed six-case fixture, separate bounded mutation controller, controller/protocol regression tests; decision/Acceptance/evidence/current status synchronized
+Not changed: Product source, schema/grants, existing source seed/test/privacy observer/wrapper, Dockerfile/Compose/dependencies, runtime activation, real data or STOW; no commit/push
+Security impact: Test controller requires exact synthetic registry/graph/pre-state, fixed token-authenticated scenario/transition and parameterized target updates; no caller SQL/ID/value or runtime admin rights. Failed/uncertain commit prevents replay/restore; inactive-actor unchanged Audit alone is not denial proof
+Tests executed: Four guard contracts RED then corrected; controller 27 PASS, combined Node 124 PASS, cleanup 20/output 41/readiness 10 PASS, syntax/diff checks. SQL is fake; protocol uses an owned real loopback listener, closed in finally
+Tests not executed: Actual controller/PostgreSQL transitions, independent invalidated/restored observations, six real signed-source/RLS/Orthanc cases and final cleanup; full original runtime/Preflight/STOW/destination/P0 E2E
+Evidence: TEST-EVIDENCE.md section 51; R5 actual baseline in section 50
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Unwired test component only; actual schema/transition/timing/denial/cleanup behavior remains unverified. Do not treat model SQL or a complete model ledger as product acceptance
+Status: PARTIAL; R6 construction underway, actual integration NOT RUN
+```
+
+## 22. User-requested R6 work-in-progress Git checkpoint
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Save current CAPSTONE-P0 DEC-017-R6 changes; no new implementation in this checkpoint
+Changed: Test controller/fixture and tests; test-image COPY, seed definitions, source/read hooks and read-only live/final observer; current status and evidence synchronized
+Not changed: Product source, infra/Compose, dependencies, database schema/grants, PowerShell integration wrapper, runtime activation, STOW or real data
+Security impact: Existing runtime privileges and synthetic-only boundary preserved. Changed/new-file secret-pattern/local-secret-value scan found no matches; .env remains ignored. Scan is not exhaustive
+Tests executed: Node 126, PowerShell cleanup 20/output privacy 41/readiness 10, eight JavaScript syntax checks and diff checks; 197 lightweight tests PASS
+Tests not executed: Expected 57-case actual PostgreSQL/Orthanc suite, complete API/DB regression or original P0 E2E; wrapper controller launch/token/log/summary/cleanup and count update remain missing
+Evidence: TEST-EVIDENCE.md section 53
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Intentionally incomplete checkpoint, not a runnable new integration baseline. Model/loopback checks do not prove actual denial/database transitions/cleanup. Historical R5 PASS covers its frozen inputs only
+Status: PARTIAL; user-requested commit/push is not feature completion
 ```
