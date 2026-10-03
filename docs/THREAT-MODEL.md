@@ -1,5 +1,11 @@
 # MediQ Threat Model
 
+## DEC-020 dispatched payload read and held-stream review
+
+Reject cloned handoff/caller claim/verifier, stale/mismatched durable dispatch ownership, pending provenance or missing dispatch-state audit and all stale Consent/Grant/mapping/TTL/source evidence. Reserve an object attempt before first-check Audit/commit acknowledgement, so loss of acknowledgement cannot permit another read. Original CREATED-only path is unchanged; metadata read gates cannot replace complete Preflight or authorize STOW.
+
+Merged caller/purge/TTL cancellation stops the owned bridge and settles its holding consumer. A consumer ignoring cancellation keeps the single admission until actual settlement; only then zero borrowed bytes and admit queued work. Independent chunk copies avoid enqueueing a view later zeroed by the store; already copied/sent bytes remain outside recall guarantees. TTL timer and abort handlers require cleanup; lazy cancel must not initiate reads, and accessor/extra-field inputs deny without executing getters. CT Class and actual WADO syntax must be source-validated, not caller metadata. Unit/real crypto tests cannot certify new SQL/RLS, hospital destination identity/bytes or complete product authorization/dispatch/E2E. DEC-020/R1, DISPREAD-004-C; MEDIQ-PACS-001 overall PARTIAL until those gates.
+
 ## DEC-019 Study transport review
 
 New surface: internal lazy opener and multi-instance multipart POST. Reject caller endpoint/credential fields, unsafe/mutated inventory/profile/length/count/duplicates before effect; configured B-only resolver and immutable copies protect the target. Downstream demand/highWaterMark 0 and sequential input readers avoid eager whole-Study collection. Abort/idle/total/header bounds handle stalled source/open/fetch, including late unopened-body cleanup; cancel/release active reader and request. A started body/response failure is ambiguous, so fixed UNKNOWN/no-retry is mandatory. Require every expected SOP exactly once in the outcome; omissions/foreign/contradictory results cannot become success. Unknown paths can still leave data on B and require later verification, not resend.

@@ -1,5 +1,11 @@
 # MediQ System Architecture
 
+## DEC-020 operation-bound encrypted-source stream composition
+
+PacsImportModule exports an internal `DispatchedInstanceStreamFactory` using its existing `AuthorizedSourceCaptureService` and shared private encrypted store. After a future complete Preflight/committed dispatch, exact original handoff → lazy authorized dispatched read → two fresh fenced checks and exact durable operation/provenance/Audit predicates → authenticated borrowed object → independent ≤64-KiB transport chunks → awaited consumer settlement/zero/release → EOF → next object. Source metadata supplies CT SOP Class and actual authorized WADO supplies Explicit VR Little Endian syntax; these fields are immutable in original expected/temp inventories. Ordinary public capture response stays unchanged.
+
+Caller, purge and remaining TTL cancellation are combined internally; no admission release races a live consumer. The helper itself sends no network request or state transition. Original pre-dispatch read remains CREATED-only. No new endpoint/schema/grant/dependency/deployment; exact SQL/RLS and full Preflight/one real B Study STOW/destination/atomic evidence/terminal purge/security/E2E remain separate required composition gates (DEC-020/R1, DISPREAD-001–006).
+
 ## Internal bounded Study transport — PACS-001-DEC-019
 
 `DicomGateway.storeStudyStream` / `OrthancDicomwebAdapter` adds one same-Study multipart attempt using a bounded metadata inventory and lazy sequential owned input streams, rather than repeating `storeInstanceStream` per object. `STOW_STUDY` resolves only configured Test B. Complete minimized stored/warning/failure partitions and started-attempt UNKNOWN/no-retry feed the future coordinator; there is still no effect-capable public import route. `AuthorizedSourceCaptureService.consumeCapturedInstance` stays CREATED-only. A separate operation-bound committed-dispatch read, validated SOP Class/Transfer Syntax handoff, borrowed-buffer bridge, complete Mandatory Preflight and durable dispatch/completion composition must connect this port before actual A→B transfer. DOC/API/DB state is not promoted by adapter success. DEC-019/STUDY-001–006; implementation/evidence §28/§64.

@@ -193,7 +193,7 @@ describe("DEC-013 borrowed authenticated instance lifetime", () => {
       if (change === "expiry") now = fixture.sealed.expiresAt.getTime();
       else await fixture.store.purgePackage({ storageRef: fixture.handle.storageRef, binding: fixture.packageBinding });
       return "VERIFIED";
-    } })).rejects.toMatchObject({ code: change === "expiry" ? "EXPIRED" : "PACKAGE_NOT_FOUND" });
+    } })).rejects.toMatchObject({ code: change === "expiry" ? "EXPIRED" : "ABORTED" });
     expect(consumer).not.toHaveBeenCalled();
   });
 
@@ -214,16 +214,19 @@ describe("DEC-013 borrowed authenticated instance lifetime", () => {
     const entered = deferred();
     const release = deferred();
     let borrowed;
+    let consumerSignal;
     let settled = false;
     const first = consume(fixture, async (bytes, signal) => {
       borrowed = bytes;
-      expect(signal).toBe(controller.signal);
+      consumerSignal = signal;
+      expect(signal.aborted).toBe(false);
       entered.resolve();
       await release.promise;
     }, { request: { ...fixture.request, signal: controller.signal } });
     first.then(() => { settled = true; }, () => { settled = true; });
     await entered.promise;
     controller.abort();
+    expect(consumerSignal.aborted).toBe(true);
     const secondVerifier = vi.fn(syntheticVerifier);
     const second = consume(fixture, async () => {}, { verify: secondVerifier });
     await nextTurn();
@@ -233,6 +236,38 @@ describe("DEC-013 borrowed authenticated instance lifetime", () => {
     await expect(first).rejects.toMatchObject({ code: "ABORTED" });
     await second;
     expect(borrowed.every((value) => value === 0)).toBe(true);
+  });
+
+  it.each(["purge", "ttl"])("propagates %s abort but holds plaintext/admission until the ignoring consumer settles", async (cause) => {
+    const fixture = await setup(cause === "ttl" ? { limits: { packageTtlMilliseconds: 750 } } : {});
+    const healthy = await setup();
+    const entered = deferred(), aborted = deferred(), release = deferred();
+    let borrowed, consumerSignal, settled = false;
+    const first = consume(fixture, async (bytes, signal) => {
+      borrowed = bytes; consumerSignal = signal;
+      signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+      entered.resolve();
+      await release.promise;
+    });
+    first.then(() => { settled = true; }, () => { settled = true; });
+    await entered.promise;
+    const nextVerifier = vi.fn(async () => {
+      expect(borrowed.every(byte => byte === 0)).toBe(true);
+      return "VERIFIED";
+    });
+    const queued = consume(healthy, async () => {}, { verify: nextVerifier });
+    if (cause === "purge") await fixture.store.purgePackage({ storageRef: fixture.handle.storageRef, binding: fixture.packageBinding });
+    await aborted.promise;
+    expect(consumerSignal.aborted).toBe(true);
+    await nextTurn();
+    expect(settled).toBe(false);
+    expect(borrowed).toEqual(fixture.bytes);
+    expect(nextVerifier).not.toHaveBeenCalled();
+    release.resolve();
+    await expect(first).rejects.toMatchObject({ code: "ABORTED" });
+    await queued;
+    expect(nextVerifier).toHaveBeenCalledTimes(2);
+    expect(borrowed.every(byte => byte === 0)).toBe(true);
   });
 
   it("snapshots selectors before queuing so caller mutation cannot substitute scope", async () => {

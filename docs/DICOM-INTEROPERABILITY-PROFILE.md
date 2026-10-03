@@ -1,5 +1,11 @@
 # MediQ DICOM Interoperability Profile
 
+## DEC-020 source-derived transport representation
+
+CAPSTONE-P0 capture now validates CT Image Storage SOP Class from source metadata, then binds Explicit VR Little Endian to the actual authorized WADO instance response. Missing/wrong actual syntax or conflicting optional metadata syntax rejects before a usable handoff; no metadata-syntax guessing. Both original expected and temporary object inventories carry frozen SOP Class/Transfer Syntax alongside exact SOP/Series/length/SHA256. No identifying patient value enters this inventory or ordinary capture result.
+
+For later one-attempt Study multipart composition, the internal owned bridge copies ≤64-KiB chunks from each authenticated object, awaits real borrowed-consumer settlement/zero/release before EOF, and propagates caller/purge/TTL cancellation. Bridge/read helpers are not complete Preflight or STOW authority. Actual dispatch SQL/RLS, B STOW interoperability and destination exact representation/identity/hash/evidence/security/E2E remain required; no completion from streaming success (DEC-020/R1, DISPREAD-001–006).
+
 ## Internal Study transport amendment — PACS-001-DEC-019
 
 CAPSTONE-P0. `storeStudyStream` sends one multipart/related POST to the configured Test B `/dicom-web/studies/{study}` resource. Each part is one PS3.10 representation in canonical Series/SOP order; approved inventory must be unique, CT Image Storage/Explicit VR Little Endian, ≤64 series/2,000 instances, 1–64 MiB each, aggregate ≤2 GiB. Metadata selectors/opener are copied before awaits; streams open only on demand and one active reader finishes before the next opens. Stream buffers belong to the trusted caller and must stay stable through consumption; the later vault bridge must prove copying/borrowed lifetime/zeroing explicitly. No Study-sized Buffer array.

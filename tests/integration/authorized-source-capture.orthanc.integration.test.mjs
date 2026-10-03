@@ -42,6 +42,9 @@ import { ActorTenantContextService } from "../../services/api/dist/identity/appl
 import { GrantRevocationService } from "../../services/api/dist/grant/application/grant-revocation.service.js";
 import { PacsTransferOperation } from "../../services/api/dist/pacs/domain/pacs-transfer-operation.js";
 import { PostgresPacsTransferOperationRepository } from "../../services/api/dist/pacs/persistence/postgres-pacs-transfer-operation.repository.js";
+import { PostgresProvenanceRepository } from "../../services/api/dist/provenance/persistence/postgres-provenance.repository.js";
+import { DispatchedInstanceStreamFactory } from "../../services/api/dist/pacs/application/dispatched-instance-stream.factory.js";
+import { dispatchedReadCases, dispatchedReadIds, dispatchedReadDigest } from "../fixtures/dispatched-source-read-fixture.mjs";
 import {
   AuthorizedSourceCaptureService,
   AuthorizedSourceCaptureInvalidRequestError,
@@ -415,6 +418,7 @@ function createHarness({
   temporaryImagingStore,
   afterMetadata,
   beforeSourceRequest,
+  dispatchReadCommitAckLoss = false,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = Object.freeze({ ...parsedConfig,
@@ -423,6 +427,7 @@ function createHarness({
   });
   const database = new RuntimeDatabaseService(config);
   let quotaReservations = 0;
+  let dispatchClaimQueries = 0, dispatchClaimMatches = 0, lostCommitAcknowledgements = 0;
   const databaseFailures = [];
   const sourceFailures = [];
   const transactionObservation = createTransactionObservation();
@@ -443,11 +448,14 @@ function createHarness({
         throw error;
       }
       let recordedCaptureStart = false;
+      let recordedBeforeDecrypt = false;
       return new Proxy(client, {
         get(target, property) {
           if (property === "query") {
             return (...args) => {
               const statement = typeof args[0] === "string" ? args[0] : args[0]?.text ?? "";
+              const dispatchSelect = statement.includes("AS dispatch_read_claimed_at");
+              if (dispatchSelect) dispatchClaimQueries++;
               const queryLabel = statement.includes("FROM actors AS a")
                 ? "ACTOR_LOOKUP"
                 : statement.includes("pg_advisory_xact_lock")
@@ -478,6 +486,16 @@ function createHarness({
               catch (error) { querySettled(false); throw error; }
               return queryResult.then((result) => {
                 querySettled(true);
+                if (dispatchSelect) dispatchClaimMatches += result.rowCount;
+                if (statement === "BEGIN" || statement === "ROLLBACK") recordedBeforeDecrypt = false;
+                if (statement.includes("INSERT INTO audit_events") && args[1]?.[7] === "PACS_TEMPORARY_READ_AUTHORIZED" &&
+                  args[1]?.[9] === "BEFORE_DECRYPT" && result.rowCount === 1) recordedBeforeDecrypt = true;
+                // Test-only acknowledgement fault AFTER the actual database COMMIT.
+                // Never replace query results or grant authority using this hook.
+                if (statement === "COMMIT" && recordedBeforeDecrypt && dispatchReadCommitAckLoss && lostCommitAcknowledgements === 0) {
+                  recordedBeforeDecrypt = false; lostCommitAcknowledgements++;
+                  throw new Error("DISPREAD_COMMIT_ACK_LOST");
+                }
                 if (statement.includes('INSERT INTO audit_events') && args[1]?.[7] === 'PACS_SOURCE_CAPTURE_FAILED' &&
                     ['SOURCE_READ_FAILED','SOURCE_CAPTURE_CANCELLED','SOURCE_CAPTURE_DEADLINE','SOURCE_CAPTURE_PERSISTENCE_FAILED'].includes(args[1]?.[9]) && sourceFailures.length < 16) {
                   // Statement returned, not proof of commit. Only fixed reason enums.
@@ -785,6 +803,7 @@ function createHarness({
     counters: () => Object.freeze({
       tenantContextRuns,
       quotaReservations,
+      dispatchClaimQueries, dispatchClaimMatches, lostCommitAcknowledgements,
       activeTenantTransactions,
       initialAuthorizationCommitted,
       sourceRequests: [...sourceRequests],
@@ -1312,6 +1331,13 @@ async function runTemporaryLifecycleCase(scenario, signal) {
       assert.equal(state.temporary_payload_state, "AVAILABLE");
       assert.equal(state.temporary_payload_expires_at.toISOString(), temporary.expiresAt, "DEC017_EXACT_EXPIRY");
       assert.equal(handoff.sourceEvidence.aggregateDigest, expectedSourceManifestDigest(manifest));
+      assert.equal(handoff.expectedInstances.length, manifest.instanceCount, "DEC020_EXPECTED_METADATA_COUNT");
+      assert.equal(temporary.instances.length, manifest.instanceCount, "DEC020_TEMP_METADATA_COUNT");
+      for (const instance of [...handoff.expectedInstances, ...temporary.instances]) {
+        assert.equal(instance.sopClassUid, manifest.sopClassUID, "DEC020_VALIDATED_CT_CLASS");
+        assert.equal(instance.transferSyntaxUid, manifest.transferSyntaxUID, "DEC020_ACTUAL_WADO_SYNTAX");
+        assert.ok(Object.isFrozen(instance), "DEC020_IMMUTABLE_TRANSPORT_METADATA");
+      }
       const readInput = objectRef => ({ principal: signedPrincipal, tenantCandidate: fixture.tenantId,
         correlationId: scenario.correlationId, consentId: scenario.consentId, grantId: scenario.grantId, handoff, objectRef });
       const consume = async bytes => { await verifyOverlap('CONSUMER'); callbacks += 1; };
@@ -1463,8 +1489,253 @@ async function runTemporaryLifecycleCase(scenario, signal) {
   }
 }
 
+async function dispatchTestTransition(harness, signedPrincipal, scenario, nextState, omitAudit = false) {
+  // Test setup only: a ledger state is not full Preflight or permission to STOW.
+  return harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
+    const selected = await client.query(`SELECT operation_id,tenant_id,exchange_session_id,study_ref_id,actor_id,
+      idempotency_key,request_digest,state,version,reason_code,source_object_count,destination_object_count,
+      created_at,updated_at,stow_started_at FROM pacs_transfer_operations WHERE operation_id=$1`, [scenario.operationId]);
+    assert.equal(selected.rowCount, 1, 'DISPREAD_TRANSITION_VISIBLE');
+    const row = selected.rows[0];
+    const current = PacsTransferOperation.reconstitute({ operationId: row.operation_id, tenantId: row.tenant_id,
+      exchangeSessionId: row.exchange_session_id, studyRefId: row.study_ref_id, actorId: row.actor_id,
+      idempotencyKey: row.idempotency_key, requestDigest: row.request_digest, state: row.state,
+      version: row.version, reasonCode: row.reason_code, sourceObjectCount: row.source_object_count,
+      destinationObjectCount: row.destination_object_count, createdAt: row.created_at, updatedAt: row.updated_at,
+      stowStartedAt: row.stow_started_at });
+    const timestamp = new Date(Math.max(Date.now(), current.snapshot.updatedAt.getTime()) +
+      (scenario.name === 'future_dispatch' && nextState === 'STOW_STARTED' ? 300_000 : 0));
+    const next = current.transitionTo({ nextState, now: timestamp, sourceObjectCount: scenario.count });
+    if (!omitAudit) return new PostgresPacsTransferOperationRepository(client).transition({ current, next,
+      correlationId: scenario.correlationId });
+    // Deliberately incomplete test claim: legal trigger/CAS update WITHOUT an
+    // audit, using already-granted runtime columns. Product must reject it.
+    const changed = await client.query(`UPDATE pacs_transfer_operations SET state=$1,version=$2,
+      source_object_count=$3,updated_at=$4,stow_started_at=$5
+      WHERE operation_id=$6 AND tenant_id=$7 AND actor_id=$8 AND state=$9 AND version=$10`,
+    [next.snapshot.state,next.snapshot.version,next.snapshot.sourceObjectCount,next.snapshot.updatedAt,next.snapshot.stowStartedAt,
+      scenario.operationId,fixture.tenantId,current.snapshot.actorId,current.snapshot.state,current.snapshot.version]);
+    assert.equal(changed.rowCount, 1, 'DISPREAD_MISSING_AUDIT_FIXTURE_CAS');
+    return next;
+  });
+}
+
+async function runDispatchedReadCase(scenario, principals, auth, signal) {
+  let root, store, harness, handoff;
+  const attempted = [], borrows = [];
+  let delivered = 0, observedReadChecks = 0;
+  try {
+    assert.equal(process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, undefined, 'DISPREAD_NO_OWNER_URL');
+    assert.equal(process.env.MEDIQ_MIGRATION_DATABASE_URL, undefined, 'DISPREAD_NO_MIGRATOR_URL');
+    root = await mkdtemp(join(tmpdir(), 'mediq-dispatched-read-'));
+    const storageRoot = join(root, 'ciphertext');
+    store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, ciphertextIo: {
+      async write(file, bytes, offset, length, position) {
+        harness.assertOutsideTransaction(); return file.write(bytes, offset, length, position);
+      }, async sync(file) { harness.assertOutsideTransaction(); return file.sync(); },
+    } });
+    const port = {
+      async beginReservedPackage(binding, ref, quota) {
+        harness.assertOutsideTransaction(); attempted.push({ storageRef: ref, binding });
+        return store.beginReservedPackage(binding, ref, quota);
+      },
+      beginInstance: input => store.beginInstance(input), sealPackage: input => store.sealPackage(input),
+      async purgeByReference(input) { harness.assertOutsideTransaction(); await store.purgeByReference(input); },
+      async consumeInstance(input, verify, consume) {
+        harness.assertOutsideTransaction();
+        let phase = 0;
+        await store.consumeInstance(input, async (...args) => {
+          const verified = await verify(...args);
+          harness.assertOutsideTransaction(); phase++; observedReadChecks++;
+          if (phase === 1 && scenario.name === 'revoked_between') {
+            const outcome = await new GrantRevocationService(harness.actorContext).revoke({
+              principal: principals.clinician, tenantCandidate: fixture.tenantId, sessionId: scenario.sessionId,
+              grantId: scenario.grantId, correlationId: scenario.revokeCorrelationId, hasUnexpectedInput: false,
+            });
+            assert.equal(outcome.grant.status, 'REVOKED', 'DISPREAD_GRANT_COMMITTED');
+          }
+          if (phase === 1 && scenario.name === 'withdrawn_between') {
+            const outcome = await new ConsentWithdrawalService(harness.actorContext).withdraw({
+              principal: principals.patient, tenantCandidate: fixture.tenantId, sessionId: scenario.sessionId,
+              consentId: scenario.consentId, correlationId: scenario.revokeCorrelationId, hasUnexpectedInput: false,
+            });
+            assert.equal(outcome.consent.status, 'WITHDRAWN', 'DISPREAD_CONSENT_COMMITTED');
+          }
+          if (phase === 1 && scenario.name === 'state_changed_between') {
+            await dispatchTestTransition(harness, principals.clinician, scenario, 'VERIFYING');
+          }
+          return verified;
+        }, async (bytes, consumerSignal) => {
+          harness.assertOutsideTransaction(); delivered++; borrows.push(bytes);
+          await consume(bytes, consumerSignal);
+        });
+      },
+    };
+    harness = createHarness({ temporaryImagingStore: port, oidcAuthentication: auth, observeInstanceStreams: true,
+      dispatchReadCommitAckLoss: scenario.name === 'commit_ack_lost' });
+    const runtime = await harness.database.connect();
+    try {
+      const role = await runtime.query('SELECT current_user AS role,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user');
+      assert.deepEqual(role.rows[0], { role: 'mediq_runtime', rolsuper: false, rolbypassrls: false });
+      assert.equal((await runtime.query("SELECT count(*)::int AS n FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public'")).rows[0].n, 244);
+      for (const table of ['pacs_transfer_operations','provenance_records','study_references']) {
+        assert.deepEqual((await runtime.query('SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid=$1::regclass', [table])).rows[0],
+          { relrowsecurity: true, relforcerowsecurity: true });
+      }
+      assert.equal((await runtime.query('SELECT operation_id FROM pacs_transfer_operations WHERE operation_id=$1', [scenario.operationId])).rowCount, 0, 'DISPREAD_NO_CONTEXT_OPERATION');
+      assert.equal((await runtime.query('SELECT study_ref_id FROM study_references WHERE study_ref_id=$1', [scenario.studyRefId])).rowCount, 0, 'DISPREAD_NO_CONTEXT_SOURCE');
+      assert.equal((await runtime.query('SELECT provenance_id FROM provenance_records WHERE operation_id=$1', [scenario.operationId])).rowCount, 0, 'DISPREAD_NO_CONTEXT_PROVENANCE');
+    } finally { runtime.release(); }
+    await harness.actorContext.run(principals.cross, fixture.otherTenantId, async (_identity, client) => {
+      assert.equal((await client.query('SELECT operation_id FROM pacs_transfer_operations WHERE operation_id=$1', [scenario.operationId])).rowCount, 0, 'DISPREAD_CROSS_TENANT_OWNERSHIP');
+    });
+    const capture = await harness.service.captureForCoordinator({ principal: principals.clinician,
+      tenantCandidate: fixture.tenantId, correlationId: scenario.correlationId, operationId: scenario.operationId,
+      consentId: scenario.consentId, grantId: scenario.grantId, signal });
+    assert.equal(capture.kind, 'CAPTURED_FOR_COORDINATOR', 'DISPREAD_ACTUAL_SOURCE_CAPTURE');
+    handoff = capture.handoff;
+    assert.ok(handoff.temporaryPackage, 'DISPREAD_ACTUAL_ENCRYPTED_PACKAGE');
+    if (!['no_provenance','wrong_provenance'].includes(scenario.name)) {
+      await harness.actorContext.run(principals.clinician, fixture.tenantId, async (_identity, client) => {
+        const pending = await new PostgresProvenanceRepository(client).createPendingForPacsImport({
+          operationId: scenario.operationId, now: new Date(),
+        });
+        assert.equal(pending.created, true, 'DISPREAD_REPOSITORY_PENDING_PROVENANCE');
+      });
+    }
+    await dispatchTestTransition(harness, principals.clinician, scenario, 'PREFLIGHT_PASSED', scenario.name === 'missing_preflight_audit');
+    if (scenario.name !== 'not_dispatched') {
+      await dispatchTestTransition(harness, principals.clinician, scenario, 'STOW_STARTED', scenario.name === 'missing_dispatch_audit');
+    }
+    const request = { principal: principals.clinician, tenantCandidate: fixture.tenantId, correlationId: scenario.correlationId,
+      consentId: scenario.consentId, grantId: scenario.grantId, handoff, objectRef: handoff.temporaryPackage.instances[0].objectRef, signal };
+    if (scenario.name === 'valid') {
+      const before = harness.counters();
+      await assert.rejects(harness.service.consumeCapturedInstance(request, async () => { throw new Error('DISPREAD_FORBIDDEN_OLD_READ'); }),
+        { message: 'TEMPORARY_IMAGING_READ_UNAVAILABLE' });
+      await assert.rejects(harness.service.consumeDispatchedInstance({ ...request, handoff: structuredClone(handoff) }, async () => {}),
+        { message: 'TEMPORARY_IMAGING_READ_UNAVAILABLE' });
+      assert.equal(harness.counters().dispatchClaimQueries, before.dispatchClaimQueries, 'DISPREAD_CLONE_NO_QUERY');
+      const factory = new DispatchedInstanceStreamFactory(harness.service);
+      for (const instance of handoff.temporaryPackage.instances) {
+        const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
+        assert.ok(known, 'DISPREAD_KNOWN_INSTANCE');
+        assert.equal(instance.sopClassUid, manifest.sopClassUID, 'DISPREAD_CT_CLASS');
+        assert.equal(instance.transferSyntaxUid, manifest.transferSyntaxUID, 'DISPREAD_ACTUAL_SYNTAX');
+        assert.equal(basename(known.file), known.file, 'DISPREAD_KNOWN_FILE');
+        const expected = await readFile(join(dirname(manifestPath), known.file));
+        const reader = factory.open({ ...request, objectRef: instance.objectRef }).getReader(), chunks = [];
+        try {
+          while (true) {
+            const item = await reader.read(); if (item.done) break;
+            assert.ok(item.value.byteLength > 0 && item.value.byteLength <= 65536, 'DISPREAD_BOUNDED_OWNED_CHUNK');
+            assert.notEqual(item.value.buffer, borrows.at(-1).buffer, 'DISPREAD_NO_BORROW_ALIAS');
+            chunks.push(item.value);
+          }
+          assert.ok(borrows.at(-1).every(byte => byte === 0), 'DISPREAD_ZERO_BEFORE_EOF');
+          const actual = Buffer.concat(chunks);
+          assert.ok(actual.equals(expected), 'DISPREAD_EXACT_ORIGINAL_BYTES');
+          assert.equal(createHash('sha256').update(actual).digest('hex'), known.sha256, 'DISPREAD_EXACT_HASH');
+        } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+        await assert.rejects(harness.service.consumeDispatchedInstance({ ...request, objectRef: instance.objectRef }, async () => {}),
+          { message: 'TEMPORARY_IMAGING_READ_UNAVAILABLE' });
+      }
+      assert.equal(delivered, 3, 'DISPREAD_ONE_CONSUMER_PER_OBJECT');
+    } else {
+      const read = scenario.name === 'cross_tenant' ? { ...request, principal: principals.cross, tenantCandidate: fixture.otherTenantId } : request;
+      await assert.rejects(harness.service.consumeDispatchedInstance(read, async () => {
+        if (scenario.name === 'consumer_failure') throw new Error('DISPREAD_TEST_CONSUMER_FAILURE');
+        throw new Error('DISPREAD_FORBIDDEN_DELIVERY');
+      }), { message: 'TEMPORARY_IMAGING_READ_UNAVAILABLE' });
+      assert.equal(delivered, scenario.name === 'consumer_failure' ? 1 : 0, 'DISPREAD_DENIED_DELIVERY');
+      if (['consumer_failure','commit_ack_lost','read_audit_failure'].includes(scenario.name)) {
+        const beforeRetry = harness.counters();
+        await assert.rejects(harness.service.consumeDispatchedInstance(request, async () => { throw new Error('DISPREAD_FORBIDDEN_RETRY'); }),
+          { message: 'TEMPORARY_IMAGING_READ_UNAVAILABLE' });
+        assert.equal(harness.counters().dispatchClaimQueries, beforeRetry.dispatchClaimQueries, 'DISPREAD_NO_RETRY_QUERY');
+        assert.equal(harness.counters().tenantContextRuns, beforeRetry.tenantContextRuns, 'DISPREAD_NO_RETRY_AUTHORITY');
+      }
+    }
+    assert.ok(borrows.every(buffer => buffer.every(byte => byte === 0)), 'DISPREAD_ALL_BORROWS_ZEROED');
+    const counts = harness.counters();
+    assert.equal(counts.dispatchClaimQueries, scenario.claimQueries, 'DISPREAD_ACTUAL_SELECT_COUNT');
+    assert.equal(counts.dispatchClaimMatches, scenario.claimMatches, 'DISPREAD_ACTUAL_SELECT_MATCHES');
+    assert.equal(counts.lostCommitAcknowledgements, scenario.name === 'commit_ack_lost' ? 1 : 0, 'DISPREAD_REAL_COMMIT_ACK_FAULT');
+    assert.equal(observedReadChecks, scenario.name === 'commit_ack_lost' ? 0 : scenario.beforeDecrypt + scenario.beforeDelivery, 'DISPREAD_VERIFIER_COMMITS');
+    assert.equal(counts.instanceCalls, 3, 'DISPREAD_NO_SOURCE_REFETCH');
+    assert.equal(counts.sourceRequests.length, 4, 'DISPREAD_INITIAL_WADO_ONLY');
+    assert.equal(counts.stowCalls + counts.destinationVerificationCalls + counts.forbiddenEndpointAttempts, 0, 'DISPREAD_NO_B_EFFECT');
+    assert.equal(counts.activeTenantTransactions, 0, 'DISPREAD_NO_OPEN_OWN_TRANSACTION');
+    const binding = { operationId: scenario.operationId, tenantId: fixture.tenantId, exchangeSessionId: scenario.sessionId,
+      packageId: scenario.packageId, studyRefId: scenario.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID };
+    const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, port);
+    const closed = await purge.purge({ principal: principals.clinician, tenantCandidate: fixture.tenantId, binding,
+      storageRef: handoff.temporaryPackage.storageRef, correlationId: scenario.correlationId, reason: 'EXPLICIT_CLOSE' });
+    assert.equal(closed.kind, 'PURGED', 'DISPREAD_AUDITED_PURGE');
+    assert.deepEqual(await readdir(storageRoot), [], 'DISPREAD_PHYSICAL_ABSENCE');
+    await harness.actorContext.run(principals.clinician, fixture.tenantId, async (_identity, client) => {
+      const rows = await client.query(`SELECT temporary_payload_state,temporary_payload_purged_at FROM study_references WHERE study_ref_id=$1`, [scenario.studyRefId]);
+      assert.equal(rows.rows[0].temporary_payload_state, 'PURGED', 'DISPREAD_METADATA_PURGED');
+      assert.ok(rows.rows[0].temporary_payload_purged_at instanceof Date, 'DISPREAD_PURGE_EVIDENCE');
+      const op = (await client.query('SELECT state,version,source_object_count,request_digest FROM pacs_transfer_operations WHERE operation_id=$1', [scenario.operationId])).rows[0];
+      assert.equal(op.state, scenario.state, 'DISPREAD_NOT_COMPLETED'); assert.equal(op.version, scenario.version);
+      assert.equal(op.source_object_count, scenario.count); assert.equal(op.request_digest, dispatchedReadDigest(scenario));
+    });
+  } catch (error) {
+    const code = /^[A-Z][A-Z0-9_]{1,90}$/.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'SUPPRESSED';
+    const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? '')?.[1] ?? '0';
+    const database = (harness?.counters().databaseFailures ?? []).filter(value => /^[A-Z0-9_]{1,100}$/.test(value)).slice(-3);
+    throw new Error(`DISPREAD_CASE_${scenario.name.toUpperCase()} DISPREAD_ERROR_${code} DISPREAD_ORIGIN_${line} ${database.map(value => `DISPREAD_QUERY_${value}`).join(' ')}`);
+  } finally {
+    try { for (const input of attempted) await store?.purgeByReference(input); }
+    finally {
+      try { await harness?.database.onModuleDestroy(); }
+      finally {
+        if (root) {
+          assert.equal(resolve(dirname(root)), resolve(tmpdir()), 'DISPREAD_OWNED_ROOT');
+          assert.ok(basename(root).startsWith('mediq-dispatched-read-'), 'DISPREAD_OWNED_PREFIX');
+          await rm(root, { recursive: true, force: true });
+          await assert.rejects(stat(root), error => error.code === 'ENOENT');
+        }
+      }
+    }
+  }
+}
+
+async function runActualDispatchedReadMatrix(t) {
+  const keys = await generateKeyPair('RS256', { modulusLength: 2048 });
+  const jwk = { ...await exportJWK(keys.publicKey), kid: 'TEST-DISPATCH-READ', alg: 'RS256', use: 'sig' };
+  let requests = 0;
+  const server = createServer((request, response) => {
+    if (request.url !== '/jwks') return response.writeHead(404).end();
+    requests++; response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ keys: [jwk] }));
+  });
+  try {
+    await new Promise((done, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', done); });
+    const auth = { issuer: fixture.issuer, audience: 'TEST-DISPATCH-READ', jwksUri: `http://127.0.0.1:${server.address().port}/jwks` };
+    const verifier = new RemoteJwksOidcTokenVerifier(auth);
+    const sign = (subject, claims = {}, audience = auth.audience) => new SignJWT(claims)
+      .setProtectedHeader({ alg: 'RS256', kid: jwk.kid, typ: 'at+jwt' }).setIssuer(auth.issuer).setAudience(audience)
+      .setSubject(subject).setNotBefore(Math.floor(Date.now()/1000)-1).setExpirationTime('5m').sign(keys.privateKey);
+    await assert.rejects(verifier.verify(await sign(fixture.subject, {}, 'TEST-WRONG')), { message: 'AUTHENTICATION_TOKEN_INVALID' });
+    const principals = { clinician: await verifier.verify(await sign(fixture.subject)),
+      cross: await verifier.verify(await sign(fixture.otherTenantSubject)),
+      patient: await verifier.verify(await sign('synthetic-int001-patient-actor', { mediq_patient_ref_id: fixture.patientRefId })) };
+    assert.ok(requests > 0, 'DISPREAD_REAL_JWKS');
+    assert.equal(fixture.tenantId, dispatchedReadIds.tenant); assert.equal(fixture.actorId, dispatchedReadIds.actor);
+    for (const scenario of dispatchedReadCases) {
+      await t.test(`DISPREAD actual ${scenario.name}`, { timeout: 30_000 }, child => runDispatchedReadCase(scenario, principals, auth, child.signal));
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done, fail) => server.close(error => error ? fail(error) : done()));
+  }
+}
+
 if (process.argv.includes("--mediq-recovery-child")) {
   await runRecoveryReplica();
+} else if (process.env.MEDIQ_TEST_DISPATCH_READ_MODE === 'true') {
+  test('DEC-020 actual committed-read PostgreSQL/RLS/crypto gate (no STOW or complete Preflight)', { timeout: 120_000 }, runActualDispatchedReadMatrix);
 } else test("authorized source capture uses only A WADO after database-backed authorization and never writes B", async (t) => {
   assert.equal(manifest.fixtureId, "MEDIQ-ENV-007-SYNTHETIC-CT-V1");
   assert.equal(manifest.instanceCount, 3);

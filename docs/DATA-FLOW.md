@@ -1,5 +1,11 @@
 # MediQ Data Flow Specification
 
+## DEC-020 internal dispatched-byte flow
+
+Original capture handoff (CT SOP Class + actual WADO syntax, source hashes and opaque temporary refs) → downstream owned-stream demand → original actor/Tenant/Consent/Grant/mapping/AVAILABLE/source evidence + exact committed operation/provenance/Audits (fenced check 1; reserve object attempt before acknowledgement) → authenticate/decrypt one object → fresh fenced check 2 → hold borrowed consumer → copy ≤64-KiB chunks on demand → finish/cancel holding consumer → zero borrowed Buffer/release admission → close stream. Caller/purge/remaining-TTL abort stops delivery and settles cooperative bridge; a consumer ignoring cancellation keeps admission until actual settlement. Already copied or transmitted chunks are not remotely recalled. No DB transaction spans crypto/consumer/network I/O.
+
+CREATED-only reads remain separate. The helper does not run full Preflight, transition/dispatch/verify/complete an operation, or call PACS. Loss of first-check acknowledgement, later auth failure or cancelled consumption cannot restore object retry. New SQL/RLS and full actual transfer/security/E2E must be verified before product composition is accepted; source-only integration is not Study dispatch evidence. DEC-020/R1, DISPREAD-001–006/004-C.
+
 ## Internal Study transport flow — PACS-001-DEC-019
 
 Trusted coordinator (future complete Preflight + committed dispatch claim) → immutable Study/inventory/context snapshot → B-only endpoint resolution → bounded adapter admission → one multipart POST → lazily open next owned instance stream → validate exact declared bytes/EOF → close reader → next part → closing boundary → bounded complete outcome partition. Started body/response failure returns only fixed OUTCOME_UNKNOWN, never automatic retry or COMPLETED. No whole-Study payload array, caller endpoint or PACS credential crosses the port. The opener does not grant vault access; current source reads still reject STOW_STARTED. Dispatch-bound authorized reading/validated transport metadata/crypto ownership, actual destination hashes/provenance/Audit/terminal purge are subsequent mandatory flows, not proven by loopback transport tests. Acceptance STUDY-001–006/evidence §64.

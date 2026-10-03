@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env",
-    [string]$ComposeFile = "infra/docker-compose.yml"
+    [string]$ComposeFile = "infra/docker-compose.yml",
+    [switch]$IncludeDispatchedReads
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,7 +158,7 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
         $failedTestLocations = @()
         $failedAssertionMarkers = @()
         $failedCaseMarkers = @()
-        if ($FailureCode -eq "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED") {
+        if ($FailureCode -in @("INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED", "INT001_DISPATCH_READ_ACCEPTANCE_FAILED")) {
             $failedTestNames = @(
                 [regex]::Matches($joined, '(?m)^\s*not ok \d+ - ([^\r\n]{1,160})$') |
                     ForEach-Object { "SOURCE_CAPTURE_TEST" }
@@ -168,7 +169,7 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
                     Sort-Object -Unique | Select-Object -First 8
             )
             $failedAssertionMarkers = @(
-                [regex]::Matches($joined, '\b(?:CAP005|DEC017)_[A-Z0-9_]{1,160}\b') |
+                [regex]::Matches($joined, '\b(?:CAP005|DEC017|DISPREAD)_[A-Z0-9_]{1,160}\b') |
                     ForEach-Object { $_.Value } |
                     Where-Object { $_ -notmatch '^DEC017_CASE_' } |
                     Sort-Object -Unique |
@@ -178,6 +179,11 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
             $failedCaseMarkers = @([regex]::Matches($joined, '\bDEC017_CASE_[A-Z0-9_]{1,80}\b') |
                 ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 4)
             if ($failedTestNames.Count -gt 0) { $safeCode = "NODE_TEST_FAILURE" }
+        }
+        if ($FailureCode -like 'INT001_DISPATCH*') {
+            $dispatchMarkers = @([regex]::Matches($joined, '\bDISPREAD_[A-Z0-9_]{1,160}\b') |
+                ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 8)
+            $failedAssertionMarkers = @($failedAssertionMarkers) + $dispatchMarkers
         }
         $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_test_count=$($failedTestNames.Count)" } else { "" }
         $safeLocationSummary = if ($failedTestLocations.Count -gt 0) { "; test_locations=$($failedTestLocations -join ',')" } else { "" }
@@ -428,6 +434,24 @@ COMMIT;
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED" $capturePrivacyValues
     Write-Output "audit_and_evidence_observer=PASS"
     Write-Output "final_observer_output_privacy=PASS known_values_and_markers_only=true"
+    if ($IncludeDispatchedReads) {
+        # Original exact 58-case source gate remains intact above. The new mode
+        # has disjoint fixtures and no owner/migrator URL in the app process.
+        $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_PROJECT", "source-capture-fixture-seed", "node", "scripts/seed-int001-dispatched-reads.mjs")) "INT001_DISPATCH_FIXTURE_SEED_FAILED" $capturePrivacyValues
+        Write-Output "dispatched_fixture=PASS synthetic_cases=17"
+        $dispatchOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_DISPATCH_READ_MODE=true", "api-source-capture-test")) "INT001_DISPATCH_READ_ACCEPTANCE_FAILED" $capturePrivacyValues
+        $dispatchText = [string]::Join("`n", [string[]]$dispatchOutput)
+        $dispatchPass = [regex]::Match($dispatchText, '(?m)^# pass (\d+)$').Groups[1].Value
+        $dispatchFail = [regex]::Match($dispatchText, '(?m)^# fail (\d+)$').Groups[1].Value
+        if ($dispatchPass -ne "18" -or $dispatchFail -ne "0") { throw "INT001_DISPATCH_READ_SUMMARY_INVALID:pass=${dispatchPass}:fail=${dispatchFail}" }
+        Write-Output "dispatched_read_test=PASS tests=$dispatchPass failed=$dispatchFail actual_runtime_rls=true"
+        Write-Output "dispatched_output_privacy=PASS known_values_and_markers_only=true"
+        $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_PROJECT", "source-capture-db-observer", "node", "scripts/verify-int001-dispatched-reads.mjs")) "INT001_DISPATCH_OBSERVER_FAILED" $capturePrivacyValues
+        Write-Output "dispatched_independent_observer=PASS exact_audit_provenance=true quota=0 pending_source_only=true"
+    }
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_AFTER_PROBE_FAILED"
     Write-Output "orthanc_b_after=EMPTY"
 }

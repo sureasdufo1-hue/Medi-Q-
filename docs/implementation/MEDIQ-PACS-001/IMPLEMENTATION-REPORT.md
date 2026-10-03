@@ -1,5 +1,45 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 33. User-requested R1/R2 WIP Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: User-authorized current-state commit/push; CAPSTONE-P0 WIP, not release acceptance
+Changed: Preserve R1 regression corrections/evidence and R2 opt-in dispatch-read integration harness, disjoint fixture, isolated seed/observer and test-image COPY; synchronize checkpoint status
+Not changed: No implementation fix in this checkpoint, product source/schema/runtime grants/public API/dependency/deployment or live DB/PACS changes
+Security impact: Existing boundaries unchanged; .env/build outputs excluded and bounded candidate path/credential-pattern checks passed, not exhaustive secret/PHI assurance
+Tests executed: Six JavaScript syntax checks, PowerShell parser and diff checks PASS; Git fetch succeeded, pre-checkpoint main/origin main 0/0. Historical R1 full API 1026 and actual source 58 results remain scoped to their recorded inputs
+Tests not executed: Current R2 actual SQL/RLS matrix, new fixture/seed/observer/wrapper contracts, updated full wrapper, full Preflight/coordinator/B transfer/destination/security/E2E; no test suite rerun for this Git-only request
+Evidence: TEST-EVIDENCE.md section 69; R1 section 67 and R2 initial section 68
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: R2 integration is unfinished and only syntax-checked; earlier source-only PASS does not validate changed R2 harness or full transfer
+Status: PARTIAL implementation; Git commit/push outcome reported only after commands succeed
+```
+
+## 32. DEC-020-R2 actual committed-read SQL/RLS matrix — opened before code
+
+2026-10-04, CAPSTONE-P0/MEDIQ-PACS-001. Preserve inspected R1 dirty tree at HEAD 21a48ec; prior turn progress/current actual source 58 and API 1026, no live process. Standing recommendation DEC-020-R2 and DISPREAD-SQL-001–006 recorded first. Implement test-only opt-in existing owned wrapper, disjoint actual source/signed identity/runtime RLS/crypto/dispatch predicate positive+negative matrix and independent observer. No runtime grant/schema/product route/deployment/STOW. Initial PARTIAL/NOT RUN; full Preflight/coordinator/B transfer/destination/atomic terminal evidence/security/E2E remain open. Evidence §68.
+
+## 31. DEC-020-R1 correction and cancellation/lifetime verification — opened before edits
+
+2026-10-04, MEDIQ-PACS-001/CAPSTONE-P0; clean baseline 21a48ec. Policy DEC-020-R1 and DISPREAD-004-C recorded before edits. Correct the three failing synthetic assertions without weakening merged cancellation or complete outcomes; add actual crypto admission/zeroing and owned-bridge purge/TTL/lazy/chunk/input tests, rerun full current API/type/Port then updated actual source gate. No new public API/schema/grants/STOW/deployment. Previous turn progress; no live process. Initial PARTIAL/NOT RUN; actual dispatched SQL/RLS/full coordinator/Preflight/destination/security/E2E remain required. Evidence §67.
+
+Final current verification (2026-10-04 00:54 KST), supersedes initial and older checkpoint status:
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-020-R1; correct regression fixtures and prove current cancellation/borrowed lifetime/owned stream/source representation
+Changed: Complete three-SOP response and framing fixture; abort semantics/propagation rather than signal identity assertions; 7 new purge/TTL/input/lazy/chunk tests and exact actual source inventory assertions; normative/evidence/plan/index synchronization
+Not changed: Product code/config/dependencies/schema/grants/scripts/infra, public routes, deployed stack or any live B STOW; original goal and full Preflight conditions
+Security impact: Preserve merged caller/purge/TTL cancellation, complete outcomes, one-attempt/no-retry and no race-release; tests now prove holding/zeroing and independent chunks but cannot recall sent copies or certify global/forensic memory
+Tests executed: Focused 294 PASS after recorded fixture failures; full API 45 files/1026 tests/build/type/Port PASS (29173 exit 0); current actual source 58 PASS (23436 exit 0), signed identity/RLS/HTTPS/metadata/privacy/Audit/six mutation restorations/B EMPTY/cleanup; independent empty owned inventory and exact unchanged 290-input hash; diff/product-baseline checks PASS
+Tests not executed: Actual dispatched SQL/RLS predicates, full Mandatory Preflight/durable dispatch/real Study STOW/destination hashes/atomic terminal evidence/security/E2E; new runtime deployment/authenticated maintenance scheduling
+Evidence: TEST-EVIDENCE.md section 67 (commands, red/green, exact terminal results and scoped limits)
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: New read ownership SQL still only modeled; complete product composition and job lifecycle remain required. Current source-only gate is not transfer success
+Status: Corrective/source component gates scoped PASS; whole MEDIQ-PACS-001/P0 PARTIAL, goal active; no live process or automatic commit/push
+```
+
 ## 30. User-requested current-state Git checkpoint — 2026-10-04
 
 This checkpoint supersedes older current-status statements. DEC-019/020 implementation is saved as WIP, without fixing product/test code in this commit/push task.

@@ -595,7 +595,8 @@ async function withLifecycle(options, check) {
   const attempted = [];
   const store = new EphemeralEncryptedTemporaryImagingStore({
     rootDirectory: storageRoot,
-    now: () => (harness?.captureTime.getTime() ?? now.getTime()) + (options.storeClockOffset ?? 0),
+    now: options.storeNow ?? (() => (harness?.captureTime.getTime() ?? now.getTime()) + (options.storeClockOffset ?? 0)),
+    limits: options.storeTtlMilliseconds === undefined ? undefined : { packageTtlMilliseconds: options.storeTtlMilliseconds },
     ciphertextIo: {
       write: (file, bytes, offset, length, position) => {
         mark('WRITE');
@@ -1025,7 +1026,9 @@ describe("DEC-020 source transport metadata and committed read (modeled SQL; rea
       const body = factory.open(readCommand(handoff));
       expect(observed).not.toHaveBeenCalled();
 
+      let protocolFailure;
       const fetch = vi.fn(async (_url, init) => {
+        try {
         const output = init.body.getReader();
         try {
           await output.read(); // first multipart prefix; owned body is still lazy
@@ -1035,25 +1038,28 @@ describe("DEC-020 source transport metadata and committed read (modeled SQL; rea
           expect(borrows[0]).toEqual(Buffer.from(instanceFixture[0].bytes));
           await new Promise(resolve => setImmediate(resolve));
           expect(borrows[0]).toEqual(Buffer.from(instanceFixture[0].bytes));
-          expect((await output.read()).value).toEqual(Buffer.from("\r\n")); // source EOF waits for zero
+          expect(Buffer.from((await output.read()).value)).toEqual(Buffer.from("\r\n")); // source EOF waits for zero
           expect(borrows[0].every(byte => byte === 0)).toBe(true);
           expect(first).toEqual(instanceFixture[0].bytes);
           while (true) { const part = await output.read(); if (part.done) break;
             if (part.value.byteLength < 10) ownedChunks.push(part.value); }
         } finally { output.releaseLock(); }
-        return new Response(JSON.stringify({ "00081199": { vr: "SQ", Value: handoff.expectedInstances.slice(1).map(item => ({
+        return new Response(JSON.stringify({ "00081199": { vr: "SQ", Value: handoff.expectedInstances.map(item => ({
           "00081155": { vr: "UI", Value: [item.sopInstanceUid] },
         })) } }), { headers: { "content-type": "application/dicom+json" } });
+        } catch (error) { protocolFailure = error; throw error; }
       });
       const gateway = new OrthancDicomwebAdapter({ resolve: () => ({ origin: new URL("https://orthanc-b:8042/dicom-web/"), authorization: "Basic TEST-SYNTHETIC" }) }, { fetch });
       const expected = handoff.expectedInstances;
-      await gateway.storeStudyStream({ context: { hospitalId: TEST_HOSPITAL_B_ID, correlationId: ids.correlation, signal: new AbortController().signal },
+      const outcome = await gateway.storeStudyStream({ context: { hospitalId: TEST_HOSPITAL_B_ID, correlationId: ids.correlation, signal: new AbortController().signal },
         studyInstanceUid: handoff.studyInstanceUid,
         instances: expected.map(({ seriesInstanceUid, sopInstanceUid, sopClassUid, transferSyntaxUid, byteLength }) => ({
           seriesInstanceUid, sopInstanceUid, sopClassUid, transferSyntaxUid, contentLength: byteLength })),
         openInstance: async (item, signal) => item.sopInstanceUid === expected[0].sopInstanceUid ? body : factory.open(readCommand(handoff, {
           objectRef: handoff.temporaryPackage.instances.find(i => i.sopInstanceUid === item.sopInstanceUid).objectRef, signal })),
-      });
+      }).catch(error => { expect(protocolFailure).toBeUndefined(); throw error; });
+      expect(outcome.storedSopInstanceUids).toEqual(expected.map(item => item.sopInstanceUid));
+      expect(protocolFailure).toBeUndefined();
       expect(fetch).toHaveBeenCalledOnce(); expect(borrows).toHaveLength(3);
       expect(borrows.every(b => b.every(byte => byte === 0))).toBe(true);
       for (const fixture of instanceFixture) expect(ownedChunks.some(chunk => Buffer.from(chunk).equals(Buffer.from(fixture.bytes)))).toBe(true);
@@ -1091,6 +1097,98 @@ describe("DEC-020 source transport metadata and committed read (modeled SQL; rea
       await reader.read(); abort.abort();
       await expect(reader.read()).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE");
       await settled; reader.releaseLock(); expect(borrowed.every(byte => byte === 0)).toBe(true);
+    });
+  });
+
+  it.each(["purge", "ttl"])("bridge %s abort settles/zeroes the real holding consumer without recalling owned bytes or allowing replay", async cause => {
+    const started = Date.now();
+    const options = cause === "ttl" ? {
+      storeTtlMilliseconds: 750, storeNow: () => now.getTime() + Date.now() - started,
+    } : {};
+    await withLifecycle(options, async (h, store) => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch();
+      let borrowed, settled;
+      const original = h.service.consumeDispatchedInstance.bind(h.service);
+      vi.spyOn(h.service, "consumeDispatchedInstance").mockImplementation((input, callback) => {
+        const work = original(input, async (p,s) => { borrowed = p; await callback(p,s); });
+        settled = work.catch(() => undefined); return work;
+      });
+      const factory = new DispatchedInstanceStreamFactory(h.service), reader = factory.open(readCommand(handoff)).getReader();
+      try {
+        const owned = (await reader.read()).value;
+        expect(borrowed).toEqual(Buffer.from(instanceFixture[0].bytes));
+        if (cause === "purge") await store.purgeByReference({
+          storageRef: handoff.temporaryPackage.storageRef, binding: {
+            tenantId: handoff.tenantId, exchangeSessionId: handoff.exchangeSessionId,
+            packageId: handoff.packageId, purpose: "PACS_IMPORT",
+          },
+        });
+        // The small real TTL timer must signal while the borrowed consumer is held.
+        await expect(reader.closed).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE");
+        await settled;
+        expect(borrowed.every(byte => byte === 0)).toBe(true);
+        expect(owned).toEqual(instanceFixture[0].bytes);
+        await expect(reader.read()).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE");
+        const retry = factory.open(readCommand(handoff)).getReader();
+        try { await expect(retry.read()).rejects.toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE"); }
+        finally { retry.releaseLock(); }
+      } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+      expect(h.dicomCalls.instances).toBe(3); expect(h.dicomCalls.destinationWrites).toBe(0);
+    });
+  });
+
+  it("cancel before first bridge pull never starts authorized reading", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch();
+      const read = vi.spyOn(h.service, "consumeDispatchedInstance");
+      const body = new DispatchedInstanceStreamFactory(h.service).open(readCommand(handoff));
+      await body.cancel();
+      expect(read).not.toHaveBeenCalled(); expect(h.dispatchChecks).toBe(0);
+    });
+  });
+
+  it("bridge rejects invalid/accessor/extra inputs without invoking getters or authorized reader", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      const factory = new DispatchedInstanceStreamFactory(h.service), read = vi.spyOn(h.service, "consumeDispatchedInstance");
+      const getter = vi.fn(() => ids.tenant), input = readCommand(handoff);
+      Object.defineProperty(input, "tenantCandidate", { get: getter });
+      for (const value of [null, [], input, readCommand(handoff, { endpoint: "https://example.invalid" }),
+        readCommand(handoff, { objectRef: "NOT-A-UUID" }), readCommand(handoff, { signal: {} }),
+        readCommand(handoff, { principal: { ...principal, verifier: () => true } })]) {
+        expect(() => factory.open(value)).toThrow("PACS_DISPATCH_STREAM_UNAVAILABLE");
+      }
+      expect(getter).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("bridge splits a real encrypted object into independent at-most-64-KiB chunks and zeroes before EOF", async () => {
+    const bytes = Uint8Array.from({ length: 2 * 64 * 1024 + 37 }, (_, i) => i % 251);
+    await withLifecycle({ instanceStreamFactory: async (item, input) => ({
+      mediaType: "application/dicom", sopInstanceUid: item.sopInstanceUid,
+      contentLength: input.sopInstanceUid === instanceFixture[0].sopInstanceUid ? bytes.byteLength : item.bytes.byteLength,
+      body: new ReadableStream({
+      start(controller) { controller.enqueue(input.sopInstanceUid === instanceFixture[0].sopInstanceUid ? bytes :
+        instanceFixture.find(item => item.sopInstanceUid === input.sopInstanceUid).bytes); controller.close(); },
+    }) }) }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedDispatch();
+      let borrowed;
+      const original = h.service.consumeDispatchedInstance.bind(h.service);
+      vi.spyOn(h.service, "consumeDispatchedInstance").mockImplementation((input, callback) =>
+        original(input, async (p,s) => { borrowed = p; await callback(p,s); }));
+      const reader = new DispatchedInstanceStreamFactory(h.service).open(readCommand(handoff)).getReader(), chunks = [];
+      try {
+        while (true) {
+          const part = await reader.read(); if (part.done) break;
+          expect(part.value.byteLength).toBeLessThanOrEqual(64 * 1024);
+          expect(part.value.buffer).not.toBe(borrowed.buffer); chunks.push(part.value);
+          expect(borrowed).toEqual(Buffer.from(bytes));
+        }
+        expect(chunks.map(chunk => chunk.byteLength)).toEqual([65536, 65536, 37]);
+        expect(borrowed.every(byte => byte === 0)).toBe(true);
+        expect(Buffer.concat(chunks)).toEqual(Buffer.from(bytes));
+        expect(h.dispatchChecks).toBe(2); expect(h.dicomCalls.instances).toBe(3);
+      } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     });
   });
 });
