@@ -394,6 +394,10 @@ try {
      VALUES ($1, $2, 'study:pacs-transfer')`,
     [ids.grantInFlightRevocationScope, ids.grantInFlightRevocation],
   );
+  await client.query(`INSERT INTO actors
+    (actor_id, tenant_id, hospital_id, actor_type, external_subject, display_name, status, created_at, updated_at)
+    VALUES ('0a000000-0000-4000-8000-000000000003', $1, NULL, 'USER',
+      'synthetic-int001-patient-actor', 'Synthetic Consent Patient', 'ACTIVE', now(), now())`, [ids.tenantB]);
   for (const scenario of [...cap012Cases, ...temporaryCaptureLifecycleCases]) {
     await client.query(
       `INSERT INTO exchange_sessions
@@ -536,7 +540,8 @@ try {
     LANGUAGE plpgsql
     AS $function$
     BEGIN
-      IF NEW.operation_id = '1b000000-0000-4000-8000-000000000022'::uuid
+      IF NEW.operation_id IN ('1b000000-0000-4000-8000-000000000022'::uuid,
+          '1b000000-0000-4000-8000-000000000113'::uuid)
          AND NEW.verification_stage = 'SOURCE_CAPTURE'
          AND NEW.status = 'PENDING' THEN
         RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'INT001_CAP012_TEST_FAULT';

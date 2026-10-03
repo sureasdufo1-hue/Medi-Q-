@@ -349,10 +349,11 @@ try {
       sr.temporary_payload_expires_at,sr.study_instance_uid,
       p.state AS package_state,p.storage_ref,p.study_count,p.patient_ref_id::text,
       p.source_hospital_id::text, p.deleted_at,
-      g.status AS grant_status,
+      g.status AS grant_status,c.status AS consent_status,
       (SELECT count(*)::int FROM integrity_evidence ie WHERE ie.operation_id=op.operation_id) AS evidence_count
       FROM pacs_transfer_operations op JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
       JOIN imaging_packages p ON p.package_id=sr.package_id JOIN transfer_grants g ON g.grant_id=$2
+      JOIN consents c ON c.consent_id=g.consent_id
       WHERE op.operation_id=$1`, [scenario.operationId, scenario.grantId]);
     assert.equal(rows.rowCount, 1, "DEC017_OBSERVER_GRAPH");
     const row = rows.rows[0];
@@ -366,7 +367,8 @@ try {
     assert.equal(row.patient_ref_id, "15000000-0000-4000-8000-000000000001");
     assert.equal(row.source_hospital_id, "04000000-0000-4000-8000-000000000001");
     assert.equal(row.grant_status, scenario.name === "read_revoked" ? "REVOKED" : "ACTIVE");
-    const completionFailed = scenario.name === "completion_audit_failure";
+    assert.equal(row.consent_status, scenario.name === "read_withdrawn" ? "WITHDRAWN" : "ACTIVE");
+    const completionFailed = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure"].includes(scenario.name);
     assert.equal(row.evidence_count, completionFailed ? 0 : 1);
     if (!completionFailed) {
       const evidence = (await pool.query(`SELECT verification_stage,status,verified_at,source_digest,source_object_count
@@ -379,24 +381,35 @@ try {
       FROM audit_events WHERE correlation_id=ANY($1::uuid[])`, [[scenario.correlationId, scenario.revokeCorrelationId]])).rows;
     const observed = {};
     for (const audit of audits) {
-      assert.equal(audit.actor_id, ids.actor); assert.equal(audit.tenant_id, ids.tenant);
+      const withdraw = audit.action === "CONSENT_WITHDRAWN";
+      assert.equal(audit.actor_id, withdraw ? "0a000000-0000-4000-8000-000000000003" : ids.actor);
+      assert.equal(audit.tenant_id, ids.tenant);
       assert.equal(audit.exchange_session_id, scenario.sessionId);
       const revoke = audit.action === "GRANT_REVOKED";
-      assert.equal(audit.resource_type, revoke ? "TRANSFER_GRANT" : "STUDY");
-      assert.equal(audit.resource_id, revoke ? scenario.grantId : scenario.studyRefId);
-      assert.equal(audit.correlation_id, revoke ? scenario.revokeCorrelationId : scenario.correlationId);
+      assert.equal(audit.resource_type, revoke ? "TRANSFER_GRANT" : withdraw ? "CONSENT" : "STUDY");
+      assert.equal(audit.resource_id, revoke ? scenario.grantId : withdraw ? scenario.consentId : scenario.studyRefId);
+      assert.equal(audit.correlation_id, revoke || withdraw ? scenario.revokeCorrelationId : scenario.correlationId);
       const key = `${audit.action}|${audit.result}|${audit.reason_code ?? "NULL"}`;
       observed[key] = (observed[key] ?? 0) + 1;
     }
-    const expected = { "PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL": 1,
-      [`PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|${completionFailed ? "CAPTURE_FAILURE" : "EXPLICIT_CLOSE"}`]: 1 };
-    if (completionFailed) expected["PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] = 1;
+    const replay = scenario.name === "replay_refetch", competing = scenario.name === "concurrent_capture";
+    const validRead = scenario.name === "roundtrip" || replay || competing;
+    const readCount = replay ? 6 : validRead ? 3 : 1;
+    const expected = { "PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL": replay ? 3 : competing ? 2 : 1,
+      [`PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|${completionFailed ? "CAPTURE_FAILURE" : "EXPLICIT_CLOSE"}`]: replay ? 2 : 1 };
+    if (completionFailed) {
+      const reason = ["capture_write_failure", "capture_fsync_failure"].includes(scenario.name)
+        ? "SOURCE_READ_FAILED" : "SOURCE_CAPTURE_PERSISTENCE_FAILED";
+      expected[`PACS_SOURCE_CAPTURE_FAILED|FAILURE|${reason}`] = 1;
+    }
     else {
-      expected["PACS_SOURCE_CAPTURED|SUCCESS|NULL"] = 1;
-      expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DECRYPT"] = scenario.name === "roundtrip" ? 3 : 1;
-      if (scenario.name === "roundtrip") expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DELIVERY"] = 3;
-      else expected["PACS_TEMPORARY_READ_FAILED|FAILURE|TEMPORARY_READ_FAILED"] = 1;
+      expected["PACS_SOURCE_CAPTURED|SUCCESS|NULL"] = replay ? 2 : 1;
+      expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DECRYPT"] = readCount;
+      if (validRead) expected["PACS_TEMPORARY_READ_AUTHORIZED|ALLOW|BEFORE_DELIVERY"] = readCount;
+      if (!validRead || replay) expected["PACS_TEMPORARY_READ_FAILED|FAILURE|TEMPORARY_READ_FAILED"] = 1;
       if (scenario.name === "read_revoked") expected["GRANT_REVOKED|SUCCESS|NULL"] = 1;
+      if (scenario.name === "read_withdrawn") expected["CONSENT_WITHDRAWN|SUCCESS|NULL"] = 1;
+      if (competing || replay) expected["PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] = 1;
     }
     assert.deepEqual(observed, expected, "DEC017_OBSERVER_EXACT_AUDIT");
     assert.doesNotMatch(JSON.stringify(audits), /2\.25\.|TEST-PATIENT|PRIVATE KEY|credential|password|\.enc|\/tmp\//i);
@@ -405,7 +418,7 @@ try {
   assert.deepEqual((await pool.query("SELECT local_patient_id,status FROM patient_mappings WHERE mapping_id='15000000-0000-4000-8000-000000000002'")).rows, [{ local_patient_id: "TEST-PATIENT-007", status: "VALID" }]);
   assert.equal((await pool.query(`SELECT count(*)::int AS n FROM study_references WHERE study_ref_id=ANY($1::uuid[])
     AND (temporary_storage_ref IS NOT NULL OR temporary_payload_state IS NOT NULL OR temporary_payload_expires_at IS NOT NULL OR temporary_payload_purged_at IS NOT NULL)`, [[ids.study, ids.studyOther, ids.studyMissingCount]])).rows[0].n, 0);
-  console.log("int001_lifecycle_observer=PASS cases=4 purge_audits=4 quota_released=true operations_created=true approved_identifiers_unchanged=true");
+  console.log("int001_lifecycle_observer=PASS cases=15 purge_audits=16 quota_released=true operations_created=true approved_identifiers_unchanged=true");
 } catch (error) {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code

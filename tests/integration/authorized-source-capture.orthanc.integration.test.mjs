@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
@@ -9,6 +9,8 @@ import { temporaryCaptureLifecycleCases } from "../fixtures/temporary-capture-li
 import { RemoteJwksOidcTokenVerifier } from "../../services/api/dist/authentication/oidc-jwt.verifier.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { TemporaryPayloadPurgeCoordinator } from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
+import { PostgresTemporaryPayloadMetadataRepository } from "../../services/api/dist/imaging-storage/persistence/postgres-temporary-payload-metadata.repository.js";
+import { ConsentWithdrawalService } from "../../services/api/dist/consent/application/consent-withdrawal.service.js";
 import { test } from "node:test";
 import {
   safeDatabaseErrorClass,
@@ -664,12 +666,20 @@ async function runTemporaryLifecycleCase(scenario) {
   let root, store, harness, signedPrincipal;
   const attempted = [];
   let callbacks = 0;
+  let releaseReservation, reservationEntered;
+  const heldReservation = new Promise(resolve => { releaseReservation = resolve; });
+  const reservationReached = new Promise(resolve => { reservationEntered = resolve; });
+  let winner;
+  const captureFailure = ["completion_audit_failure", "capture_write_failure", "capture_fsync_failure", "capture_evidence_failure"].includes(scenario.name);
+  const operationBinding = { operationId: scenario.operationId, tenantId: fixture.tenantId,
+    exchangeSessionId: scenario.sessionId, packageId: scenario.packageId,
+    studyRefId: scenario.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID };
   try {
     await new Promise((done, fail) => { server.once("error", fail); server.listen(0, "127.0.0.1", done); });
     const auth = { issuer: fixture.issuer, audience: "TEST-SOURCE-LIFECYCLE",
       jwksUri: `http://127.0.0.1:${server.address().port}/jwks` };
     const verifier = new RemoteJwksOidcTokenVerifier(auth);
-    const token = (subject, audience = auth.audience) => new SignJWT({})
+    const token = (subject, audience = auth.audience, claims = {}) => new SignJWT(claims)
       .setProtectedHeader({ alg: "RS256", kid: jwk.kid, typ: "at+jwt" })
       .setIssuer(auth.issuer).setAudience(audience).setSubject(subject)
       .setNotBefore(Math.floor(Date.now() / 1000) - 1).setExpirationTime("5m").sign(keys.privateKey);
@@ -680,6 +690,8 @@ async function runTemporaryLifecycleCase(scenario) {
     await assert.rejects(verifier.verify(invalidSignature.join(".")), { message: "AUTHENTICATION_TOKEN_INVALID" });
     signedPrincipal = await verifier.verify(signedToken);
     const crossPrincipal = await verifier.verify(await token(fixture.otherTenantSubject));
+    const patientPrincipal = await verifier.verify(await token("synthetic-int001-patient-actor",
+      auth.audience, { mediq_patient_ref_id: fixture.patientRefId }));
     assert.ok(jwksRequests > 0, "DEC017_REAL_JWKS_FETCH");
 
     root = await mkdtemp(join(tmpdir(), "mediq-orthanc-lifecycle-"));
@@ -694,9 +706,13 @@ async function runTemporaryLifecycleCase(scenario) {
       async write(file, buffer, offset, length, position) {
         assert.equal(harness.counters().activeTenantTransactions, 0, "DEC017_WRITE_OUTSIDE_OWN_TRANSACTION");
         assert.ok(harness.counters().quotaReservations > 0, "DEC017_COMMITTED_QUOTA_BEFORE_WRITE");
+        if (scenario.name === "capture_write_failure") throw new Error("DEC017_SYNTHETIC_WRITE_FAILURE");
         return file.write(buffer, offset, length, position);
       },
-      sync: file => file.sync(),
+      sync: file => {
+        if (scenario.name === "capture_fsync_failure") throw new Error("DEC017_SYNTHETIC_FSYNC_FAILURE");
+        return file.sync();
+      },
     } });
     const port = {
       async beginReservedPackage(binding, ref, quota) {
@@ -705,6 +721,10 @@ async function runTemporaryLifecycleCase(scenario) {
         assert.equal(state.temporary_payload_state, "STAGING", "DEC017_RESERVED_BEFORE_ALLOCATION");
         assert.equal(state.temporary_storage_ref, ref);
         attempted.push({ storageRef: ref, binding });
+        if (scenario.name === "concurrent_capture" && attempted.length === 1) {
+          reservationEntered();
+          await heldReservation;
+        }
         return store.beginReservedPackage(binding, ref, quota);
       },
       beginInstance: input => store.beginInstance(input),
@@ -730,6 +750,27 @@ async function runTemporaryLifecycleCase(scenario) {
             });
             assert.equal(outcome.grant.status, "REVOKED", "DEC017_REAL_REVOCATION_COMMITTED");
           }
+          if (phase === 1 && scenario.name === "read_withdrawn") {
+            const outcome = await new ConsentWithdrawalService(harness.actorContext).withdraw({
+              principal: patientPrincipal, tenantCandidate: fixture.tenantId, sessionId: scenario.sessionId,
+              consentId: scenario.consentId, correlationId: scenario.revokeCorrelationId, hasUnexpectedInput: false,
+            });
+            assert.equal(outcome.consent.status, "WITHDRAWN", "DEC017_REAL_WITHDRAWAL_COMMITTED");
+          }
+          if (phase === 1 && ["read_purge_pending", "read_expired_metadata"].includes(scenario.name)) {
+            await harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
+              if (scenario.name === "read_purge_pending") {
+                await new PostgresTemporaryPayloadMetadataRepository(client).markPurgePending({
+                  binding: operationBinding, storageRef: input.storageRef });
+              } else {
+                // Test-only change to an already granted metadata column under real RLS.
+                // No clock/verification substitution or privileged test connection.
+                assert.equal((await client.query(`UPDATE study_references SET temporary_payload_expires_at=now()-interval '1 second'
+                  WHERE study_ref_id=$1 AND temporary_storage_ref=$2 AND temporary_payload_state='AVAILABLE'`,
+                [scenario.studyRefId, input.storageRef])).rowCount, 1);
+              }
+            });
+          }
           return result;
         }, consume);
       },
@@ -750,10 +791,25 @@ async function runTemporaryLifecycleCase(scenario) {
     assert.equal(cross.kind, "DENIED");
     assert.equal(harness.counters().instanceCalls, 0);
 
-    if (scenario.name === "completion_audit_failure") {
+    if (captureFailure) {
       await assert.rejects(harness.service.captureForCoordinator(input), { message: "SOURCE_CAPTURE_UNAVAILABLE" });
     } else {
-      const result = await harness.service.captureForCoordinator(input);
+      let result;
+      if (scenario.name === "concurrent_capture") {
+        winner = harness.service.captureForCoordinator(input);
+        // Await either the deterministic hold or an early winner termination.
+        // No timer/sleep and no unhandled rejection if setup fails.
+        await Promise.race([reservationReached, winner.then(() => { throw new Error("DEC017_RESERVATION_NOT_HELD"); })]);
+        try {
+          const before = await currentMetadata();
+          assert.equal(before.temporary_payload_state, "STAGING");
+          await assert.rejects(harness.service.captureForCoordinator(input), { message: "SOURCE_CAPTURE_UNAVAILABLE" });
+          assert.deepEqual(await currentMetadata(), before, "DEC017_LOSER_PRESERVES_WINNER");
+          assert.equal(attempted.length, 1, "DEC017_LOSER_NO_ALLOCATION");
+          assert.equal(harness.counters().instanceCalls, 0, "DEC017_LOSER_NO_INSTANCE_BYTES");
+        } finally { releaseReservation(); }
+        result = await winner;
+      } else result = await harness.service.captureForCoordinator(input);
       assert.equal(result.kind, "CAPTURED_FOR_COORDINATOR", "DEC017_CAPTURE_SUCCEEDED");
       const { handoff } = result, temporary = handoff.temporaryPackage;
       assert.ok(temporary);
@@ -764,7 +820,20 @@ async function runTemporaryLifecycleCase(scenario) {
       const readInput = objectRef => ({ principal: signedPrincipal, tenantCandidate: fixture.tenantId,
         correlationId: scenario.correlationId, consentId: scenario.consentId, grantId: scenario.grantId, handoff, objectRef });
       const consume = async bytes => { callbacks += 1; assert.equal(harness.counters().activeTenantTransactions, 0); };
-      if (scenario.name === "roundtrip") {
+      const verifyExactRead = async (selectedHandoff, instance) => {
+        const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
+        assert.ok(known);
+        assert.equal(basename(known.file), known.file, "DEC017_FIXTURE_PATH_BOUNDED");
+        const expected = await readFile(join(dirname(manifestPath), known.file));
+        let borrowed;
+        await harness.service.consumeCapturedInstance({ ...readInput(instance.objectRef), handoff: selectedHandoff }, async bytes => {
+          await consume(bytes); borrowed = bytes;
+          assert.ok(bytes.equals(expected), "DEC017_EXACT_KNOWN_DICOM_BYTES");
+          assert.equal(createHash("sha256").update(bytes).digest("hex"), known.sha256);
+        });
+        assert.ok(borrowed.every(byte => byte === 0), "DEC017_BORROWED_ZEROED");
+      };
+      if (["roundtrip", "concurrent_capture", "replay_refetch"].includes(scenario.name)) {
         for (const instance of temporary.instances) {
           const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
           assert.ok(known);
@@ -773,13 +842,7 @@ async function runTemporaryLifecycleCase(scenario) {
           const encrypted = await readFile(join(storageRoot, temporary.storageRef, `${instance.objectRef}.enc`));
           assert.equal(encrypted.equals(expected), false, "DEC017_NOT_PLAINTEXT_ON_DISK");
           assert.equal(encrypted.byteLength, expected.byteLength);
-          let borrowed;
-          await harness.service.consumeCapturedInstance(readInput(instance.objectRef), async bytes => {
-            await consume(bytes); borrowed = bytes;
-            assert.ok(bytes.equals(expected), "DEC017_EXACT_KNOWN_DICOM_BYTES");
-            assert.equal(createHash("sha256").update(bytes).digest("hex"), known.sha256);
-          });
-          assert.ok(borrowed.every(byte => byte === 0), "DEC017_BORROWED_ZEROED");
+          await verifyExactRead(handoff, instance);
         }
         assert.equal(callbacks, manifest.instanceCount);
         // Clone rejection must not turn handoff data into a capability.
@@ -787,36 +850,85 @@ async function runTemporaryLifecycleCase(scenario) {
         await assert.rejects(harness.service.consumeCapturedInstance({ ...readInput(temporary.instances[0].objectRef), principal: crossPrincipal, tenantCandidate: fixture.otherTenantId }, consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
         assert.equal(callbacks, manifest.instanceCount);
       } else {
+        if (scenario.name.startsWith("ciphertext_")) {
+          const target = join(storageRoot, temporary.storageRef, `${temporary.instances[0].objectRef}.enc`);
+          let changed = await readFile(target);
+          if (scenario.name === "ciphertext_tampered") changed[0] ^= 1;
+          if (scenario.name === "ciphertext_truncated") changed = changed.subarray(0, changed.length - 1);
+          if (scenario.name === "ciphertext_swapped") changed = await readFile(join(storageRoot,
+            temporary.storageRef, `${temporary.instances[1].objectRef}.enc`));
+          await writeFile(target, changed);
+        }
         await assert.rejects(harness.service.consumeCapturedInstance(readInput(temporary.instances[0].objectRef), consume), { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
         assert.equal(callbacks, 0, "DEC017_DENIED_BEFORE_CALLBACK");
       }
       const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, port);
       const purgeInput = { principal: signedPrincipal, tenantCandidate: fixture.tenantId,
-        binding: { operationId: scenario.operationId, tenantId: fixture.tenantId, exchangeSessionId: scenario.sessionId,
-          packageId: scenario.packageId, studyRefId: scenario.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID },
+        binding: operationBinding,
         storageRef: temporary.storageRef, correlationId: scenario.correlationId, reason: "EXPLICIT_CLOSE" };
+      if (scenario.name === "replay_refetch") {
+        const before = await currentMetadata();
+        await assert.rejects(harness.service.captureForCoordinator(input), { message: "SOURCE_CAPTURE_UNAVAILABLE" });
+        assert.deepEqual(await currentMetadata(), before, "DEC017_REPLAY_PRESERVES_TTL_REF");
+        assert.equal(attempted.length, 1); assert.equal(harness.counters().instanceCalls, 3);
+      }
       assert.deepEqual(await purge.purge(purgeInput), { kind: "PURGED" });
       assert.deepEqual(await purge.purge(purgeInput), { kind: "ALREADY_PURGED" });
+      if (scenario.name === "replay_refetch") {
+        const replacement = await harness.service.captureForCoordinator(input);
+        assert.equal(replacement.kind, "CAPTURED_FOR_COORDINATOR");
+        const newTemporary = replacement.handoff.temporaryPackage;
+        assert.notEqual(newTemporary.storageRef, temporary.storageRef);
+        assert.equal(replacement.handoff.sourceEvidence.evidenceId, handoff.sourceEvidence.evidenceId,
+          "DEC017_REUSES_ONLY_MATCHING_PENDING_EVIDENCE");
+        await assert.rejects(harness.service.consumeCapturedInstance(readInput(temporary.instances[0].objectRef), consume),
+          { message: "TEMPORARY_IMAGING_READ_UNAVAILABLE" });
+        assert.equal(callbacks, 3);
+        for (const instance of newTemporary.instances) await verifyExactRead(replacement.handoff, instance);
+        assert.equal(callbacks, 6);
+        assert.equal((await currentMetadata()).temporary_storage_ref, newTemporary.storageRef);
+        await purge.purge({ ...purgeInput, storageRef: newTemporary.storageRef });
+        assert.equal(attempted.length, 2);
+      }
     }
     const finalState = await currentMetadata();
     assert.equal(finalState.temporary_payload_state, "PURGED", "DEC017_FINAL_PURGED");
     assert.ok(finalState.temporary_payload_purged_at instanceof Date);
     assert.deepEqual(await readdir(storageRoot), []);
     const counts = harness.counters();
-    assert.equal(counts.instanceCalls, 3);
+    const expectedInstances = ["capture_write_failure", "capture_fsync_failure"].includes(scenario.name) ? 1
+      : scenario.name === "replay_refetch" ? 6 : 3;
+    assert.equal(counts.instanceCalls, expectedInstances);
     assert.equal(counts.activeTenantTransactions, 0);
     assert.equal(counts.stowCalls, 0);
     assert.equal(counts.forbiddenEndpointAttempts, 0);
     assert.equal(counts.destinationVerificationCalls, 0);
     assert.equal(counts.maximumActiveInstanceStreams, 1);
-    assert.equal(counts.observedInstanceStreams.length, 3);
+    // Write failure may cancel before the prefetching monitor observes EOF.
+    // No second instance may open; fsync failure occurs after complete input.
+    if (scenario.name === "capture_write_failure") assert.ok(counts.observedInstanceStreams.length <= 1);
+    else assert.equal(counts.observedInstanceStreams.length, expectedInstances);
+    assert.equal(counts.activeInstanceStreams, 0, "DEC017_NO_DANGLING_SOURCE_STREAM");
     const checkedOut = await harness.database.connect();
     try { assert.ok(["", null].includes((await checkedOut.query("SELECT current_setting('mediq.tenant_id',true) AS tenant")).rows[0].tenant)); }
     finally { checkedOut.release(); }
+  } catch (error) {
+    const fixed = value => typeof value === "string" && /^[A-Z][A-Z0-9_]{1,80}$/.test(value) ? value : "SUPPRESSED";
+    const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? "")?.[1] ?? "0";
+    const markers = [`DEC017_CASE_${scenario.name.toUpperCase()}`,
+      `DEC017_ERROR_${fixed(error?.code ?? error?.message)}`, `DEC017_ORIGIN_LINE_${line}`];
+    const counts = harness?.counters();
+    for (const item of counts?.databaseFailures ?? []) {
+      if (/^[A-Z0-9_]{1,120}$/.test(item)) markers.push(`DEC017_QUERY_${item}`);
+    }
+    // Never serialize assertions' actual/expected values, SQL parameters or tokens.
+    throw new Error([...new Set(markers)].join(" "));
   } finally {
     // Fixture teardown cannot count as product purge. The assertions above
     // run first; failures remain failures even when owned scratch data is removed.
     try {
+      releaseReservation();
+      if (winner) await winner.catch(() => undefined);
       if (store) for (const target of attempted) await store.purgeByReference(target);
       if (root) {
         assert.equal(resolve(dirname(root)), resolve(tmpdir()));

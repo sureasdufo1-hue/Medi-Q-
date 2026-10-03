@@ -123,7 +123,7 @@ function Invoke-ScratchPsql([string]$Network, [string]$User, [string]$Database, 
     $previousPassword = [Environment]::GetEnvironmentVariable("PGPASSWORD", "Process")
     try {
         $env:PGPASSWORD = $Password
-        $output = @($Sql | & docker run --rm --interactive --network $Network --env PGPASSWORD $postgresImage psql -X -w -q -t -A -v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate -h postgres -U $User -d $Database -f - 2>&1 | ForEach-Object { $_.ToString() })
+        $output = @($Sql | & docker run --rm --interactive --network $Network --env PGPASSWORD --env PGCONNECT_TIMEOUT=3 $postgresImage psql -X -w -q -t -A -v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate -h postgres -U $User -d $Database -f - 2>&1 | ForEach-Object { $_.ToString() })
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
             $joined = [string]::Join("`n", [string[]]$output)
@@ -145,6 +145,25 @@ function Invoke-ScratchPsql([string]$Network, [string]$User, [string]$Database, 
         if ($null -eq $previousPassword) { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
         else { $env:PGPASSWORD = $previousPassword }
     }
+}
+
+function Wait-ScratchDatabaseTcp([string]$Network, [string]$User, [string]$Database, [string]$Password) {
+    # The official image's temporary init server has no TCP listener even when
+    # its local-socket healthcheck passes. Retry only this read-only probe.
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        try {
+            Invoke-ScratchPsql -Network $Network -User $User -Database $Database -Password $Password -Sql "SELECT 1;"
+            Write-Output "temporary_database_tcp_readiness=PASS attempts=$attempt"
+            return
+        }
+        catch {
+            if ($attempt -eq 30 -or $_.Exception.Message -notmatch 'connection_class=(CONNECTION_REFUSED|CONNECTION_CLOSED|CONNECTION_TIMEOUT)\)') {
+                throw
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "INT001_TEMPORARY_DATABASE_TCP_READINESS_FAILED"
 }
 
 if (-not (Test-Path -LiteralPath $resolvedEnvFile -PathType Leaf)) { throw "INT001_IGNORED_ENV_FILE_REQUIRED" }
@@ -218,6 +237,8 @@ try {
     $networkOwner = (& docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' $networkName | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $networkOwner -ne $projectName) { throw "INT001_DATABASE_NETWORK_OWNERSHIP_INVALID" }
 
+    Wait-ScratchDatabaseTcp -Network $networkName -User $settings["MEDIQ_POSTGRES_USER"] -Database $settings["MEDIQ_POSTGRES_DB"] -Password $settings["MEDIQ_POSTGRES_PASSWORD"]
+
     $runtimePassword = ConvertTo-SqlLiteral $settings["MEDIQ_DB_RUNTIME_PASSWORD"]
     $migrationPassword = ConvertTo-SqlLiteral $settings["MEDIQ_DB_MIGRATION_PASSWORD"]
     $database = $settings["MEDIQ_POSTGRES_DB"]
@@ -257,7 +278,7 @@ COMMIT;
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "39" -or $testFail -ne "0") {
+    if ($testPass -ne "50" -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"

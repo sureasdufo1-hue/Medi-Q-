@@ -1009,7 +1009,7 @@ STOW response loss/timeout after a request may have started must be represented 
 
 MediQ가 관리하는 의료영상 Copy는 P0에서 영구 의료기록 원본이 아닌 Temporary Exchange Copy로 취급해야 한다.
 
-PACS-001 DEC-017은 이를 구현하는 P0 source-lifecycle 연결 설계다. 정확한 StudyReference 예약 이후에만 임시 암호문을 쓰고, 완료 만료시각·AVAILABLE 상태·source evidence·Audit을 함께 확정하며, 실패 시 durable ref 기반 정리를 수행한다. `TC-PACS-001-LIFECYCLE-001~014`와 기존 STAGE Gate가 이를 추적한다. 현재 저장소와 source 서비스의 재인가 예약·주체 결속 quota·원자적 완료·실패 정리를 연결하고 단위/모형 시험을 통과했다. 이후 R2에서 source 객체 출처 및 복호화 전/전달 전 인가·매핑·보관 상태·evidence 검사를 구현했다. 변경 후 실제 서명 OIDC·PostgreSQL/RLS·Orthanc 검증은 남았다(증거 §§35–37). 이 내부 경로의 향후 PASS를 Viewer/Download 또는 전체 PACS Import 완료로 확대 해석하지 않는다.
+PACS-001 DEC-017은 이를 구현하는 P0 source-lifecycle 연결 설계다. 정확한 StudyReference 예약 이후에만 임시 암호문을 쓰고, 완료 만료시각·AVAILABLE 상태·source evidence·Audit을 함께 확정하며, 실패 시 durable ref 기반 정리를 수행한다. `TC-PACS-001-LIFECYCLE-001~014`와 기존 STAGE Gate가 이를 추적한다. 현재 저장소와 source 서비스의 재인가 예약·주체 결속 quota·원자적 완료·실패 정리를 연결하고 단위/모형 시험을 통과했다. 이후 R2에서 source 객체 출처 및 복호화 전/전달 전 인가·매핑·보관 상태·evidence 검사를 구현했다. 실제 서명 OIDC·PostgreSQL/RLS·HTTPS Orthanc의 제한된 통합 검증도 수행했으며, 최신 범위·실패·잔여 조건은 PACS-001 구현 보고서와 증거 §§38–40을 기준으로 한다. 일부 시나리오 통과가 전체 LIFECYCLE Gate의 통과를 의미하지 않는다. 이 내부 경로의 향후 PASS를 Viewer/Download 또는 전체 PACS Import 완료로 확대 해석하지 않는다.
 
 **Acceptance:** `TC-DATA-001-PLANNED`
 

@@ -2492,7 +2492,7 @@ P0 temporary payload expiry cleanup (DEC-016) is a separate internal per-Tenant 
 
 ### DEC-017 integrated source lifecycle — source wiring implemented, full integration acceptance pending
 
-Current verification: the first four signed-OIDC/PostgreSQL/RLS/HTTPS-Orthanc scenarios and original source regressions passed (39 tests), with independent DB observer, B EMPTY before/after and owned cleanup. This is limited evidence, not full lifecycle, runtime activation or transfer acceptance; see MEDIQ-PACS-001 evidence §§38–39 for open gates and commit-time regression results.
+Current verification: limited signed-OIDC/PostgreSQL/RLS/HTTPS-Orthanc matrices have passed with independent DB observer, B EMPTY before/after and owned cleanup. This is not full lifecycle, runtime activation or transfer acceptance. Current scenario coverage, retained failures and the still-open scratch/privacy/restart gates are centralized in the MEDIQ-PACS-001 report and evidence §§38–41; do not infer completion from an earlier smaller matrix.
 
 DEC-016's full ScratchOnly wrapper completed before sequence-1/2 edits. The optional source lifecycle connects fenced STAGING reservation, actor-bound quota, encrypted capture, common expiry/AVAILABLE/evidence/Audit and exact-ref failure purge. It stays unregistered and preserves ordinary capture output. Sequence 3 adds source-service-owned consumeCapturedInstance: private weak provenance, unchanged handoff serialization and two current Authorization/graph/mapping/AVAILABLE/evidence checks with admission Audit. Each transaction ends before physical I/O/callback. API unit/model tests pass; actual signed-OIDC/PostgreSQL/RLS/Orthanc acceptance remains pending. No public storage API or dispatch permission follows (evidence §§35–37).
 
