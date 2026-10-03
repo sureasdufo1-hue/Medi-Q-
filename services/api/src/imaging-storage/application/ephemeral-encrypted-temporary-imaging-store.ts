@@ -380,8 +380,8 @@ function resolveLimits(
  * Internal single-process P0 encrypted spool primitive. It has no authority:
  * callers must complete Consent/Authorization/Grant/RLS checks before reads.
  * DEKs exist only in this process. A restart cannot decrypt existing files.
- * Reserved packages require a shared database quota adapter. The store remains
- * unregistered until Tenant metadata, cleanup and purge Audit gates pass.
+ * Reserved packages require a per-capture shared database quota adapter.
+ * DEC-018 binds one private runtime instance to capture and SERVICE cleanup.
  */
 export class EphemeralEncryptedTemporaryImagingStore {
   private readonly rootDirectory: string;
@@ -409,6 +409,11 @@ export class EphemeralEncryptedTemporaryImagingStore {
     this.sharedQuota = options.sharedQuota;
     this.ciphertextIo = options.ciphertextIo ?? NODE_CIPHERTEXT_IO;
     this.ready = this.initialize();
+  }
+
+  /** Awaited by the runtime provider before startup; never purges orphan refs. */
+  async initializeForRuntime(): Promise<void> {
+    await this.ready;
   }
 
   async beginPackage(

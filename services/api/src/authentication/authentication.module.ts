@@ -16,5 +16,6 @@ import { RemoteJwksOidcTokenVerifier } from "./oidc-jwt.verifier.js";
     },
     { provide: APP_GUARD, useClass: BearerAuthenticationGuard },
   ],
+  exports: [OIDC_TOKEN_VERIFIER],
 })
 export class AuthenticationModule {}

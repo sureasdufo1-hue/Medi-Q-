@@ -1,5 +1,13 @@
 # MediQ Security Requirements Specification
 
+## Current private runtime storage binding — PACS-001-DEC-018 (2026-10-03)
+
+Classification: CAPSTONE-P0. One process-local encrypted store shall serve source capture, authorized borrowed reads and expiry maintenance. Provider initialization must await private-root validation; an invalid/symlink/unwritable root fails startup with a fixed error. Only ciphertext may enter the fixed dedicated volume, with 0700 directories/0600 files under the non-root runtime user. Existing 64 MiB/2 GiB/2,000-object/10 GiB bounds, per-capture scoped quota, 30-minute TTL and all authorization/transaction ordering remain enforced. A root/configuration/reference is never an image permission.
+
+Internal maintenance must verify a bounded signed token against configured OIDC issuer/audience/JWKS and then require active Tenant-level SERVICE membership under forced RLS before discovery and each purge transaction. A caller-supplied principal/actor/path, absent verifier or invalid token must not reach protected SQL or deletion. Use the same live store to abort reads and destroy its keys before unlink. No privileged global sweep, persisted bearer token, new database right or unauthenticated cleanup is permitted. Failure is fixed and aggregate-only; no raw exception or token logging.
+
+Restarted storage has no DEKs, cannot decrypt and must retain ciphertext/quota evidence until authorized purge-only recovery. Startup/process exit is not a purge Audit or remote recall. Automatic scheduling and credential refresh remain required later work; this binding alone does not ensure unattended cleanup or full transfer readiness. Existing health endpoints retain their documented narrow scope. Acceptance: `TC-PACS-001-RUNTIME-001–008`; implementation/evidence §§61–62. OS dumps, forensic erasure and cross-process/global memory guarantees are not established by this scope.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `SECURITY-REQUIREMENTS.md`

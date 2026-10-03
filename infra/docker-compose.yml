@@ -313,6 +313,8 @@ services:
       - hospital-b
     volumes:
       - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+      # Ciphertext only; no keys/tokens. Restart recovery is authorized purge-only.
+      - temporary-imaging-data:/var/lib/mediq/temporary-imaging
 
   postgres:
     image: postgres:18.6-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
@@ -389,3 +391,4 @@ volumes:
   postgres-data:
   orthanc-a-data:
   orthanc-b-data:
+  temporary-imaging-data:

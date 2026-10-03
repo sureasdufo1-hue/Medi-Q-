@@ -1,5 +1,21 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 27. Current work — DEC-018 runtime composition (opened 2026-10-03)
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 runtime encrypted-store binding and authenticated internal one-shot maintenance
+Changed: DEC-018 recommendation/Acceptance/internal evidence reconciliation; one awaited private Nest store shared by source and authenticated maintenance; fixed ciphertext image/Compose volume; real DI/signed-token/filesystem/container verification and records
+Not changed: Public APIs, DB/schema/grants, original Mandatory Preflight and A-to-B P0 completion conditions
+Security impact: Fixed private non-root ciphertext volume, per-capture scoped quota, no DEK/token persistence; signed token plus existing per-transaction SERVICE/RLS gates; unsafe initialization denies before startup
+Tests executed: Final 44 API files/912 tests/build/type/Port PASS; 189 Node script checks PASS; 17 new runtime contracts and actual Nest source capture/read; actual non-root image/volume stage/restart/read-only startup checks and independent cleanup; Compose mount/hardening PASS; 4526 actual 58-case Orthanc/source/observers/B/privacy/restoration/cleanup PASS with independent zero resources and identical 275-file frozen hash
+Tests not executed: New maintenance deployment to real runtime DB, new DB rerun (unchanged persistence 51950 baseline reused); automatic credential-refreshing scheduler/shutdown, effect-capable coordinator, product transfer/security/E2E
+Evidence: TEST-EVIDENCE.md §§61–62
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: New provider/image not deployed to existing stack; restart remains purge-only; unattended job credential lifecycle/shutdown/retry and final dispatch/completion remain required. Unit SQL is not actual RLS evidence; source-only integration is not transfer completion
+Status: DEC-018 RUNTIME-001–008 scoped PASS; MEDIQ-PACS-001/P0 PARTIAL; no live heavy process, changes uncommitted
+```
+
 | 항목 | 값 |
 |---|---|
 | Ticket | `MEDIQ-PACS-001` |

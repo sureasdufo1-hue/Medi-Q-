@@ -1,5 +1,13 @@
 # MediQ Threat Model
 
+## DEC-018 runtime storage/maintenance review (2026-10-03)
+
+Classification: CAPSTONE-P0. New surfaces are a private ciphertext volume, store provider and internal token-authenticated one-shot maintenance method. A forged principal or valid USER token must not cause cleanup: validate exact data fields, verify configured OIDC token, then retain per-transaction active Tenant-level SERVICE/RLS checks. Missing verifier/actor/context and dependency failure deny with fixed errors. Use one live store for capture and cleanup so physical removal also invalidates the owning process's keys/active reads. No new route, timer, SQL grant, PHI fixture or external deployment is introduced.
+
+Volume/root substitution is addressed by a fixed image-created private directory, non-root ownership, restricted modes, awaited lstat/root initialization and no arbitrary client path. Read-only/unwritable/symlink initialization must fail closed. Restart/crash loses keys but not ciphertext or quota evidence; retain discovered refs and require authorized purge-only recovery, never unaudited startup deletion or a fabricated successful purge. Container-volume tests use generated synthetic primitive data; they do not prove registry/RLS/Audit recovery, which has separate integration evidence.
+
+Residual risks remain trusted-process/OS dumps, best-effort memory zeroing/forensic erasure, incomplete unattended scheduling and token refresh, host capacity/volume faults, cross-process memory bounds and final dispatch races. The next runtime job must specify authenticated credential lifecycle, failure/retry and shutdown before registration. Product Mandatory Preflight and destination/unknown-result/security/E2E are still open. Traceability: DEC-018, RUNTIME-001–008, PACS-001 evidence §§61–62.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `THREAT-MODEL.md`

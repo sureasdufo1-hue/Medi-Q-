@@ -1,5 +1,11 @@
 # MediQ Data Flow Specification
 
+## Current internal runtime flow — PACS-001-DEC-018 (2026-10-03)
+
+API provider startup → initialize private ciphertext directory → bind one store to source capture and expiry maintenance. A valid source coordinator command still follows verified identity/mapping/Consent/Authorization/Grant → committed STAGING reservation → per-capture committed quota → A HTTPS WADO/hash/encryption → committed AVAILABLE/evidence/Audit → in-process handoff. Authorized borrowed reads use the two existing fresh checks and the same store; ordinary response projection is unchanged.
+
+Internal one-shot maintenance follows exact token/Tenant-selector/correlation/batch validation → configured signed OIDC verification → active Tenant-level SERVICE/RLS discovery → committed PURGE_PENDING → same-store key destruction/ciphertext removal → committed PURGED/Audit/quota release. No token/key/plaintext is added to the volume or log, and errors/results contain fixed categories/aggregate counters only. There is no registered maintenance HTTP endpoint or timer. Restart discovers ciphertext without a key and performs no automatic deletion; exact authorized purge-only recovery is required before re-staging. Scheduled credential refresh, final Preflight/dispatch/STOW and destination completion are subsequent flows, not implied by provider initialization. Evidence: PACS-001 §§61–62; Acceptance RUNTIME-001–008.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DATA-FLOW.md`

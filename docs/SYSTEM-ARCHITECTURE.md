@@ -1,5 +1,13 @@
 # MediQ System Architecture
 
+## Current runtime composition amendment — PACS-001-DEC-018 (2026-10-03)
+
+The API imports `TemporaryImagingStorageModule` through `PacsImportModule`. It initializes one `EphemeralEncryptedTemporaryImagingStore` at the fixed private container directory `/var/lib/mediq/temporary-imaging` before provider creation completes. Source coordinator capture/authorized borrowed reads and authenticated one-shot expiry use the same live store. Scoped database quota remains bound to each capture's verified principal, not a global service identity. The runtime image creates the directory for the non-root node user (0700); Compose mounts only a dedicated ciphertext volume there. No DEK, nonce/tag registry, plaintext, bearer token or wrapped key is persisted by this wiring.
+
+`TemporaryPayloadMaintenanceService.run` is an internal application operation: exact bounded token/selectors → configured OIDC verification → existing per-Tenant active SERVICE discovery and purge transactions → physical purge outside transactions → metadata/Audit/quota finalization. It exposes aggregate counts only. No public maintenance endpoint or active timer is registered. A credential-refreshing scheduled job and its shutdown/retry behavior remain a subsequent implementation; readiness retains its existing dependency-only scope. Startup does not purge unknown ciphertext or mark metadata PURGED. Restarted process storage is purge-only until verified metadata recovery resolves orphan refs; no decryption escrow exists.
+
+DEC-018 authorizes this private provider/mount amendment after DEC-017's internal evidence reconciliation; earlier unregistered-slice records remain historical. Runtime Acceptance and limitations are in `ACCEPTANCE-TESTS.md` RUNTIME-001–008 and PACS-001 evidence §§61–62. Mandatory Preflight, final dispatch, STOW/destination verification, unknown-outcome reconciliation and product P0/security/E2E remain separate requirements.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `SYSTEM-ARCHITECTURE.md`

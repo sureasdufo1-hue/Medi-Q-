@@ -24,6 +24,9 @@ COPY vendor/multipart-stream vendor/multipart-stream
 RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=build --chown=node:node /workspace/services/api/dist services/api/dist
+RUN mkdir -p /var/lib/mediq/temporary-imaging \
+    && chown node:node /var/lib/mediq/temporary-imaging \
+    && chmod 0700 /var/lib/mediq/temporary-imaging
 USER node
 CMD ["node", "services/api/dist/main.js"]
 

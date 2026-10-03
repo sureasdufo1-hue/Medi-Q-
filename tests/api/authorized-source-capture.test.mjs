@@ -3,6 +3,7 @@ import { mkdtemp, readdir, rm, stat, readFile, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
 import { describe, expect, it, vi, onTestFailed } from "vitest";
+import { Test } from "@nestjs/testing";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
 import {
@@ -15,6 +16,12 @@ import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrit
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { ActorTenantContextDeniedError, ActorTenantContextUnavailableError } from "../../services/api/dist/identity/identity-context.types.js";
 import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
+import { TEMPORARY_IMAGING_ROOT } from "../../services/api/dist/imaging-storage/temporary-imaging-storage.module.js";
+import { APP_CONFIG } from "../../services/api/dist/health/health.tokens.js";
+import { OIDC_TOKEN_VERIFIER } from "../../services/api/dist/authentication/authentication.tokens.js";
+import { RuntimeDatabaseService } from "../../services/api/dist/database/runtime-database.service.js";
+import { ActorTenantContextService } from "../../services/api/dist/identity/application/actor-tenant-context.service.js";
+import { DICOM_GATEWAY } from "../../services/api/dist/dicom/application/dicom-gateway.port.js";
 import {
   TEST_HOSPITAL_A_ID,
   TEST_HOSPITAL_B_ID,
@@ -487,6 +494,7 @@ function makeHarness(options = {}) {
 
   return {
     service,
+    executor,
     actorTenantContext,
     gateway,
     committedAudits,
@@ -840,6 +848,41 @@ describe("DEC-017 R2 concrete read authorization (model DB, real engine/crypto)"
 });
 
 describe("DEC-017 source lifecycle wiring (real store/AuthorizationEngine, modeled DB)", () => {
+  it("DEC-018 actual Nest source provider captures and reads through its shared runtime store", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mediq-runtime-source-"));
+    const harness = makeHarness();
+    let moduleRef, handoff, store;
+    try {
+      moduleRef = await Test.createTestingModule({ imports: [PacsImportModule] })
+        .overrideProvider(APP_CONFIG).useValue({ oidcAuthentication: null })
+        .overrideProvider(RuntimeDatabaseService).useValue({})
+        .overrideProvider(OIDC_TOKEN_VERIFIER).useValue(null)
+        .overrideProvider(ActorTenantContextService).useValue(harness.actorTenantContext)
+        .overrideProvider(AuthorizationGatedOperationExecutor).useValue(harness.executor)
+        .overrideProvider(DICOM_GATEWAY).useValue(harness.gateway)
+        .overrideProvider(TEMPORARY_IMAGING_ROOT).useValue(join(root, "ciphertext"))
+        .compile();
+      const service = moduleRef.get(AuthorizedSourceCaptureService);
+      store = moduleRef.get(EphemeralEncryptedTemporaryImagingStore);
+      expect(service.temporaryImagingStore).toBe(store);
+      ({ handoff } = await service.captureForCoordinator(command()));
+      expect(handoff.temporaryPackage.objectCount).toBe(3);
+      expect(harness.payloadState.state).toBe("AVAILABLE");
+      for (const item of handoff.temporaryPackage.instances) {
+        await service.consumeCapturedInstance(readCommand(handoff, { objectRef: item.objectRef }), async bytes => {
+          expect(bytes).toEqual(Buffer.from(instanceFixture.find(f => f.sopInstanceUid === item.sopInstanceUid).bytes));
+        });
+      }
+      expect(harness.dicomCalls.destinationWrites).toBe(0);
+      expect(harness.readChecks).toBe(6);
+    } finally {
+      if (handoff) await store.purgeByReference({ storageRef: handoff.temporaryPackage.storageRef,
+        binding: { tenantId: handoff.tenantId, exchangeSessionId: handoff.exchangeSessionId,
+          packageId: handoff.packageId, purpose: "PACS_IMPORT" } });
+      await moduleRef?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("commits reservation before allocation, quota before writes, and AVAILABLE with evidence/Audit", async () => {
     await withLifecycle({}, async (harness) => {
       const result = await harness.service.captureForCoordinator(command());
@@ -1232,11 +1275,6 @@ describe("AuthorizedSourceCaptureService", () => {
       expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
       expect(harness.operationState).toBe("CREATED");
       expect(JSON.stringify(handoff)).not.toMatch(/TEST-PATIENT|LOCAL-PATIENT|patientId|localPatientId/i);
-      const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, PacsImportModule) ?? [];
-      expect(providers.some((provider) =>
-        provider === EphemeralEncryptedTemporaryImagingStore ||
-        provider?.provide === EphemeralEncryptedTemporaryImagingStore,
-      )).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

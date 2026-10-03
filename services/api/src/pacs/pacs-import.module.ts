@@ -15,9 +15,11 @@ import { DICOM_GATEWAY, type DicomGateway } from "../dicom/application/dicom-gat
 import { OrthancDicomwebAdapter } from "../dicom/infrastructure/orthanc-dicomweb.adapter.js";
 import { TestOrthancEndpointResolver } from "../dicom/infrastructure/test-orthanc-endpoint-resolver.js";
 import { AuthorizedSourceCaptureService } from "../integrity/application/authorized-source-capture.service.js";
+import { TemporaryImagingStorageModule } from "../imaging-storage/temporary-imaging-storage.module.js";
+import { EphemeralEncryptedTemporaryImagingStore } from "../imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 
 @Module({
-  imports: [IdentityContextModule, RuntimeDatabaseModule],
+  imports: [IdentityContextModule, RuntimeDatabaseModule, TemporaryImagingStorageModule],
   providers: [
     {
       provide: DICOM_GATEWAY,
@@ -50,12 +52,14 @@ import { AuthorizedSourceCaptureService } from "../integrity/application/authori
         AuthorizationGatedOperationExecutor,
         ActorTenantContextService,
         DICOM_GATEWAY,
+        EphemeralEncryptedTemporaryImagingStore,
       ],
       useFactory: (
         executor: AuthorizationGatedOperationExecutor,
         actorTenantContext: ActorTenantContextService,
         dicomGateway: DicomGateway,
-      ) => new AuthorizedSourceCaptureService(executor, actorTenantContext, dicomGateway),
+        store: EphemeralEncryptedTemporaryImagingStore,
+      ) => new AuthorizedSourceCaptureService(executor, actorTenantContext, dicomGateway, undefined, undefined, store),
     },
   ],
   exports: [PacsImportMappingGateService, AuthorizedSourceCaptureService],

@@ -1,5 +1,22 @@
 # MediQ Acceptance Test Specification
 
+## PACS-001 DEC-018 runtime storage composition — before implementation
+
+Classification: CAPSTONE-P0. All RUNTIME cases start NOT RUN. This new gate permits private provider/volume registration after DEC-017's internal evidence reconciliation (§61); it does not rewrite the historical no-registration Acceptance or permit public import/STOW.
+
+**Current verification (2026-10-03 23:24 KST):** RUNTIME-001–008 PASS within the specified private DI/crypto/signed-token/SERVICE-denial/model/actual-volume validation scope. Final full API 44/912/build/type/Port and 189 script checks PASS; actual 4526 source/Orthanc 58 cases/observers/B/privacy/restorations/cleanup PASS, independent zero resources/unchanged frozen inputs verified. The volume probe's recovery is synthetic primitive evidence; actual registry/RLS/Audit proof remains the separately recorded unchanged persistence baseline, not modeled SQL. New maintenance deployment to real DB, unattended scheduling/credential refresh/shutdown and full product transfer/security/E2E are still required later work. Existing development stack not redeployed. Overall P0 PARTIAL; evidence §§61–62.
+
+| ID (`TC-PACS-001-RUNTIME-*`) | Required behavior and evidence |
+|---|---|
+| 001 | Actual Nest module compilation resolves one encrypted-store instance; the source provider and the expiry runner use that same object. Source coordinator capture receives all required lifecycle methods, scoped quota stays per invocation, and no controller/import route/timer is added. Exercise behavior, not provider-name snapshots alone. |
+| 002 | Await real root initialization before returning the provider. A private root works; a root symlink, regular file, unwritable mount or initialization error prevents successful bootstrap with a fixed storage error. No new constructor rejection is left unhandled. |
+| 003 | Maintenance verifies a signed OIDC token with configured issuer/audience/JWKS before invoking the expiry runner. Missing verifier, invalid/expired/wrong-audience token or caller-supplied principal denies before candidate SQL/physical purge. Validate exact data-only input fields, token ≤8 KiB, UUID selectors and batch 1–100; snapshot selectors before await. |
+| 004 | A verified token still requires current active Tenant-level SERVICE membership in the existing runner's discovery/mark/finalization transactions. USER, hospital-bound/inactive/missing/wrong-Tenant actor remains denied. Healthy one-shot results expose only aggregate counts/hasMore; verifier/runner exceptions return a fixed error without token/identifier/path/raw exception. Model tests and existing real signed registry/RLS evidence remain distinguished. |
+| 005 | A restarted store over the private persisted ciphertext has no original key and blocks staging/read; initialization never deletes files or releases DB quota. Only the exact ref from verified Tenant metadata may enter existing purge-only recovery. Retain original repeat/purge/Audit/fault tests. |
+| 006 | Runtime image and Compose mount use the fixed private directory; non-root user can initialize it on a new dedicated volume, mode 0700 directories/0600 ciphertext, read-only root filesystem/cap-drop/no-new-privileges preserved. No key/plaintext/token volume, host port, broad directory mount or environment credential addition. Actual network-disabled disposable-container volume probe and exact-owned cleanup required. |
+| 007 | Full current API/build/type/Port and current 58-case isolated source/Orthanc/observer/B/privacy/cleanup pass. Existing DB/schema/grants remain byte-identical; separately recorded DB 51950 evidence covers that unchanged persistence baseline only. New runtime wiring is exercised separately; old results do not certify it. |
+| 008 | Source provider still exposes no import route or STOW call; ordinary capture/error allowlists and final dispatch gates remain intact. Record deployed scheduling/coordinator, final Preflight/STOW/verification/P0 as NOT IMPLEMENTED until actual later Acceptance. No readiness/PURGED/completion claim from initialization or process exit. |
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `ACCEPTANCE-TESTS.md`
