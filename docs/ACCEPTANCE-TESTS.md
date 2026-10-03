@@ -1,5 +1,36 @@
 # MediQ Acceptance Test Specification
 
+### DEC-022-B actual owned destination matrix — before code
+
+CAPSTONE-P0/MEDIQ-PACS-001, AUTHDEST-006/DESTBYTES-006; initial NOT RUN. Existing20 dirty paths and original58+18 assertions preserved.
+
+| ID (`TC-PACS-001-ACTDEST-*`) | Required actual evidence |
+|---|---|
+| 001 | Optional owned temporary profile, separate fixture/observer migrator processes, app runtime-only credentials. Signed synthetic OIDC/JWKS and exact253 privileges/NOSUPER/NOBYPASS/forced RLS; no-context/cross-Tenant graph invisible. |
+| 002 | Original source-owner capture + real VERIFYING/version3/digest/count/source pending AVAILABLE/provenance/three Audits. Genuine HTTPS B QIDO/WADO byte comparison matches independently known fixture hash/count/total/identity; all11 checkpoints committed and no own transaction spans network/body I/O. |
+| 003 | Independent real B fixtures: same-length raw-byte tamper, missing SOP, extra SOP; exact B inventory/hash before test, no application B write/STOW/normalization/retry/completion. Zero proof and appropriate bounded B calls on faults. |
+| 004 | Wrong digest/count, missing pending Provenance/transition Audit, cross-Tenant denied before B reads; real mid-byte Grant/Consent revocation prevents subsequent proof. |
+| 005 | Actual DB Audit failure and real committed acknowledgement-loss injection before first B read yield no read/proof; same handoff cannot refetch. Tests never replace SQL results/authority. |
+| 006 | Independent read-only observer verifies exact per-case Audits/source pending rows/provenance/state, physical and metadata purge/committed quota0; no VERIFIED/COMPLETED or source promotion. |
+| 007 | Original58+18/observers/privacy/restoration/source compatibility, new actual summary counts, helper/app privacy, B EMPTY after fixture-only purge, automatic owned cleanup and independently frozen input/development inventories. |
+| 008 | Current local fixture/helper/wrapper contracts, API/build/type/Port/parsed contract/Node/PS/syntax and report/normative/index sync. Failed runs preserved. Scope is actual comparison prerequisite, not original full Preflight/STOW/terminal evidence/coordinator/security/E2E. |
+
+### DEC-022-A owned authorized whole verifier — before code
+
+Current local outcome: real service/model-DB/engine/crypto/hash66 new cases (focused287 total), destination Audit8 negative cases, full API1175/build/type/Port/contract21/Node232/PS107 scoped PASS. Positive/late-phase tests assert actual controlled B reads and committed checkpoints, not negative-only green tests. AUTHDEST-001~005 local prerequisite accepted, not actual SQL/RLS/PACS acceptance. Original95503 terminal0 verifies changed-source58+dispatch18/independent observers/B EMPTY/privacy/cleanup/current302-input hash/development inventory; AUTHDEST-006 changed-source prerequisite only PASS. Its new destination SQL/RLS/B positive/tamper/identity gate and007 terminal/coordinator/E2E remain NOT RUN. No live handle, full step2/P0 PARTIAL.
+
+CAPSTONE-P0/MEDIQ-PACS-001. Initial NOT IMPLEMENTED/NOT RUN; linked REQ-PACS-BYTES-002, SEC-PACS-BYTES-001/002 and DESTBYTES-004/006/007. Model/transport and actual SQL/PACS acceptance must stay separate.
+
+| ID (`TC-PACS-001-AUTHDEST-*`) | Required evidence |
+|---|---|
+| 001 | Original service-issued handoff only; closed data input, no Proxy/getter/symbol/permit/endpoint execution. Cloned/restarted/foreign handoff, wrong owner/Tenant/Grant/action/scope/Consent, expired/revoked or changed graph/mapping/source metadata denied before B I/O. |
+| 002 | Real fenced authorization engine composition with exact VERIFYING/version3, semantic digest/count, original SOURCE_CAPTURE/PENDING AVAILABLE/TTL, pending bound Provenance and committed three transition Audits. Each identity operation and raw-instance before/after has current authorization and committed checkpoint Audit; failures/commit loss cannot produce proof. No transaction spans I/O. |
+| 003 | Exact identity before/after; sequential raw bytes, every original per-instance length/hash and canonical count/total/aggregate equal. Changed/truncated/extra/missing identity/bytes/representation fail closed, no partial proof. No payload output/persistence, source evidence unchanged. |
+| 004 | One5min deadline includes identity, authorization, all bytes and final gate; pre-abort, mid-stream abort, expiry, clock faults and I/O failure release readers/timers/admission. Same handoff concurrency/replay and first-gate Audit/commit loss do not refetch. |
+| 005 | Actual implementation focused tests, current full API/build/type/Port/parsed contract and normative/report/evidence synchronization. Existing CREATED/STOW_STARTED source-read gates unchanged; controlled-stream/model DB verdict is explicitly local only. |
+| 006 | Actual isolated synthetic B plus changed-source gate with signed identity, real PostgreSQL/RLS exact predicates/Audit commits, HTTPS QIDO/WADO, tamper/revocation/denial/TLS/privacy/cleanup/independent inventories. Model queries and simulated VERIFYING fixture do not satisfy actual transfer/Preflight acceptance. |
+| 007 | Separate destination/terminal writers and minimal-rights real DB gate, full Preflight/one actual Study STOW/exact B proof/persisted Integrity/Provenance/Audit/purge/terminal Session/security/E2E. Required for full P0, not implemented by a read-only comparison proof. |
+
 ### DEC-022 exact destination bytes — recorded before code
 
 CAPSTONE-P0, MEDIQ-PACS-001. Initial NOT IMPLEMENTED/NOT RUN; plan step2 prerequisite, not full transfer acceptance.

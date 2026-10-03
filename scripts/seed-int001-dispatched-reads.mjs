@@ -1,6 +1,9 @@
 // Only the separately isolated fixture service receives the test migrator URL.
 import pg from 'pg';
 import { dispatchedReadCases, dispatchedReadIds as ids, dispatchedReadDigest } from '../tests/fixtures/dispatched-source-read-fixture.mjs';
+import { destinationVerificationCases } from '../tests/fixtures/destination-verification-fixture.mjs';
+const destinationMode = process.env.MEDIQ_TEST_DESTINATION_VERIFY_MODE === 'true';
+const cases = destinationMode ? destinationVerificationCases : dispatchedReadCases;
 const check = (condition, code) => { if (!condition) throw new Error(`DISPREAD_SEED_${code}`); };
 check(/^mediq-int001-capture-[0-9a-f]{12}$/.test(process.env.MEDIQ_TEST_PROJECT ?? ''), 'PROJECT');
 check(process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, 'DATABASE');
@@ -12,7 +15,7 @@ try {
   await client.query("SELECT set_config('mediq.tenant_id',$1,true)", [ids.tenant]);
   check((await client.query('SELECT actor_id FROM actors WHERE actor_id=$1 AND tenant_id=$2 AND hospital_id=$3 AND status=\'ACTIVE\'',
     [ids.actor, ids.tenant, ids.destination])).rowCount === 1, 'REGISTRY');
-  for (const item of dispatchedReadCases) {
+  for (const item of cases) {
     await client.query(`INSERT INTO exchange_sessions
       (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,
        created_at,updated_at,expires_at,completed_at,idempotency_key)
@@ -49,19 +52,19 @@ try {
       [item.operationId,item.sessionId,item.packageId,item.studyRefId,ids.source]);
     }
   }
-  const failure = dispatchedReadCases.find(item => item.name === 'read_audit_failure');
+  const failure = cases.find(item => item.name === (destinationMode ? 'verify_audit_failure' : 'read_audit_failure'));
   // A real DB trigger, scoped to one disjoint synthetic correlation, not a runtime privilege.
-  await client.query(`CREATE FUNCTION public.dispread_test_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $body$
+  await client.query(`CREATE FUNCTION public.${destinationMode ? 'destverify' : 'dispread'}_test_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $body$
     BEGIN
-      IF NEW.correlation_id='${failure.correlationId}'::uuid AND NEW.action='PACS_TEMPORARY_READ_AUTHORIZED'
-        AND NEW.reason_code='BEFORE_DECRYPT' THEN
+      IF NEW.correlation_id='${failure.correlationId}'::uuid AND NEW.action='${destinationMode ? 'PACS_DESTINATION_VERIFY_AUTHORIZED' : 'PACS_TEMPORARY_READ_AUTHORIZED'}'
+        AND NEW.reason_code='${destinationMode ? 'BEFORE_IDENTITY' : 'BEFORE_DECRYPT'}' THEN
         RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='DISPREAD_SYNTHETIC_AUDIT_FAILURE';
       END IF;
       RETURN NEW;
     END;$body$;
-    CREATE TRIGGER dispread_test_audit_fault BEFORE INSERT ON public.audit_events
-      FOR EACH ROW EXECUTE FUNCTION public.dispread_test_audit_fault()`);
-  await client.query('COMMIT'); console.log(`dispatched_fixture=PASS synthetic_only=true cases=${dispatchedReadCases.length}`);
+    CREATE TRIGGER ${destinationMode ? 'destverify' : 'dispread'}_test_audit_fault BEFORE INSERT ON public.audit_events
+      FOR EACH ROW EXECUTE FUNCTION public.${destinationMode ? 'destverify' : 'dispread'}_test_audit_fault()`);
+  await client.query('COMMIT'); console.log(`${destinationMode ? 'destination' : 'dispatched'}_fixture=PASS synthetic_only=true cases=${cases.length}`);
 } catch (error) {
   await client?.query('ROLLBACK').catch(() => undefined);
   const code = /^[0-9A-Z]{5}$/.test(error?.code ?? '') ? error.code : /^[A-Z0-9_]{1,80}$/.test(error?.message ?? '') ? error.message : 'SUPPRESSED';

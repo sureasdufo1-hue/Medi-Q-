@@ -189,6 +189,69 @@ services:
       - hospital-b
     command: ["node", "scripts/probe-int001-temporary-orthanc-b-empty.mjs"]
 
+  source-capture-orthanc-b-fixture:
+    profiles: [source-capture-test]
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      ORTHANC_B_URL: ${ORTHANC_B_URL:?Set local Test B URL}
+      ORTHANC_B_USERNAME: ${ORTHANC_B_USERNAME:?Set local Test B username}
+      ORTHANC_B_PASSWORD: ${ORTHANC_B_PASSWORD:?Set local Test B password}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+      MEDIQ_DICOM_TEST_MANIFEST: /run/fixtures/manifest.json
+    volumes:
+      - ../data/synthetic-ct-env007:/run/fixtures:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs: [/tmp:rw,noexec,nosuid,size=16m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 100
+    user: node
+    networks: [hospital-b]
+    command: [node, scripts/int001-destination-pacs-fixture.mjs, seed, exact]
+
+  api-destination-verification-test:
+    profiles: [source-capture-test]
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      target: authorized-source-capture-test
+    environment:
+      MEDIQ_RUNTIME_PROFILE: ${MEDIQ_RUNTIME_PROFILE:?Set container profile}
+      MEDIQ_ENV: ${MEDIQ_ENV:?Set development env}
+      MEDIQ_LOG_LEVEL: ${MEDIQ_LOG_LEVEL:?Set log level}
+      MEDIQ_API_PORT: ${MEDIQ_API_PORT:?Set API port}
+      MEDIQ_POSTGRES_DB: ${MEDIQ_POSTGRES_DB:?Set database name}
+      MEDIQ_DATABASE_URL: ${MEDIQ_DATABASE_URL:?Temporary runtime database URL required}
+      MEDIQ_OIDC_ISSUER: https://synthetic-issuer.test
+      MEDIQ_OIDC_AUDIENCE: mediq-int001-source-capture
+      MEDIQ_OIDC_JWKS_URI: https://synthetic-issuer.test/jwks
+      ORTHANC_A_URL: ${ORTHANC_A_URL:?Set local Test A URL}
+      ORTHANC_A_USERNAME: ${ORTHANC_A_USERNAME:?Set local Test A username}
+      ORTHANC_A_PASSWORD: ${ORTHANC_A_PASSWORD:?Set local Test A password}
+      ORTHANC_B_URL: ${ORTHANC_B_URL:?Set local Test B URL}
+      ORTHANC_B_USERNAME: ${ORTHANC_B_USERNAME:?Set local Test B username}
+      ORTHANC_B_PASSWORD: ${ORTHANC_B_PASSWORD:?Set local Test B password}
+      NODE_EXTRA_CA_CERTS: /run/mediq/test-ca.crt
+      MEDIQ_DICOM_TEST_MANIFEST: /run/fixtures/manifest.json
+      MEDIQ_TEST_DESTINATION_VERIFY_MODE: 'true'
+    volumes:
+      - ../data/synthetic-ct-env007:/run/fixtures:ro
+      - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
+    init: true
+    read_only: true
+    tmpfs: [/tmp:rw,noexec,nosuid,size=16m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 100
+    user: node
+    networks: [database, hospital-a, hospital-b]
+    command: [node, --test, --test-reporter=tap, tests/integration/authorized-source-capture.orthanc.integration.test.mjs]
+
   api-source-capture-test:
     profiles:
       - source-capture-test

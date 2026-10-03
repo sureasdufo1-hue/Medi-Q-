@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { types } from "node:util";
 import type { PoolClient } from "pg";
 import type { VerifiedAuthenticationPrincipal } from "../../authentication/authentication.types.js";
 import {
@@ -60,6 +61,7 @@ import {
 } from "../../imaging-storage/persistence/postgres-temporary-payload-metadata.repository.js";
 import { PostgresTemporaryPayloadQuotaRepository } from "../../imaging-storage/persistence/postgres-temporary-payload-quota.repository.js";
 import { TemporaryPayloadPurgeCoordinator } from "../../imaging-storage/application/temporary-payload-purge.coordinator.js";
+import { PostgresDestinationVerificationGateRepository } from "../persistence/postgres-destination-verification-gate.repository.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -102,7 +104,21 @@ export class AuthorizedTemporaryImagingReadUnavailableError extends Error {
 type SourceCaptureDicomPort = Pick<
   DicomGateway,
   "retrieveStudyMetadata" | "retrieveInstanceStream"
->;
+> & Partial<Pick<DicomGateway, "verifyDestinationStudy" | "retrieveDestinationVerificationInstanceStream">>;
+
+/** Internal byte comparison only; not persisted VERIFIED Integrity or completion. */
+export interface AuthorizedDestinationIntegrityProof {
+  readonly operationId: string;
+  readonly exchangeSessionId: string;
+  readonly packageId: string;
+  readonly studyRefId: string;
+  readonly sourceEvidenceId: string;
+  readonly algorithm: typeof SOURCE_INTEGRITY_ALGORITHM;
+  readonly aggregateDigest: `sha256:${string}`;
+  readonly objectCount: number;
+  readonly totalBytes: number;
+  readonly comparedAt: string;
+}
 
 export type AuthorizedSourceCaptureResult =
   | Readonly<{
@@ -282,25 +298,26 @@ function exactCommand(value: unknown): CaptureCommand {
   });
 }
 
-function captureDeadline(clock: () => Date, inputSignal?: AbortSignal): CaptureDeadline {
+function captureDeadline(clock: () => Date, inputSignal?: AbortSignal,
+  durationMilliseconds = TOTAL_CAPTURE_DEADLINE_MS): CaptureDeadline {
   let startedAt: number;
   try {
     startedAt = clock().getTime();
     if (!Number.isFinite(startedAt) ||
-      !Number.isFinite(new Date(startedAt + TOTAL_CAPTURE_DEADLINE_MS).getTime())) {
+      !Number.isFinite(new Date(startedAt + durationMilliseconds).getTime())) {
       throw new Error("INVALID_CAPTURE_TIME");
     }
   } catch {
     throw new AuthorizedSourceCaptureUnavailableError();
   }
-  const expiresAtMilliseconds = startedAt + TOTAL_CAPTURE_DEADLINE_MS;
+  const expiresAtMilliseconds = startedAt + durationMilliseconds;
   const controller = new AbortController();
   let expired = false;
   let callerCancelled = false;
   const timer = setTimeout(() => {
     expired = true;
     controller.abort(new Error("SOURCE_CAPTURE_DEADLINE"));
-  }, TOTAL_CAPTURE_DEADLINE_MS);
+  }, durationMilliseconds);
   timer.unref?.();
   const abortForCaller = () => {
     callerCancelled = true;
@@ -579,6 +596,8 @@ function createAudit(input: {
     | "PACS_SOURCE_CAPTURE_DENIED"
     | "PACS_SOURCE_CAPTURE_FAILED"
     | "PACS_TEMPORARY_READ_AUTHORIZED"
+    | "PACS_DESTINATION_VERIFY_AUTHORIZED"
+    | "PACS_DESTINATION_VERIFY_FAILED"
     | "PACS_TEMPORARY_READ_FAILED";
   readonly result: "ALLOW" | "SUCCESS" | "DENY" | "FAILURE";
   readonly reasonCode: string | null;
@@ -620,6 +639,8 @@ export class AuthorizedSourceCaptureService {
     readonly claimedAt: string;
     readonly attempts: Set<string>;
   }>();
+  readonly #verificationAttempts = new WeakSet<AuthorizedSourceCaptureCoordinatorHandoff>();
+  readonly #verifiedDestinations = new WeakMap<AuthorizedSourceCaptureCoordinatorHandoff, AuthorizedDestinationIntegrityProof>();
 
   constructor(
     private readonly operationExecutor: Pick<
@@ -639,6 +660,165 @@ export class AuthorizedSourceCaptureService {
 
   captureForCoordinator(input: unknown): Promise<AuthorizedSourceCaptureCoordinatorResult> {
     return this.captureInternal(input, true);
+  }
+
+  /** Service-owned source provenance plus fresh authority; never accepts a client manifest or verifier. */
+  async verifyDestinationIntegrity(input: unknown): Promise<AuthorizedDestinationIntegrityProof> {
+    let deadline: CaptureDeadline | undefined;
+    let verificationCommand: CaptureCommand | undefined;
+    try {
+      const data = (value: unknown, required: readonly string[], optional: readonly string[] = []) => {
+        if (!value || typeof value !== "object" || types.isProxy(value) || Array.isArray(value) ||
+          ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error("INVALID_VERIFY_INPUT");
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (required.some(key => !Object.hasOwn(descriptors, key)) ||
+          Reflect.ownKeys(descriptors).some(key => typeof key !== "string" ||
+            (!required.includes(key) && !optional.includes(key)) || !descriptors[key]!.enumerable ||
+            !Object.hasOwn(descriptors[key]!, "value"))) throw new Error("INVALID_VERIFY_INPUT");
+        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+      };
+      const f = data(input, ["principal", "tenantCandidate", "correlationId", "consentId", "grantId", "handoff"], ["signal"]);
+      const p = data(f.principal, ["issuer", "subject"], ["patientRefId"]);
+      if (Object.hasOwn(p, "patientRefId") && !validUuid(p.patientRefId)) throw new Error("INVALID_VERIFY_PRINCIPAL");
+      if (Object.hasOwn(f, "signal")) {
+        const signal = f.signal;
+        if (!signal || typeof signal !== "object" || types.isProxy(signal) ||
+          !(signal instanceof AbortSignal) || Object.getPrototypeOf(signal) !== AbortSignal.prototype ||
+          ["aborted", "reason", "throwIfAborted", "addEventListener", "removeEventListener", "dispatchEvent", "onabort"]
+            .some(key => Object.hasOwn(signal, key))) throw new Error("INVALID_VERIFY_SIGNAL");
+        Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!.call(signal);
+      }
+      const handoff = f.handoff as AuthorizedSourceCaptureCoordinatorHandoff;
+      const binding = this.#captureBindings.get(handoff);
+      if (!binding || !handoff.temporaryPackage || this.#verificationAttempts.has(handoff) ||
+        typeof this.dicomGateway.verifyDestinationStudy !== "function" ||
+        typeof this.dicomGateway.retrieveDestinationVerificationInstanceStream !== "function") {
+        throw new Error("UNKNOWN_VERIFY_CAPTURE");
+      }
+      const command = exactCommand({ principal: p, tenantCandidate: f.tenantCandidate,
+        correlationId: f.correlationId, consentId: f.consentId, grantId: f.grantId,
+        operationId: binding.scope.operationId, ...(Object.hasOwn(f, "signal") ? { signal: f.signal } : {}) });
+      verificationCommand = command;
+      const budget = 5 * 60 * 1000;
+      deadline = captureDeadline(this.clock, command.signal, budget);
+      const liveDeadline = deadline;
+      const expiresAt = new Date(handoff.temporaryPackage.expiresAt).getTime();
+      const assertLive = () => {
+        assertNotAborted(liveDeadline);
+        const time = this.clock().getTime();
+        if (!Number.isFinite(time) || time < liveDeadline.expiresAtMilliseconds - budget ||
+          !Number.isFinite(expiresAt) || time >= expiresAt) throw new Error("VERIFY_EXPIRED");
+      };
+      let claimedAt: string | undefined;
+      const authorize = async (phase: "BEFORE_IDENTITY" | "AFTER_IDENTITY" | "BEFORE_BYTES" | "AFTER_BYTES" | "FINAL") => {
+        assertLive();
+        await this.operationExecutor.executeWithResolvedSessionFence(command.principal, command.tenantCandidate,
+          async (identity, transaction) => {
+            const scope = await this.resolveScope(transaction, command.operationId, identity.tenantId);
+            if (!sameCaptureIdentity(identity, binding.identity) || !this.isTestBinding(identity, scope) ||
+              scope.operationState !== "VERIFYING" || !sameSourceCaptureBinding(binding.scope, scope)) {
+              throw new AuthorizationDeniedError();
+            }
+            return AuthorizationContext.create({ identity, exchangeSessionId: scope.exchangeSessionId,
+              resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
+              consentId: command.consentId, grantId: command.grantId });
+          }, async (identity, transaction) => {
+            assertLive();
+            const scope = await this.resolveScope(transaction, command.operationId, identity.tenantId);
+            if (!sameSourceCaptureBinding(binding.scope, scope) || scope.operationState !== "VERIFYING" ||
+              !IMPORTABLE_SESSION_STATES.has(scope.sessionState)) throw new Error("VERIFY_GRAPH_CHANGED");
+            const mapping = await mappingBinding(scope, transaction);
+            if (!mapping || mapping.mappingId !== binding.mapping.mappingId ||
+              mapping.localPatientId !== binding.mapping.localPatientId) throw new Error("VERIFY_MAPPING_CHANGED");
+            const timestamp = await new PostgresDestinationVerificationGateRepository(transaction).assertCurrent({
+              scope, handoff, actorId: identity.actorId, now: this.clock(),
+              requestDigest: pacsTransferOperationDigest({ tenantId: identity.tenantId, actorId: identity.actorId,
+                exchangeSessionId: scope.exchangeSessionId, studyRefId: scope.studyRefId,
+                consentId: command.consentId, grantId: command.grantId, action: "PACS_IMPORT" }),
+            });
+            if (claimedAt !== undefined && claimedAt !== timestamp.toISOString()) throw new Error("VERIFY_CLAIM_CHANGED");
+            const dispatch = this.#dispatchReads.get(handoff);
+            if (dispatch && dispatch.claimedAt !== timestamp.toISOString()) throw new Error("VERIFY_DISPATCH_CHANGED");
+            if (claimedAt === undefined) {
+              if (this.#verificationAttempts.has(handoff)) throw new Error("VERIFY_REPLAY");
+              this.#verificationAttempts.add(handoff);
+              claimedAt = timestamp.toISOString();
+            }
+            await recordAudit(transaction, { actorId: identity.actorId, tenantId: identity.tenantId, scope,
+              correlationId: command.correlationId, action: "PACS_DESTINATION_VERIFY_AUTHORIZED", result: "ALLOW",
+              reasonCode: phase, now: this.clock(), createId: this.createId });
+          });
+        assertLive();
+      };
+      const expected = handoff.expectedInstances;
+      const series = [...new Set(expected.map(item => item.seriesInstanceUid))].sort();
+      const sops = expected.map(item => item.sopInstanceUid).sort();
+      if (expected.length < 1 || expected.length > SOURCE_INTEGRITY_LIMITS.maximumInstances ||
+        series.length > 64 || new Set(sops).size !== sops.length ||
+        handoff.sourceEvidence.objectCount !== expected.length ||
+        handoff.sourceEvidence.totalBytes !== expected.reduce((total, item) => total + item.byteLength, 0) ||
+        handoff.sourceEvidence.totalBytes > SOURCE_INTEGRITY_LIMITS.maximumStudyBytes ||
+        expected.some(item => item.byteLength < 1 || item.byteLength > SOURCE_INTEGRITY_LIMITS.maximumInstanceBytes)) {
+        throw new Error("VERIFY_INVENTORY_INVALID");
+      }
+      const context = Object.freeze({ hospitalId: handoff.destinationHospitalId,
+        correlationId: command.correlationId, signal: liveDeadline.signal });
+      const checkIdentity = async () => {
+        await authorize("BEFORE_IDENTITY");
+        const result = await this.dicomGateway.verifyDestinationStudy!({ context,
+          studyInstanceUid: handoff.studyInstanceUid, expectedInstances: expected, maximumItems: expected.length });
+        assertLive();
+        const same = (actual: readonly string[], wanted: readonly string[]) => Array.isArray(actual) &&
+          actual.length === wanted.length && [...actual].sort().every((item, index) => item === wanted[index]);
+        if (!result || result.matchesExpected !== true || result.studyInstanceUid !== handoff.studyInstanceUid ||
+          !same(result.actualSeriesInstanceUids, series) || !same(result.actualSopInstanceUids, sops)) {
+          throw new Error("DESTINATION_IDENTITY_MISMATCH");
+        }
+        await authorize("AFTER_IDENTITY");
+      };
+      await checkIdentity();
+      const capture = await buildSourceIntegrityCapture({ expectedInstanceCount: expected.length,
+        signal: liveDeadline.signal, instances: expected.map(instance => ({ sopInstanceUid: instance.sopInstanceUid,
+          openStream: async () => {
+            await authorize("BEFORE_BYTES");
+            const stream = await this.dicomGateway.retrieveDestinationVerificationInstanceStream!({ context,
+              studyInstanceUid: handoff.studyInstanceUid, seriesInstanceUid: instance.seriesInstanceUid,
+              sopInstanceUid: instance.sopInstanceUid });
+            try {
+              assertLive();
+              if (stream.transferSyntaxUid !== instance.transferSyntaxUid) throw new Error("DESTINATION_SYNTAX_MISMATCH");
+            } catch (error) {
+              try { await stream.body.cancel(); } catch { /* Keep sanitized primary outcome. */ }
+              throw error;
+            }
+            return { ...stream, observer: { writeChunk: async () => {}, abort: async () => {},
+              complete: async (actual) => {
+                assertLive();
+                if (actual.sopInstanceUid !== instance.sopInstanceUid || actual.byteLength !== instance.byteLength ||
+                  actual.sha256 !== instance.sha256) throw new Error("DESTINATION_BYTES_MISMATCH");
+                await authorize("AFTER_BYTES");
+              } } };
+          } })) });
+      assertLive();
+      if (capture.manifest.algorithm !== handoff.sourceEvidence.algorithm ||
+        capture.manifest.aggregateDigest !== handoff.sourceEvidence.aggregateDigest ||
+        capture.manifest.objectCount !== handoff.sourceEvidence.objectCount ||
+        capture.manifest.totalBytes !== handoff.sourceEvidence.totalBytes) throw new Error("DESTINATION_MANIFEST_MISMATCH");
+      await checkIdentity();
+      await authorize("FINAL");
+      const proof: AuthorizedDestinationIntegrityProof = Object.freeze({ operationId: handoff.operationId,
+        exchangeSessionId: handoff.exchangeSessionId, packageId: handoff.packageId, studyRefId: handoff.studyRefId,
+        sourceEvidenceId: handoff.sourceEvidence.evidenceId, ...capture.manifest, comparedAt: this.clock().toISOString() });
+      assertLive();
+      this.#verifiedDestinations.set(handoff, proof);
+      return proof;
+    } catch {
+      if (verificationCommand) await this.bestEffortAudit(verificationCommand,
+        "PACS_DESTINATION_VERIFY_FAILED", "FAILURE", "DESTINATION_VERIFY_FAILED");
+      throw new Error("DESTINATION_INTEGRITY_UNAVAILABLE");
+    } finally {
+      deadline?.dispose();
+    }
   }
 
   /** Internal pre-dispatch borrowed read; never accepts a caller access verifier. */
@@ -1533,7 +1713,8 @@ export class AuthorizedSourceCaptureService {
     action:
       | "PACS_SOURCE_CAPTURE_DENIED"
       | "PACS_SOURCE_CAPTURE_FAILED"
-      | "PACS_TEMPORARY_READ_FAILED",
+      | "PACS_TEMPORARY_READ_FAILED"
+      | "PACS_DESTINATION_VERIFY_FAILED",
     result: "DENY" | "FAILURE",
     reasonCode: string,
   ): Promise<void> {

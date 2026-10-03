@@ -1,5 +1,9 @@
 # MediQ Data Model
 
+## DEC-022-A read-only verification gate — no schema/grant change
+
+New repository reads the existing Tenant-visible source AVAILABLE/TTL/pending Integrity and exact operation VERIFYING/version3/semantic digest/count/pending Provenance/three transition Audits. It uses existing253 runtime column privilege tuples; no migration, historical source constraint rewrite or destination/provenance column write is added. The ephemeral minimized comparison proof is not a new DB row and must not be serialized as completed evidence. New closed checkpoint/failure Audit vocabulary uses existing12-column INSERT rights. Actual SQL/RLS/exact-catalog acceptance remains required; only model DB query composition is locally tested at this stage. Separate destination/terminal persistence design and actual gates still precede complete P0.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DATA-MODEL.md`

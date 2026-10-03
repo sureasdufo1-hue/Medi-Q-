@@ -1,5 +1,9 @@
 # MediQ Threat Model
 
+## DEC-022-A whole-verification threats — 2026-10-04
+
+Forged manifest/serialized handoff or caller authorization callbacks: rejected by the source owner's original WeakMap binding and closed data snapshot. Stale/mutated owner/Consent/Grant/mapping/source/operation/provenance/Audit: current fenced checks at each compound identity/raw-instance boundary; reject wrong digest/version/count/TTL. Byte tamper, truncation, same-count wrong hierarchy or post-read identity race: canonical original per-instance and aggregate equality plus exact before/after identity, not metadata200. Lost admission commit/duplicate verification: reserve one owned attempt before Audit/commit acknowledgement, no auto refetch. Slow/stalled I/O: shared5min native cancellation and original count/size ceilings; no own DB transaction spans PACS I/O. Audit phases are ALLOW, not completed delivery. Model tests do not prove actual signed SQL/RLS or Orthanc. Residual: bytes read internally before in-flight revocation cannot be retroactively reclaimed; volatile handoff/attempt state cannot survive restart; comparison proof alone lacks persistent terminal Integrity/Provenance/Audit/purge/E2E acceptance. Those gates remain mandatory.
+
 ## DEC-022 internal destination-byte retrieval review — 2026-10-04
 
 Prevent misusing B verification as generic Viewer/source access: only separate VERIFY_INSTANCE_BYTES is allowlisted at Test B; generic B WADO and A verification remain denied. Strict data/context snapshot prevents caller mutation, Proxy/getter execution, URL/credential/permit injection and signal brand/property shadows before fetch. Shared multipart/Explicit VR LE/EOF/size/deadline/cancel controls preserve streaming bounds; HTTP/MIME/part/syntax failures do not retry or retain admission. Per-instance response selector/metadata is not embedded DICOM identity or byte equality proof.

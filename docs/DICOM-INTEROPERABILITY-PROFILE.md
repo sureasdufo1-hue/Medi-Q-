@@ -1,5 +1,9 @@
 # MediQ DICOM Interoperability Profile
 
+## DEC-022-A whole destination comparison boundary
+
+Internal AuthorizedSourceCaptureService owns the source handoff and performs exact identity checks before/after all sequential B raw-instance reads, fresh fenced PACS_IMPORT checks before/after each stream, original transfer syntax/per-instance length/hash/count/total/canonical SHA256-MANIFEST-V1 equality and one shared5min deadline. No Study-sized payload buffer, source reread, normalization/transcoding, automatic retry or generic B content permission. Existing adapter verifies each identity operation with two complete scans; authorization surrounds that compound operation, not a fictitious per-page HTTP callback. Return is an internal frozen comparison proof, not DB VERIFIED/COMPLETED. Actual HTTPS Test Orthanc B/source and PostgreSQL/RLS tests remain required under AUTHDEST-006/DESTBYTES-006; simulated VERIFYING and controlled streams cannot prove full Mandatory Preflight/real A-to-B acceptance. DEC-022-A, report§45/evidence§81.
+
 ## DEC-022 distinct destination byte-read profile — 2026-10-04
 
 CAPSTONE-P0, internal Test B only. `VERIFY_INSTANCE_BYTES` resolves the fixed configured HTTPS B DICOMweb origin and retrieves one exact Study/Series/SOP with `multipart/related; type=application/dicom; transfer-syntax=1.2.840.10008.1.2.1`. `retrieveDestinationVerificationInstanceStream` uses the existing bounded single-part/closing-boundary/64MiB/deadline/admission/cancellation parser and strict immutable selector/context snapshot. B generic WADO metadata/instance/frame and A verification/STOW remain denied. No endpoint/credential/user permit crosses the Port; the stream is internal verification input, not Viewer/client content.

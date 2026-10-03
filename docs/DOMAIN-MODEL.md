@@ -1,5 +1,9 @@
 # MediQ Domain Model
 
+## DEC-022-A internal comparison proof, not terminal evidence
+
+AuthorizedDestinationIntegrityProof is a frozen ephemeral internal result bound to original operation/Session/package/Study/sourceEvidence and canonical digest/count/total/time. Only the source-capture owner's original handoff and fresh current VERIFYING/PACS_IMPORT gates may produce it; clones/client JSON cannot acquire ownership. It adds no persistent entity, source status mutation, Grant/action or Session transition. The independently append-only DESTINATION_VERIFY record, terminal Provenance/Audit and physical purge must still be implemented and committed before COMPLETED. PACS_DESTINATION_VERIFY_AUTHORIZED is STUDY/ALLOW with closed phase reasons; PACS_DESTINATION_VERIFY_FAILED is STUDY/FAILURE with only DESTINATION_VERIFY_FAILED. Neither is delivery/completion. Old capture/dispatch Audit rules stay unchanged. AUTHDEST Acceptance; report§45/evidence§81.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `DOMAIN-MODEL.md`

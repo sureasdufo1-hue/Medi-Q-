@@ -1,5 +1,9 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
+**최신 검증 (2026-10-04):** DEC-022-A 로컬 API1175·계약21·Node232·PS107·빌드/타입/Port PASS. 실제 changed-source95503 종료0/source58+dispatch18·RLS·독립 관찰·B 전후 EMPTY·개인정보·복원/정리 PASS, owned 자원0·현재302 실행입력 hash·기존 개발자원 불변. 이는 새 destination SQL/B gate나 실제 전송 완료가 아니다. 다음은 그 새 실제 통합 gate와 terminal writer·전체 조정기·보안E2E이며 P0 PARTIAL; 실행 중 핸들 없음. 보고§45/증거§81.
+
+**최신 진행 (2026-10-04, DEC-022-A):** 원본 handoff 소유 서비스에 목적지 전체 바이트 비교와 현재 권한 재검증/VERIFYING graph·source·출처·감사 gate를 연결했다. 조회 전후 identity와 per-instance/aggregate 비교, 한 번의5분 제한·중복/취소/감사 실패 거부를 포함한다. 모델 DB+실제 engine/crypto/hash 시험은 실제 B·PostgreSQL/RLS 증거가 아니며, 다음은 해당 실제 격리 통합시험 후 terminal writer·전체 조정기·단일 STOW·보안E2E다. 제출 목표일은 유지하되 P0 완료나 제출 가능 상태를 주장하지 않는다. 보고§45/증거§81; 아래 진행 표기는 이력이다.
+
 **현재 step2 진행 (2026-10-04, DEC-022):** 별도 B-only byte verification stream/strict snapshot 선행 컴포넌트 구현, focused20/API47파일1101/빌드·타입·Port/계약21/Node232/PS107 로컬 PASS(증거§79). 전반 step2·PACS-001·P0 PARTIAL이며 전체 권한/전후 identity/원본 hash·size 비교/총 deadline, 실제 B·source 통합, append-only 목적지 증거/terminal Provenance 최소 쓰기 및 실제 DB/전송/보안E2E는 미완료다. 계획 step2 원래 범위를 줄이지 않고 다음 canonical verifier/actual Orthanc gate로 진행한다. 실제 PACS/DB/배포/자동 Git 없음; 아래 판정은 이전 시점 이력이다.
 
 **현재 계약 단계 (2026-10-04, DEC-021/021-A):** 계획 step1의 import/replay/owned-status 계약·데이터 검증 선행 범위 PASS. OpenAPI orphan 제거(실제 Viewer/Consent 보존), HTTP/code 분리, mandatory true/verified completion/no-resend 및 production status binding 검증. API46파일/1081(새 validator55 포함), 계약21, Node232, PS107, 빌드·타입·Port·문서 추적 PASS(증거§78). 실제 소유 HTTP 조회/완료 생산자/full Preflight/B 전송/terminal 보안E2E는 미완료다. 다음 의존성은 step2의 내부 B 검증-read/raw bytes와 append-only 목적지 증거·최소 terminal Provenance write다. 10월5일 제출 목표 유지, 달성 보장/완료 선언 없음. 기존 actual76676은 R3 선행 범위만 증명한다.

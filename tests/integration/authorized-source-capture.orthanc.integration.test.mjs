@@ -46,6 +46,7 @@ import { PostgresPacsTransferOperationRepository } from "../../services/api/dist
 import { PostgresProvenanceRepository } from "../../services/api/dist/provenance/persistence/postgres-provenance.repository.js";
 import { DispatchedInstanceStreamFactory } from "../../services/api/dist/pacs/application/dispatched-instance-stream.factory.js";
 import { dispatchedReadCases, dispatchedReadIds, dispatchedReadDigest } from "../fixtures/dispatched-source-read-fixture.mjs";
+import { destinationVerificationCases, destinationFixtureKinds } from "../fixtures/destination-verification-fixture.mjs";
 import {
   AuthorizedSourceCaptureService,
   AuthorizedSourceCaptureInvalidRequestError,
@@ -420,6 +421,9 @@ function createHarness({
   afterMetadata,
   beforeSourceRequest,
   dispatchReadCommitAckLoss = false,
+  destinationVerification = false,
+  destinationCommitAckLoss = false,
+  afterDestinationBytes,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = Object.freeze({ ...parsedConfig,
@@ -450,13 +454,16 @@ function createHarness({
       }
       let recordedCaptureStart = false;
       let recordedBeforeDecrypt = false;
+      let recordedDestinationAdmission = false;
       return new Proxy(client, {
         get(target, property) {
           if (property === "query") {
             return (...args) => {
               const statement = typeof args[0] === "string" ? args[0] : args[0]?.text ?? "";
               const dispatchSelect = statement.includes("AS dispatch_read_claimed_at");
+              const destinationSelect = statement.includes("AS destination_verify_claimed_at");
               if (dispatchSelect) dispatchClaimQueries++;
+              if (destinationSelect) destinationClaimQueries++;
               const queryLabel = statement.includes("FROM actors AS a")
                 ? "ACTOR_LOOKUP"
                 : statement.includes("pg_advisory_xact_lock")
@@ -488,6 +495,14 @@ function createHarness({
               return queryResult.then((result) => {
                 querySettled(true);
                 if (dispatchSelect) dispatchClaimMatches += result.rowCount;
+                if (destinationSelect) destinationClaimMatches += result.rowCount;
+                if (statement === 'BEGIN' || statement === 'ROLLBACK') recordedDestinationAdmission = false;
+                if (statement.includes('INSERT INTO audit_events') && args[1]?.[7] === 'PACS_DESTINATION_VERIFY_AUTHORIZED' &&
+                  args[1]?.[9] === 'BEFORE_IDENTITY' && result.rowCount === 1) recordedDestinationAdmission = true;
+                if (statement === 'COMMIT' && recordedDestinationAdmission && destinationCommitAckLoss && lostCommitAcknowledgements === 0) {
+                  recordedDestinationAdmission = false; lostCommitAcknowledgements++;
+                  throw new Error('DESTVERIFY_TEST_COMMIT_ACK_LOST');
+                }
                 if (statement === "BEGIN" || statement === "ROLLBACK") recordedBeforeDecrypt = false;
                 if (statement.includes("INSERT INTO audit_events") && args[1]?.[7] === "PACS_TEMPORARY_READ_AUTHORIZED" &&
                   args[1]?.[9] === "BEFORE_DECRYPT" && result.rowCount === 1) recordedBeforeDecrypt = true;
@@ -540,6 +555,8 @@ function createHarness({
   let forbiddenEndpointAttempts = 0;
   let stowCalls = 0;
   let destinationVerificationCalls = 0;
+  let destinationClaimQueries = 0, destinationClaimMatches = 0, destinationByteCalls = 0;
+  const destinationObserved = [];
   let metadataCalls = 0;
   let instanceCalls = 0;
   let activeInstanceStreams = 0;
@@ -595,6 +612,14 @@ function createHarness({
           ? input
           : new URL(typeof input === "string" ? input : input.url);
         const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        if (destinationVerification && url.protocol === 'https:' && url.hostname === 'orthanc-b' && url.port === '8042' &&
+          !url.username && !url.password && !url.hash && url.pathname.startsWith('/dicom-web/') && method === 'GET') {
+          assertOutsideTransaction();
+          assert.equal(init?.redirect,'error','DESTVERIFY_B_REDIRECT');
+          const configured = `Basic ${Buffer.from(`${config.orthancBUsername}:${config.orthancBPassword}`).toString('base64')}`;
+          assert.equal(new Headers(init.headers).get('authorization'),configured,'DESTVERIFY_B_SERVER_CREDENTIAL');
+          return globalThis.fetch(input,init);
+        }
         if (
           url.protocol !== "https:" ||
           url.hostname !== "orthanc-a" ||
@@ -762,8 +787,26 @@ function createHarness({
       stowCalls += 1;
       throw new Error("SOURCE_CAPTURE_TEST_STOW_FORBIDDEN");
     },
-    verifyDestinationStudy: async () => {
+    retrieveDestinationVerificationInstanceStream: async request => {
+      if (!destinationVerification) throw new Error('SOURCE_CAPTURE_TEST_DESTINATION_BYTES_FORBIDDEN');
+      assertOutsideTransaction(); destinationByteCalls++;
+      const source = await adapter.retrieveDestinationVerificationInstanceStream(request);
+      const reader = source.body.getReader(), hash = createHash('sha256'); let bytes = 0;
+      const body = new ReadableStream({ async pull(controller) {
+        assertOutsideTransaction();
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            destinationObserved.push({ sop:request.sopInstanceUid,bytes,sha256:hash.digest('hex') });
+            reader.releaseLock(); await afterDestinationBytes?.(destinationByteCalls); controller.close();
+          } else { bytes += next.value.length; hash.update(next.value); controller.enqueue(next.value); }
+        } catch (error) { controller.error(error); }
+      }, async cancel(reason) { await reader.cancel(reason).catch(() => {}); try { reader.releaseLock(); } catch {} } },{highWaterMark:0});
+      return Object.freeze({ ...source,body:observeStreamReads(body,assertOutsideTransaction) });
+    },
+    verifyDestinationStudy: async request => {
       destinationVerificationCalls += 1;
+      if (destinationVerification) { assertOutsideTransaction(); return adapter.verifyDestinationStudy(request); }
       throw new Error("SOURCE_CAPTURE_TEST_DESTINATION_VERIFY_FORBIDDEN");
     },
   });
@@ -805,6 +848,7 @@ function createHarness({
       tenantContextRuns,
       quotaReservations,
       dispatchClaimQueries, dispatchClaimMatches, lostCommitAcknowledgements,
+      destinationClaimQueries,destinationClaimMatches,destinationByteCalls,destinationObserved:[...destinationObserved],
       activeTenantTransactions,
       initialAuthorizationCommitted,
       sourceRequests: [...sourceRequests],

@@ -63,6 +63,9 @@ describe("AuditEvent", () => {
       ["PACS_TEMPORARY_READ_AUTHORIZED", "STUDY", "ALLOW", "BEFORE_DECRYPT"],
       ["PACS_TEMPORARY_READ_AUTHORIZED", "STUDY", "ALLOW", "BEFORE_DELIVERY"],
       ["PACS_TEMPORARY_READ_FAILED", "STUDY", "FAILURE", "TEMPORARY_READ_FAILED"],
+      ...["BEFORE_IDENTITY", "AFTER_IDENTITY", "BEFORE_BYTES", "AFTER_BYTES", "FINAL"]
+        .map(phase => ["PACS_DESTINATION_VERIFY_AUTHORIZED", "STUDY", "ALLOW", phase]),
+      ["PACS_DESTINATION_VERIFY_FAILED", "STUDY", "FAILURE", "DESTINATION_VERIFY_FAILED"],
     ];
 
     for (const [action, resourceType, result, reasonCode] of allowed) {
@@ -72,6 +75,14 @@ describe("AuditEvent", () => {
 
   it.each([
     ["unknown action", { action: "VIEWER_OPENED" }],
+    ["destination admission is not completion", { action: "PACS_DESTINATION_VERIFY_AUTHORIZED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "FINAL" }],
+    ["destination admission missing phase", { action: "PACS_DESTINATION_VERIFY_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: null }],
+    ["destination admission missing Session", { action: "PACS_DESTINATION_VERIFY_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: "BEFORE_BYTES", exchangeSessionId: null }],
+    ["destination admission missing resource", { action: "PACS_DESTINATION_VERIFY_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: "AFTER_BYTES", resourceId: null }],
+    ["destination admission wrong resource type", { action: "PACS_DESTINATION_VERIFY_AUTHORIZED", result: "ALLOW", reasonCode: "BEFORE_IDENTITY" }],
+    ["destination failed reason excludes upstream details", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "PRIVATE_PACS_RESPONSE" }],
+    ["destination failure cannot be success", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "DESTINATION_VERIFY_FAILED" }],
+    ["destination failure requires bound Session", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "DESTINATION_VERIFY_FAILED", exchangeSessionId: null }],
     ["read admission is not delivery", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "BEFORE_DELIVERY" }],
     ["read reason cannot contain identifiers", { action: "PACS_TEMPORARY_READ_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "TEST-PRIVATE-PATIENT" }],
     ["read admission requires phase", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: null }],

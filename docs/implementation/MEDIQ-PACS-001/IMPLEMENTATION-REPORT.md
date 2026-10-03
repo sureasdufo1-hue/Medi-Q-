@@ -1,5 +1,43 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 47. User-requested DEC-022-A/B WIP Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Preserve current 26-file code/configuration/test/document state on main and push to the user-designated origin; no continued implementation
+Changed: Checkpoint report/evidence/index only in this turn; preserve destination verifier/repository/Audit/tests and unfinished destination fixture/Compose/harness work
+Not changed: Product correction, destination runner/observer/wrapper, migration/grants, dependencies, deployment, real PACS transfer or completion policy
+Security impact: .env/build/generated DICOM excluded. Bounded 26-candidate path/content/binary/local-secret-value scan found zero findings; not an exhaustive secret/PHI audit. Fail-closed/Tenant boundaries remain required
+Tests executed: API build PASS; full API47files/1175:1173 PASS/2 timeout FAIL, original29279 exit1; contract21/type/Port PASS; JS syntax6/diff PASS; read-only YAML detects four tmpfs entries rather than one in both new test services; fetch/divergence0/0
+Tests not executed: New actual destination SQL/RLS/B matrix/helper/independent observer/cleanup; full Preflight/one STOW/terminal evidence/security/E2E. Prior95503 covers only its frozen inputs, not newer fixture/configuration/harness changes
+Evidence: TEST-EVIDENCE.md section83; historical scoped results retained in section81
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Current full API regression FAILED, two timeout causes UNKNOWN; new Compose tmpfs flow sequences need quoting; destination entry point/observer/wrapper wiring unfinished. Not release-ready
+Status: WIP/PARTIAL; actual destination NOT RUN. Git success requires subsequent commit/push/remote equality checks; saving is not feature acceptance
+```
+
+## 46. DEC-022-B actual destination matrix — opened before code
+
+2026-10-04 CAPSTONE-P0. Previous turn is progress;20 uncommitted paths preserved at b22e784, original95503 terminal0, no live handle. DEC-022-B/ACTDEST-001~008 recorded before code. Add optional actual signed runtime/RLS/HTTPS B comparison matrix to existing owned wrapper with independent source/test B setup and observer; retain original58+18 and no app STOW/completion. No DB migration/grants/production dependency/deployment/Git. Initial PARTIAL/NOT RUN, evidence§82. Whole original terminal/coordinator/full Preflight/one real STOW/security/E2E remains required.
+
+## 45. DEC-022-A owned authorized destination verifier — opened before code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 step2 original source-owned whole destination comparison and current authority composition
+Changed: AuthorizedSourceCaptureService whole verifier; read-only destination graph repository; closed authorized/failure Audit vocabulary;66 new real-service/model/crypto/hash cases and8 Audit rejection cases; normative requirements/security/domain/data/architecture/flow/DICOM/threat/plan/schedule/index/Acceptance/evidence
+Not changed: Source manifest builder/CREATED and STOW_STARTED read predicates; public API/controllers, DB/migration/grant/RLS, destination/terminal evidence writer, full coordinator/STOW/production dependency/deployment/Git
+Security impact: Original private handoff, fresh fenced identity/Consent/Authorization/PACS_IMPORT/mapping/source/VERIFYING/provenance/Audit before/after I/O; committed checkpoint Audit, one owned attempt/global5min/cancel; comparison proof is not completion or access permission
+Tests executed: Focused287; full API47files/1175/build/type/Port, real parsed contract21, Node232 and PowerShell107 exit0; actual changed-source95503 exit0 source58+dispatch18/independent observers/B EMPTY/privacy/cleanup/frozen-input/development-inventory PASS. Two earlier focused failures retained in evidence§81
+Tests not executed: New verifier's actual signed PostgreSQL/RLS/B positive/tamper/identity/denial gate; destination/terminal writes/grant acceptance; original full Preflight/one actual STOW/security/E2E
+Evidence: TEST-EVIDENCE.md §81; original95503 terminal0, current302 frozen inputs and independently zero owned resources/unchanged development inventory
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Model DB/controlled destination streams do not prove new SQL or PACS; ephemeral proof/attempt ownership fails closed across restart; terminal evidence/purge/coordinator/API/Viewer/Download/runtime lifecycle remain required for original P0
+Status: Local composition/regression and actual changed-source prerequisite scoped PASS; new AUTHDEST-006 destination SQL/B gate and007 NOT RUN; step2/PACS-001/P0 PARTIAL; no live process
+```
+
+2026-10-04, CAPSTONE-P0. Clean b22e784 verified; previous goal turn is progress, no live handle. Adopted DEC-022-A and AUTHDEST-001~007 before implementation. Compose original private handoff, real fenced current authority, exact VERIFYING graph/source/provenance/Audit predicate, before/after identity and canonical sequential per-instance/aggregate comparison under one5min budget. No caller verifier, public route, source-row promotion, DB rights/schema or deployment. Initial PARTIAL/NOT RUN; evidence§81. Full terminal/coordinator/actual one-STOW/security/E2E remains the requested end state, not redefined around this prerequisite.
+
 ## 44. User-requested DEC-021/DEC-022 Git checkpoint — 2026-10-04
 
 ```text

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtemp, readdir, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
@@ -99,7 +100,7 @@ function authorizationRow(options = {}) {
     consent_issued_at: new Date("2026-10-01T00:00:00.000Z"),
     consent_expires_at: value("consentExpiresAt", null),
     consent_withdrawn_at: value("consentWithdrawnAt", null),
-    allowed_actions: ["PACS_IMPORT"],
+    allowed_actions: value("allowedActions", ["PACS_IMPORT"]),
     grant_id: ids.grant,
     grant_session_id: ids.session,
     grant_consent_id: ids.consent,
@@ -111,7 +112,7 @@ function authorizationRow(options = {}) {
     grant_issued_at: new Date("2026-10-01T00:00:00.000Z"),
     grant_expires_at: value("grantExpiresAt", new Date("2099-01-01T00:00:00.000Z")),
     grant_revoked_at: value("grantRevokedAt", null),
-    grant_scopes: ["study:pacs-transfer"],
+    grant_scopes: value("grantScopes", ["study:pacs-transfer"]),
     study_ref_id: ids.studyRef,
     package_id: ids.package,
     package_session_id: ids.session,
@@ -156,9 +157,11 @@ function studyMetadata(options = {}) {
 }
 
 function makeHarness(options = {}) {
+  const ownedTransactionScope = new AsyncLocalStorage();
   let activeTransactions = 0;
   let dispatchClaim = null;
   let dispatchChecks = 0;
+  let verificationChecks = 0;
   let currentIdentity = identity;
   let authorizationCalls = 0;
   let currentScope = operationScope({
@@ -211,12 +214,14 @@ function makeHarness(options = {}) {
     metadata: 0,
     instances: 0,
     destinationWrites: 0,
+    destinationIdentity: 0,
+    destinationBytes: 0,
     hospitalIds: [],
     instanceIdentities: [],
   };
 
   const actorTenantContext = {
-    run: async (capturePrincipal, tenantCandidate, work) => {
+    run: async (capturePrincipal, tenantCandidate, work) => ownedTransactionScope.run(true, async () => {
       if (tenantCandidate !== ids.tenant) throw new Error("ACTOR_TENANT_CONTEXT_DENIED");
       observedPrincipals.push({ ...capturePrincipal });
       if (capturePrincipal.issuer !== issuer || capturePrincipal.subject !== subject) throw new ActorTenantContextDeniedError();
@@ -232,10 +237,24 @@ function makeHarness(options = {}) {
       let didComplete = false;
       let committed = false;
       let readPhase = 0;
+      let verificationPhase = 0;
       const client = {
         query: async (statement, values = []) => {
           const sql = String(statement);
           if (sql.includes("pg_advisory_xact_lock")) return { rowCount: 1, rows: [] };
+          if (sql.includes("AS destination_verify_claimed_at")) {
+            verificationPhase = ++verificationChecks;
+            // Independent modeled graph only: this does not execute SQL/RLS.
+            const c = dispatchClaim;
+            const good = c && c.actorId === values[2] && c.digest === values[5] && c.count === values[6] &&
+              c.version === 3 && c.destinationCount === null && c.claimedAt instanceof Date &&
+              c.claimedAt <= c.updatedAt && c.updatedAt <= values[7] && c.claimedAt < values[8] &&
+              c.provenance && c.preflightAudit && c.dispatchAudit && c.verifyingAudit;
+            expect(values.slice(0, 5)).toEqual([ids.operation, ids.tenant, ids.actor, ids.session, ids.studyRef]);
+            expect(values.slice(9)).toEqual([ids.package, TEST_HOSPITAL_A_ID, TEST_HOSPITAL_B_ID]);
+            if (options.failVerifySql === verificationPhase) throw new Error("TEST-VERIFY-SQL-PRIVATE");
+            return { rowCount: good ? 1 : 0, rows: good ? [{ destination_verify_claimed_at: c.claimedAt }] : [] };
+          }
           if (sql.includes("AS dispatch_read_claimed_at")) {
             dispatchChecks++;
             // Independent modeled ledger/provenance predicates, NOT SQL/RLS proof.
@@ -341,6 +360,9 @@ function makeHarness(options = {}) {
           }
           if (sql.includes("INSERT INTO audit_events")) {
             const action = values[7];
+            if (action === "PACS_DESTINATION_VERIFY_AUTHORIZED" && options.failVerifyAudit === verificationPhase) {
+              throw new Error("TEST_VERIFY_AUDIT_PRIVATE");
+            }
             if (action === "PACS_TEMPORARY_READ_AUTHORIZED" && options.failReadAudit === readPhase) {
               throw new Error("TEST_PRIVATE_READ_AUDIT_FAILURE");
             }
@@ -384,6 +406,7 @@ function makeHarness(options = {}) {
         const workIdentity = options.changeIdentityAfterReservation && committedPayload
           ? { ...identity, actorId: "02000000-0000-4000-8000-000000000099" } : currentIdentity;
         const result = await work(workIdentity, client);
+        if (verificationPhase && options.failVerifyCommit === verificationPhase) throw new ActorTenantContextUnavailableError();
         if (readPhase && options.failReadCommit === readPhase) throw new ActorTenantContextUnavailableError();
         if (didReserve && options.failReservationCommit) throw new Error("TEST_RESERVATION_COMMIT_FAILURE");
         if (
@@ -398,6 +421,8 @@ function makeHarness(options = {}) {
         committedQuota = txQuota;
         committed = true;
         lifecycleEvents.push("transaction:commit");
+        if (verificationPhase && options.loseVerifyCommitAck === verificationPhase) throw new ActorTenantContextUnavailableError();
+        if (verificationPhase) options.afterVerifyCommit?.(verificationPhase);
         if (readPhase && options.loseReadCommitAck === readPhase) throw new ActorTenantContextUnavailableError();
         if (readPhase) options.afterReadCommit?.(readPhase);
         if ((didReserve && options.loseReservationCommitAck) || (didComplete && options.loseFinalCommitAck)) {
@@ -412,7 +437,7 @@ function makeHarness(options = {}) {
       } finally {
         activeTransactions -= 1;
       }
-    },
+    }),
   };
 
   const engine = new AuthorizationEngine(
@@ -423,6 +448,37 @@ function makeHarness(options = {}) {
   );
   const executor = new AuthorizationGatedOperationExecutor(actorTenantContext, engine);
   const gateway = {
+    verifyDestinationStudy: async request => {
+      expect(ownedTransactionScope.getStore()).not.toBe(true);
+      expect(request.context.hospitalId).toBe(TEST_HOSPITAL_B_ID);
+      expect(request.context.signal).toBeInstanceOf(AbortSignal);
+      expect(committedAudits.findLast(event => event[7] === "PACS_DESTINATION_VERIFY_AUTHORIZED").slice(7, 10))
+        .toEqual(["PACS_DESTINATION_VERIFY_AUTHORIZED", "ALLOW", "BEFORE_IDENTITY"]);
+      const phase = ++dicomCalls.destinationIdentity;
+      options.onDestinationIdentity?.(phase, request);
+      if (options.failDestinationIdentity === phase) throw new Error("TEST_PRIVATE_QIDO_ERROR");
+      return { studyInstanceUid: request.studyInstanceUid,
+        actualSeriesInstanceUids: [...new Set(request.expectedInstances.map(item => item.seriesInstanceUid))],
+        actualSopInstanceUids: request.expectedInstances.map(item => item.sopInstanceUid),
+        matchesExpected: true, ...(options.destinationIdentityOverride?.(phase) ?? {}) };
+    },
+    retrieveDestinationVerificationInstanceStream: async request => {
+      expect(ownedTransactionScope.getStore()).not.toBe(true);
+      expect(request.context.hospitalId).toBe(TEST_HOSPITAL_B_ID);
+      expect(committedAudits.findLast(event => event[7] === "PACS_DESTINATION_VERIFY_AUTHORIZED").slice(7, 10))
+        .toEqual(["PACS_DESTINATION_VERIFY_AUTHORIZED", "ALLOW", "BEFORE_BYTES"]);
+      const phase = ++dicomCalls.destinationBytes;
+      const item = instanceFixture.find(item => item.sopInstanceUid === request.sopInstanceUid);
+      expect(item).toBeDefined();
+      options.onDestinationOpen?.(phase, request);
+      if (options.failDestinationBytes === phase) throw new Error("TEST_PRIVATE_WADO_ERROR");
+      if (options.destinationStreamFactory) return options.destinationStreamFactory(item, request, phase);
+      return { body: new ReadableStream({ pull(controller) {
+        controller.enqueue(Uint8Array.from(item.bytes)); controller.close();
+        options.afterDestinationBytes?.(phase);
+      } }, { highWaterMark: 0 }), mediaType: "application/dicom", contentLength: item.bytes.length,
+        sopInstanceUid: item.sopInstanceUid, transferSyntaxUid: "1.2.840.10008.1.2.1" };
+    },
     retrieveStudyMetadata: async (request) => {
       expect(activeTransactions).toBe(0);
       dicomCalls.metadata += 1;
@@ -531,6 +587,15 @@ function makeHarness(options = {}) {
     get authorizationCalls() { return authorizationCalls; },
     get readChecks() { return readChecks; },
     get dispatchChecks() { return dispatchChecks; },
+    get verificationChecks() { return verificationChecks; },
+    simulateCommittedVerification(overrides = {}) {
+      currentScope = { ...currentScope, operation_state: "VERIFYING" };
+      dispatchClaim = { actorId: ids.actor, version: 3, count: 3, destinationCount: null,
+        claimedAt: new Date(now), updatedAt: new Date(now),
+        digest: pacsTransferOperationDigest({ tenantId: ids.tenant, actorId: ids.actor, exchangeSessionId: ids.session,
+          studyRefId: ids.studyRef, consentId: ids.consent, grantId: ids.grant, action: "PACS_IMPORT" }),
+        provenance: true, preflightAudit: true, dispatchAudit: true, verifyingAudit: true, ...overrides };
+    },
     simulateCommittedDispatch(overrides = {}) {
       currentScope = { ...currentScope, operation_state: "STOW_STARTED" };
       dispatchClaim = { actorId: ids.actor, version: 2, count: 3, claimedAt: new Date(now),
@@ -683,6 +748,264 @@ function readCommand(handoff, overrides = {}) {
     consentId: ids.consent, grantId: ids.grant, handoff,
     objectRef: handoff.temporaryPackage.instances[0].objectRef, ...overrides };
 }
+
+function destinationCommand(handoff, overrides = {}) {
+  return { principal, tenantCandidate: ids.tenant, correlationId: ids.correlation,
+    consentId: ids.consent, grantId: ids.grant, handoff, ...overrides };
+}
+
+describe("DEC-022-A owned whole destination verifier (model DB, real engine/crypto/hash)", () => {
+  it("compares all exact bytes sequentially, identity before/after and11 committed fresh authority checkpoints", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification();
+      const proof = await h.service.verifyDestinationIntegrity(destinationCommand(handoff));
+      expect(proof).toEqual({ operationId: ids.operation, exchangeSessionId: ids.session,
+        packageId: ids.package, studyRefId: ids.studyRef, sourceEvidenceId: handoff.sourceEvidence.evidenceId,
+        algorithm: handoff.sourceEvidence.algorithm, aggregateDigest: handoff.sourceEvidence.aggregateDigest,
+        objectCount: 3, totalBytes: 12, comparedAt: now.toISOString() });
+      expect(Object.isFrozen(proof)).toBe(true);
+      expect(h.verificationChecks).toBe(11);
+      expect(h.authorizationCalls).toBe(14);
+      expect(h.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationIdentity: 2, destinationBytes: 3, destinationWrites: 0 });
+      expect(h.activeTransactions).toBe(0);
+      expect(h.operationState).toBe("VERIFYING");
+      expect(h.committedEvidence).toHaveLength(1);
+      expect(h.committedEvidence[0]).toMatchObject({ status: "PENDING", verification_stage: "SOURCE_CAPTURE", verified_at: null });
+      expect(h.payloadState.state).toBe("AVAILABLE");
+      expect(auditActions(h).filter(item => item.action === "PACS_DESTINATION_VERIFY_AUTHORIZED").map(item => item.reason))
+        .toEqual(["BEFORE_IDENTITY", "AFTER_IDENTITY", "BEFORE_BYTES", "AFTER_BYTES", "BEFORE_BYTES", "AFTER_BYTES",
+          "BEFORE_BYTES", "AFTER_BYTES", "BEFORE_IDENTITY", "AFTER_IDENTITY", "FINAL"]);
+      expect(JSON.stringify(proof)).not.toMatch(/2\.25\.|TEST-PATIENT|localPatientId|bytes|credential|VERIFIED|COMPLETED/);
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls.destinationIdentity).toBe(2);
+    });
+  });
+
+  it.each([
+    ["clone", handoff => ({ handoff: { ...handoff } })],
+    ["JSON clone", handoff => ({ handoff: JSON.parse(JSON.stringify(handoff)) })],
+    ["caller permit", () => ({ permit: "VERIFIED" })],
+    ["caller verifier", () => ({ verifyAccess: () => "VERIFIED" })],
+    ["endpoint", () => ({ endpointUrl: "https://private.invalid" })],
+    ["operation selector", () => ({ operationId: ids.operation })],
+    ["principal getter", () => ({ principal: Object.defineProperty({}, "issuer", { enumerable: true, get() { throw new Error("PRIVATE_GETTER_EXECUTED"); } }) })],
+    ["principal Proxy", () => ({ principal: new Proxy(principal, { ownKeys() { throw new Error("PRIVATE_PROXY_EXECUTED"); } }) })],
+    ["signal Proxy", () => ({ signal: new Proxy(new AbortController().signal, { getPrototypeOf() { throw new Error("PRIVATE_PROXY_EXECUTED"); } }) })],
+    ["signal shadow", () => ({ signal: Object.defineProperty(new AbortController().signal, "aborted", { get() { throw new Error("PRIVATE_GETTER_EXECUTED"); } }) })],
+  ])("rejects %s before any B read/authority or caller code execution", async (_name, override) => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff, override(handoff))))
+        .rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.authorizationCalls).toBe(3);
+      expect(h.verificationChecks).toBe(0);
+      expect(h.dicomCalls.destinationIdentity + h.dicomCalls.destinationBytes).toBe(0);
+    });
+  });
+
+  it("rejects outer getter/Proxy/revoked Proxy/symbols without executing traps, and another service cannot reuse handoff", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification();
+      let executions = 0;
+      const getter = Object.defineProperty(destinationCommand(handoff), "grantId", { enumerable: true, get() { executions++; return ids.grant; } });
+      const proxy = new Proxy(destinationCommand(handoff), { getPrototypeOf() { executions++; return Object.prototype; } });
+      const revoked = Proxy.revocable(destinationCommand(handoff), {}); revoked.revoke();
+      for (const input of [getter, proxy, revoked.proxy, { ...destinationCommand(handoff), [Symbol("private")]: true }]) {
+        await expect(h.service.verifyDestinationIntegrity(input)).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      }
+      await expect(makeHarness().service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(executions).toBe(0);
+      expect(h.dicomCalls.destinationIdentity).toBe(0);
+    });
+  });
+
+  it.each([
+    ["inactive actor", h => h.changeIdentity(null)],
+    ["different actor", h => h.changeIdentity({ actorId: ids.mapping })],
+    ["different Tenant", h => h.changeIdentity({ tenantId: ids.mapping })],
+    ["different Hospital", h => h.changeIdentity({ hospitalId: TEST_HOSPITAL_A_ID })],
+    ["withdrawn Consent", h => { h.consentStatus = "WITHDRAWN"; }],
+    ["revoked Grant", h => h.changeAuthorization({ grantStatus: "REVOKED" })],
+    ["expired Grant", h => h.changeAuthorization({ grantExpiresAt: new Date(now.getTime() - 1) })],
+    ["VIEW only Grant", h => h.changeAuthorization({ grantScopes: ["study:read"] })],
+    ["DOWNLOAD only Grant", h => h.changeAuthorization({ grantScopes: ["study:download"] })],
+    ["VIEW only Consent", h => h.changeAuthorization({ allowedActions: ["VIEW"] })],
+    ["revoked mapping", h => h.changeMapping({ status: "REVOKED" })],
+    ["mapping replaced", h => h.changeMapping({ mapping_id: ids.patient })],
+    ["local Patient ID", h => h.changeMapping({ local_patient_id: "TEST-OTHER" })],
+    ["different patient", h => h.changeScope({ patient_ref_id: ids.mapping })],
+    ["different package", h => h.changeScope({ package_id: ids.mapping })],
+    ["wrong destination", h => h.changeScope({ destination_hospital_id: TEST_HOSPITAL_A_ID })],
+    ["source changed", h => h.changeScope({ source_hospital_id: TEST_HOSPITAL_B_ID })],
+    ["CREATED state", h => h.changeScope({ operation_state: "CREATED" })],
+    ["STOW_STARTED state", h => h.changeScope({ operation_state: "STOW_STARTED" })],
+    ["completed state", h => h.changeScope({ operation_state: "COMPLETED" })],
+    ["pending purge", h => { h.payloadState.state = "PURGE_PENDING"; }],
+    ["source evidence changed", h => { h.committedEvidence[0].source_digest = `sha256:${"0".repeat(64)}`; }],
+    ["source promoted", h => { h.committedEvidence[0].status = "VERIFIED"; }],
+  ])("denies %s before B I/O", async (_name, mutate) => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification(); mutate(h);
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls.destinationIdentity + h.dicomCalls.destinationBytes).toBe(0);
+    });
+  });
+
+  it.each([
+    ["owner", { actorId: ids.mapping }], ["digest", { digest: "0".repeat(64) }],
+    ["count", { count: 2 }], ["version", { version: 2 }], ["destination count", { destinationCount: 3 }],
+    ["pending provenance", { provenance: false }], ["preflight Audit", { preflightAudit: false }],
+    ["dispatch Audit", { dispatchAudit: false }], ["verifying Audit", { verifyingAudit: false }],
+    ["future updated time", { updatedAt: new Date(now.getTime() + 1) }],
+  ])("rejects contradictory durable %s (modeled query, not real SQL)", async (_name, contradiction) => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification(contradiction);
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.verificationChecks).toBe(1);
+      expect(h.dicomCalls.destinationIdentity).toBe(0);
+    });
+  });
+
+  it.each(["failVerifyAudit", "failVerifyCommit", "loseVerifyCommitAck"])("%s at first positive gate blocks I/O and cannot turn acknowledgement loss into retry", async fault => {
+    await withLifecycle({ [fault]: 1 }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.verificationChecks).toBe(1);
+      expect(h.dicomCalls.destinationIdentity + h.dicomCalls.destinationBytes).toBe(0);
+    });
+  });
+
+  it("concurrent same-handoff attempts admit exactly one complete read pass", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      const results = await Promise.allSettled([h.service.verifyDestinationIntegrity(destinationCommand(handoff)),
+        h.service.verifyDestinationIntegrity(destinationCommand(handoff))]);
+      expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter(result => result.status === "rejected")[0].reason.message).toBe("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls).toMatchObject({ destinationIdentity: 2, destinationBytes: 3, destinationWrites: 0 });
+    });
+  });
+
+  it.each(["same-length tamper", "truncation", "syntax"])("rejects %s with no internal proof or second-instance read", async fault => {
+    await withLifecycle({ destinationStreamFactory(item) {
+      const bytes = Uint8Array.from(item.bytes);
+      if (fault === "same-length tamper") bytes[0] ^= 1;
+      const body = new ReadableStream({ start(controller) { controller.enqueue(fault === "truncation" ? bytes.slice(0, -1) : bytes); controller.close(); } });
+      return { body, mediaType: "application/dicom", sopInstanceUid: item.sopInstanceUid,
+        transferSyntaxUid: fault === "syntax" ? "1.2.840.10008.1.2" : "1.2.840.10008.1.2.1" };
+    } }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls).toMatchObject({ destinationIdentity: 1, destinationBytes: 1, destinationWrites: 0 });
+    });
+  });
+
+  it.each([1, 2])("rejects wrong exact identity at scan%s even if matchesExpected is true", async phase => {
+    await withLifecycle({ destinationIdentityOverride(scan) { return scan === phase ? { actualSopInstanceUids: ["2.25.999"] } : {}; } }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls.destinationBytes).toBe(phase === 1 ? 0 : 3);
+    });
+  });
+
+  it("revocation during byte delivery is caught after EOF and stops later reads/proof", async () => {
+    let harness;
+    await withLifecycle({ afterDestinationBytes(phase) { if (phase === 1) harness.consentStatus = "WITHDRAWN"; } }, async h => {
+      harness = h;
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls).toMatchObject({ destinationIdentity: 1, destinationBytes: 1 });
+    });
+  });
+
+  it.each(["whole deadline", "temporary expiry", "backward clock"])("enforces %s across identity and bytes, not per-operation resets", async fault => {
+    let harness;
+    await withLifecycle({ onDestinationIdentity() {
+      harness.captureTime = new Date(now.getTime() + (fault === "backward clock" ? -1 : fault === "whole deadline" ? 300000 : 1800000));
+    } }, async h => {
+      harness = h;
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls.destinationBytes).toBe(0);
+    });
+  });
+
+  it("mid-stream native abort cancels the reader and returns only fixed safe error", async () => {
+    const abort = new AbortController(); let cancelled = 0;
+    await withLifecycle({ destinationStreamFactory(item) {
+      return { body: new ReadableStream({ pull(controller) { controller.enqueue(item.bytes.slice(0, 1)); abort.abort(new Error("PRIVATE_REASON")); },
+        cancel() { cancelled++; } }, { highWaterMark: 0 }), mediaType: "application/dicom",
+        sopInstanceUid: item.sopInstanceUid, transferSyntaxUid: "1.2.840.10008.1.2.1" };
+    } }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff, { signal: abort.signal }))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(cancelled).toBe(1);
+      expect(h.dicomCalls.destinationBytes).toBe(1);
+    });
+  });
+
+  it.each(["final Audit", "post-read SQL", "second identity", "byte I/O"])("%s failure yields no proof or product completion", async fault => {
+    const options = fault === "final Audit" ? { failVerifyAudit: 11 } : fault === "post-read SQL" ? { failVerifySql: 4 }
+      : fault === "second identity" ? { failDestinationIdentity: 2 } : { failDestinationBytes: 2 };
+    await withLifecycle(options, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.operationState).toBe("VERIFYING"); expect(h.dicomCalls.destinationWrites).toBe(0);
+      expect(h.dicomCalls.destinationIdentity).toBe(fault === "post-read SQL" ? 1 : fault === "byte I/O" ? 1 : 2);
+      expect(h.dicomCalls.destinationBytes).toBe(fault === "post-read SQL" ? 1 : fault === "byte I/O" ? 2 : 3);
+      expect(h.committedEvidence).toHaveLength(1); expect(h.committedEvidence[0].status).toBe("PENDING");
+    });
+  });
+
+  it("post-identity Consent withdrawal stops final proof after all bytes were read", async () => {
+    let harness;
+    await withLifecycle({ onDestinationIdentity(phase) { if (phase === 2) harness.consentStatus = "WITHDRAWN"; } }, async h => {
+      harness = h;
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff))).rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.dicomCalls).toMatchObject({ destinationIdentity: 2, destinationBytes: 3, destinationWrites: 0 });
+      expect(auditActions(h).at(-1)).toEqual({ action: "PACS_DESTINATION_VERIFY_FAILED", result: "FAILURE", reason: "DESTINATION_VERIFY_FAILED" });
+    });
+  });
+
+  it("pre-abort rejects before any B operation and does not consume an unstarted handoff", async () => {
+    await withLifecycle({}, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      const abort = new AbortController(); abort.abort(new Error("PRIVATE_REASON"));
+      await expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff, { signal: abort.signal })))
+        .rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+      expect(h.verificationChecks).toBe(0); expect(h.dicomCalls.destinationIdentity).toBe(0);
+      const proof = await h.service.verifyDestinationIntegrity(destinationCommand(handoff));
+      expect(proof.objectCount).toBe(3);
+    });
+  });
+
+  it("single real watchdog timer cancels a stalled reader and is disposed after timeout", async () => {
+    let cancelled = 0;
+    await withLifecycle({ destinationStreamFactory(item) {
+      return { body: new ReadableStream({ pull() { return new Promise(() => {}); }, cancel() { cancelled++; } }, { highWaterMark: 0 }),
+        mediaType: "application/dicom", sopInstanceUid: item.sopInstanceUid, transferSyntaxUid: "1.2.840.10008.1.2.1" };
+    } }, async h => {
+      const { handoff } = await h.service.captureForCoordinator(command()); h.simulateCommittedVerification();
+      vi.useFakeTimers();
+      try {
+        const rejection = expect(h.service.verifyDestinationIntegrity(destinationCommand(handoff)))
+          .rejects.toThrow("DESTINATION_INTEGRITY_UNAVAILABLE");
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.dicomCalls.destinationBytes).toBe(1);
+        await vi.advanceTimersByTimeAsync(300000);
+        await rejection;
+        expect(cancelled).toBe(1); expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); }
+    });
+  });
+});
 
 describe("DEC-017 R2 concrete read authorization (model DB, real engine/crypto)", () => {
   it("checks twice outside I/O, records admission not delivery, returns no bytes and zeroes borrowed memory", async () => {
