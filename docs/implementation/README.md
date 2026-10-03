@@ -80,7 +80,9 @@ PowerShell에서 다음 명령으로 기록을 생성한다.
 
 ## 6. 구현 기록 색인
 
-**Latest checkpoint — MEDIQ-PACS-001 (2026-10-03, DEC-011):** The current commit adds deterministic store and DB failure tests. API build/regression is **37 files / 697 tests PASS** (store suite 20 cases); the new DB-008 `-ScratchOnly` run is still unconfirmed at commit checkpoint. `STAGE-005` and the Ticket remain **PARTIAL**. This note supersedes the DEC-010 counts in the historical row below; its earlier DB PASS does not certify DEC-011. See [current report](MEDIQ-PACS-001/IMPLEMENTATION-REPORT.md#11-dec-011-current-commit-checkpoint) and [evidence §21](MEDIQ-PACS-001/TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending).
+**Current commit checkpoint — MEDIQ-PACS-001 (2026-10-03; supersedes older notes/row):** DEC-013 borrowed plaintext boundary implemented; lifetime 21/21, typecheck and revised 2 GiB/2,000-object primitive workload/cleanup PASS. DEC-014 actual-adapter backpressure regression FAIL (3 other concurrency tests PASS); adapter repair not included. API 722 PASS is historical, before this new failing test. DEC-011 scratch final exit/cleanup unconfirmed; STAGE-005/009 and Ticket PARTIAL, no runtime/STOW activation. [Evidence §25](MEDIQ-PACS-001/TEST-EVIDENCE.md#25-dec-013014-current-commit-checkpoint).
+
+**Latest checkpoint — MEDIQ-PACS-001 (2026-10-03, DEC-012):** Test-only maximum-workload, adapter concurrency and cooperative cleanup work added. Standalone API **38 files / 701 tests PASS**, including three new adapter cases and one cancellation case (store suite now 21). The maximum-workload rerun and unchanged DB-008 ScratchOnly wrapper are still running; STAGE-005/009 and the Ticket remain **PARTIAL**. No runtime activation. The older row below is historical; use [current report](MEDIQ-PACS-001/IMPLEMENTATION-REPORT.md) and [evidence §23](MEDIQ-PACS-001/TEST-EVIDENCE.md#23-dec-012-execution-and-test-cleanup-correction), including failed attempts and residual empty test files.
 
 | Ticket | 분류 | 제목 | 상태 | 보고서 |
 |---|---|---|---|---|

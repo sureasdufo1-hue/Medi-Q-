@@ -8,6 +8,7 @@ import {
 } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 
 const roots = [];
+const pendingObjectCountExercises = new Set();
 const packageBinding = Object.freeze({
   tenantId: "10000000-0000-4000-8000-000000000001",
   exchangeSessionId: "20000000-0000-4000-8000-000000000001",
@@ -21,8 +22,11 @@ const instanceBinding = Object.freeze({
 });
 
 afterEach(async () => {
+  // A test timeout aborts its signal but does not await its async finally block.
+  // Drain cooperative writer cleanup before removing any filesystem roots.
+  await Promise.allSettled([...pendingObjectCountExercises]);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-});
+}, 30_000);
 
 async function setup(options = {}) {
   const root = await mkdtemp(join(tmpdir(), "mediq-temp-imaging-"));
@@ -51,8 +55,10 @@ function stage(store, handle, bytes, binding = instanceBinding) {
   });
 }
 
-function read(store, handle, receipt, overrides = {}) {
-  return store.readInstance({
+async function read(store, handle, receipt, overrides = {}) {
+  let result;
+  // Synthetic assertion copy only; runtime consumers must not retain plaintext.
+  await store.consumeInstance({
     storageRef: handle.storageRef,
     objectRef: receipt.objectRef,
     packageBinding,
@@ -60,7 +66,49 @@ function read(store, handle, receipt, overrides = {}) {
     expectedByteLength: receipt.byteLength,
     expectedSha256: receipt.sha256,
     ...overrides,
-  });
+  }, async () => "VERIFIED", async (bytes) => { result = Buffer.from(bytes); });
+  return result;
+}
+
+async function exerciseObjectCountBound({ storageRoot, store, handle }, signal) {
+  const writers = [];
+  try {
+    for (let index = 1; index <= 2_000; index += 1) {
+      signal.throwIfAborted();
+      writers.push(await store.beginInstance({
+        storageRef: handle.storageRef,
+        packageBinding,
+        instanceBinding: {
+          studyRefId: instanceBinding.studyRefId,
+          seriesInstanceUid: instanceBinding.seriesInstanceUid,
+          sopInstanceUid: `2.25.${100_000 + index}`,
+        },
+      }));
+    }
+    signal.throwIfAborted();
+    await expect(store.beginInstance({
+      storageRef: handle.storageRef,
+      packageBinding,
+      instanceBinding: {
+        studyRefId: instanceBinding.studyRefId,
+        seriesInstanceUid: instanceBinding.seriesInstanceUid,
+        sopInstanceUid: "2.25.999999",
+      },
+    })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    expect(await readdir(join(storageRoot, handle.storageRef))).toHaveLength(2_000);
+  } finally {
+    for (let offset = 0; offset < writers.length; offset += 100) {
+      await Promise.all(writers.slice(offset, offset + 100).map((writer) => writer.abort()));
+    }
+  }
+  expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
+}
+
+async function trackedObjectCountExercise(fixture, signal) {
+  const exercise = exerciseObjectCountBound(fixture, signal);
+  pendingObjectCountExercises.add(exercise);
+  try { await exercise; }
+  finally { pendingObjectCountExercises.delete(exercise); }
 }
 
 describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
@@ -99,14 +147,14 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     await store.sealPackage({ storageRef: handle.storageRef, binding: packageBinding });
 
     await expect(
-      store.readInstance({
+      store.consumeInstance({
         storageRef: handle.storageRef,
         objectRef: receipt.objectRef,
         packageBinding: { ...packageBinding, tenantId: "10000000-0000-4000-8000-000000000002" },
         instanceBinding,
         expectedByteLength: receipt.byteLength,
         expectedSha256: receipt.sha256,
-      }),
+      }, async () => "VERIFIED", async () => {}),
     ).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
     await expect(
       read(store, handle, receipt, {
@@ -210,38 +258,27 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
     expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
   });
 
-  it("rejects the 2,001st concurrently staged object", async () => {
-    const { storageRoot, store, handle } = await setup();
-    const writers = [];
-    try {
-      for (let index = 1; index <= 2_000; index += 1) {
-        writers.push(await store.beginInstance({
-          storageRef: handle.storageRef,
-          packageBinding,
-          instanceBinding: {
-            studyRefId: instanceBinding.studyRefId,
-            seriesInstanceUid: instanceBinding.seriesInstanceUid,
-            sopInstanceUid: `2.25.${100_000 + index}`,
-          },
-        }));
-      }
-      await expect(store.beginInstance({
-        storageRef: handle.storageRef,
-        packageBinding,
-        instanceBinding: {
-          studyRefId: instanceBinding.studyRefId,
-          seriesInstanceUid: instanceBinding.seriesInstanceUid,
-          sopInstanceUid: "2.25.999999",
-        },
-      })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
-      expect(await readdir(join(storageRoot, handle.storageRef))).toHaveLength(2_000);
-    } finally {
-      for (let offset = 0; offset < writers.length; offset += 100) {
-        await Promise.all(writers.slice(offset, offset + 100).map((writer) => writer.abort()));
-      }
-    }
-    expect(await readdir(join(storageRoot, handle.storageRef))).toEqual([]);
+  it("rejects the 2,001st concurrently staged object", async ({ signal }) => {
+    await trackedObjectCountExercise(await setup(), signal);
   }, 30_000);
+
+  it("stops a cancelled object-count exercise and closes every opened writer before teardown", async () => {
+    const fixture = await setup();
+    const controller = new AbortController();
+    let opened = 0;
+    const wrappedStore = {
+      async beginInstance(input) {
+        const writer = await fixture.store.beginInstance(input);
+        if (++opened === 3) controller.abort();
+        return writer;
+      },
+    };
+    await expect(trackedObjectCountExercise({ ...fixture, store: wrappedStore }, controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(opened).toBe(3);
+    expect(pendingObjectCountExercises.size).toBe(0);
+    expect(await readdir(join(fixture.storageRoot, fixture.handle.storageRef))).toEqual([]);
+  });
 
   it("reserves the in-process environment quota before concurrent file writes", async () => {
     const { store, handle } = await setup({
@@ -357,14 +394,7 @@ describe("P0 ephemeral AES-256-GCM temporary imaging spool primitive", () => {
       storageRef,
       actualBytes: bytes.byteLength,
     });
-    expect(await reservedStore.readInstance({
-      storageRef,
-      objectRef: receipt.objectRef,
-      packageBinding,
-      instanceBinding,
-      expectedByteLength: receipt.byteLength,
-      expectedSha256: receipt.sha256,
-    })).toEqual(bytes);
+    expect(await read(reservedStore, { storageRef }, receipt)).toEqual(bytes);
   });
 
   it("reserves additional 16 MiB blocks and fails closed if quota admission fails", async () => {

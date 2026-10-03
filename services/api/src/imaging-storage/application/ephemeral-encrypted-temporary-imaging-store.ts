@@ -109,6 +109,27 @@ export interface TemporaryImagingInstanceWriter {
   abort(): Promise<void>;
 }
 
+export interface TemporaryImagingInstanceReadRequest {
+  readonly storageRef: string;
+  readonly objectRef: string;
+  readonly packageBinding: TemporaryImagingPackageBinding;
+  readonly instanceBinding: TemporaryImagingInstanceBinding;
+  readonly expectedByteLength: number;
+  readonly expectedSha256: `sha256:${string}`;
+}
+
+/** Trusted operation-time verifier; never supplied by an HTTP/mobile caller. */
+export type TemporaryImagingReadAccessVerifier = (
+  request: TemporaryImagingInstanceReadRequest,
+  signal: AbortSignal,
+) => Promise<"VERIFIED">;
+
+/** Borrowed bytes: consume asynchronously, do not retain or copy after return. */
+export type TemporaryImagingInstanceConsumer = (
+  plaintext: Buffer,
+  signal: AbortSignal,
+) => Promise<void>;
+
 export type TemporaryImagingStorageErrorCode =
   | "INVALID_INPUT"
   | "BINDING_MISMATCH"
@@ -120,6 +141,10 @@ export type TemporaryImagingStorageErrorCode =
   | "INTEGRITY_FAILED"
   | "QUOTA_UNAVAILABLE"
   | "RECOVERY_REQUIRED"
+  | "CAPACITY_EXCEEDED"
+  | "AUTHORIZATION_DENIED"
+  | "CONSUMER_FAILED"
+  | "ABORTED"
   | "STORAGE_UNAVAILABLE";
 
 /** Deliberately contains no path, UID, payload, Tenant ID, or crypto detail. */
@@ -129,6 +154,61 @@ export class TemporaryImagingStorageError extends Error {
     this.name = "TemporaryImagingStorageError";
   }
 }
+
+/** No payloads/keys are allocated for queued requests. Shared within this module. */
+class AuthenticatedPlaintextAdmission {
+  private active = false;
+  private readonly queue: Array<{
+    readonly signal: AbortSignal;
+    readonly onAbort: () => void;
+    readonly resolve: (release: () => void) => void;
+    readonly reject: (error: TemporaryImagingStorageError) => void;
+  }> = [];
+
+  acquire(signal: AbortSignal): Promise<() => void> {
+    if (signal.aborted) return Promise.reject(new TemporaryImagingStorageError("ABORTED"));
+    if (!this.active) {
+      this.active = true;
+      return Promise.resolve(this.releaseOnce());
+    }
+    if (this.queue.length >= 8) {
+      return Promise.reject(new TemporaryImagingStorageError("CAPACITY_EXCEEDED"));
+    }
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        signal, resolve, reject,
+        onAbort: () => {
+          const index = this.queue.indexOf(waiter);
+          if (index >= 0) this.queue.splice(index, 1);
+          reject(new TemporaryImagingStorageError("ABORTED"));
+        },
+      };
+      signal.addEventListener("abort", waiter.onAbort, { once: true });
+      this.queue.push(waiter);
+    });
+  }
+
+  private releaseOnce(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      let waiter;
+      while ((waiter = this.queue.shift())) {
+        waiter.signal.removeEventListener("abort", waiter.onAbort);
+        if (waiter.signal.aborted) {
+          waiter.reject(new TemporaryImagingStorageError("ABORTED"));
+          continue;
+        }
+        waiter.resolve(this.releaseOnce());
+        return;
+      }
+      this.active = false;
+    };
+  }
+}
+
+const AUTHENTICATED_PLAINTEXT_ADMISSION = new AuthenticatedPlaintextAdmission();
 
 interface StoredObject {
   readonly receipt: TemporaryImagingInstanceReceipt;
@@ -693,15 +773,68 @@ export class EphemeralEncryptedTemporaryImagingStore {
     });
   }
 
-  async readInstance(input: {
-    readonly storageRef: string;
-    readonly objectRef: string;
-    readonly packageBinding: TemporaryImagingPackageBinding;
-    readonly instanceBinding: TemporaryImagingInstanceBinding;
-    readonly expectedByteLength: number;
-    readonly expectedSha256: `sha256:${string}`;
-  }): Promise<Buffer> {
-    await this.ready;
+  /**
+   * Internal borrowed lifetime, not an authorization capability. The trusted
+   * coordinator must supply the actual operation-time verifier. Neither a
+   * default allow verifier nor a raw plaintext return path exists.
+   */
+  async consumeInstance(
+    input: TemporaryImagingInstanceReadRequest & { readonly signal?: AbortSignal },
+    verifyAccess: TemporaryImagingReadAccessVerifier,
+    consume: TemporaryImagingInstanceConsumer,
+  ): Promise<void> {
+    if (
+      !input || typeof verifyAccess !== "function" || typeof consume !== "function" ||
+      (input.signal !== undefined && !(input.signal instanceof AbortSignal))
+    ) storageError("INVALID_INPUT");
+    const signal = input.signal ?? new AbortController().signal;
+    const request = Object.freeze({
+      storageRef: input.storageRef,
+      objectRef: input.objectRef,
+      packageBinding: Object.freeze({
+        tenantId: input.packageBinding?.tenantId,
+        exchangeSessionId: input.packageBinding?.exchangeSessionId,
+        packageId: input.packageBinding?.packageId,
+        purpose: input.packageBinding?.purpose,
+      }),
+      instanceBinding: Object.freeze({
+        studyRefId: input.instanceBinding?.studyRefId,
+        seriesInstanceUid: input.instanceBinding?.seriesInstanceUid,
+        sopInstanceUid: input.instanceBinding?.sopInstanceUid,
+      }),
+      expectedByteLength: input.expectedByteLength,
+      expectedSha256: input.expectedSha256,
+    });
+    const release = await AUTHENTICATED_PLAINTEXT_ADMISSION.acquire(signal);
+    let plaintext: Buffer | null = null;
+    const checkAccess = async () => {
+      if (signal.aborted) storageError("ABORTED");
+      try {
+        if (await verifyAccess(request, signal) !== "VERIFIED") storageError("AUTHORIZATION_DENIED");
+      }
+      catch { storageError(signal.aborted ? "ABORTED" : "AUTHORIZATION_DENIED"); }
+      if (signal.aborted) storageError("ABORTED");
+    };
+    try {
+      await checkAccess();
+      plaintext = await this.#readAuthenticatedInstance(request, signal);
+      await checkAccess();
+      // Expiry or a concurrent purge may have happened during final verifier I/O.
+      this.#assertReadableInstance(request);
+      try { await consume(plaintext, signal); }
+      catch { storageError(signal.aborted ? "ABORTED" : "CONSUMER_FAILED"); }
+      if (signal.aborted) storageError("ABORTED");
+    } finally {
+      // Never race-release on abort: the active consumer must actually settle.
+      plaintext?.fill(0);
+      release();
+    }
+  }
+
+  #assertReadableInstance(input: TemporaryImagingInstanceReadRequest): {
+    storedPackage: StoredPackage;
+    storedObject: StoredObject;
+  } {
     const storedPackage = this.getPackage(input.storageRef);
     this.assertPackageBinding(storedPackage, input.packageBinding);
     if (!storedPackage.sealed || storedPackage.expiresAt === null) storageError("PACKAGE_NOT_SEALED");
@@ -722,6 +855,16 @@ export class EphemeralEncryptedTemporaryImagingStore {
     ) {
       storageError("INTEGRITY_FAILED");
     }
+    return { storedPackage, storedObject };
+  }
+
+  async #readAuthenticatedInstance(
+    input: TemporaryImagingInstanceReadRequest,
+    signal: AbortSignal,
+  ): Promise<Buffer> {
+    await this.ready;
+    if (signal.aborted) storageError("ABORTED");
+    const { storedPackage, storedObject } = this.#assertReadableInstance(input);
     const fileInfo = await lstat(storedObject.filePath).catch(() => null);
     if (!fileInfo || fileInfo.isSymbolicLink() || !fileInfo.isFile() || fileInfo.size !== storedObject.receipt.byteLength) {
       storageError("INTEGRITY_FAILED");
@@ -754,7 +897,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
           callback();
         },
       });
-      await pipeline(createReadStream(storedObject.filePath), decipher, collector);
+      await pipeline(createReadStream(storedObject.filePath), decipher, collector, { signal });
       if (decryptedBytes !== storedObject.receipt.byteLength) {
         storageError("INTEGRITY_FAILED");
       }
@@ -765,12 +908,13 @@ export class EphemeralEncryptedTemporaryImagingStore {
       ) {
         storageError("INTEGRITY_FAILED");
       }
-      if (this.now() >= storedPackage.expiresAt || storedPackage.purgePending) {
+      if (storedPackage.expiresAt === null || this.now() >= storedPackage.expiresAt || storedPackage.purgePending) {
         storageError(storedPackage.purgePending ? "STORAGE_UNAVAILABLE" : "EXPIRED");
       }
       return plaintextBuffer;
     } catch (error) {
       plaintext?.fill(0);
+      if (signal.aborted) storageError("ABORTED");
       if (error instanceof TemporaryImagingStorageError) throw error;
       throw new TemporaryImagingStorageError("INTEGRITY_FAILED");
     } finally {

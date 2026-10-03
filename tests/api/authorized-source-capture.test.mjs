@@ -584,7 +584,7 @@ describe("AuthorizedSourceCaptureService", () => {
         });
         expect(stored).toBeDefined();
         expect(source).toBeDefined();
-        const bytes = await store.readInstance({
+        await store.consumeInstance({
           storageRef: temporaryPackage.storageRef,
           objectRef: stored.objectRef,
           packageBinding: binding,
@@ -595,8 +595,10 @@ describe("AuthorizedSourceCaptureService", () => {
           },
           expectedByteLength: expected.byteLength,
           expectedSha256: expected.sha256,
+        }, async () => "VERIFIED", async (bytes) => {
+          // Synthetic capture harness only, not a production access verifier.
+          expect(bytes).toEqual(Buffer.from(source.bytes));
         });
-        expect(bytes).toEqual(Buffer.from(source.bytes));
       }
 
       expect(handoff.sourceEvidence.totalBytes).toBe(temporaryPackage.totalBytes);

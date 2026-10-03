@@ -561,3 +561,79 @@ git diff --check
 **Earlier failed attempts retained:** Initial type checks rejected implicit parameter types and the overloaded `FileHandle.write` return type in the new seam; explicit port typing and a bytesWritten-only result resolved them. One API run had 696 PASS / 1 FAIL because the new test expected a value from void `purgeByReference`; correcting that assertion yielded 697/697. These failures were not treated as completion evidence.
 
 **Not verified / remaining work:** Observe the existing scratch run to final exit and cleanup, record real `FAIL-003/004` outcomes, then reconcile full `STAGE-005` Acceptance and baseline documents. Do not mark the fault matrix PASS before that. Maximum-Study/backpressure, verified Tenant SERVICE cleanup, privacy/log serialization, runtime activation, Orthanc no-side-effect integration, full coordinator/Preflight/STOW/destination verification and P0 E2E remain separate gates. No additional DB run or persistent DB/Orthanc mutation was initiated for this commit request.
+
+## 22. DEC-012 maximum-Study pre-implementation record
+
+Recommendation `PACS-001-DEC-012` and `TC-PACS-001-STAGE-009-MAX-001` are recorded before adding the test. The existing DEC-011 scratch run has emitted its first `pacs001_temporary_payload_runtime=PASS` and DB-009 access-boundary PASS; the full wrapper is still running, not restarted, and not yet accepted as complete.
+
+The new workload will use a unique local temporary directory and generated synthetic bytes only. Disk free-space inspection found approximately 1.2 TB free on C:, and the test itself will require at least 4 GiB before allocation. Planned command: `node --test tests/performance/temporary-imaging-maximum-study.test.mjs`, after `npm run build:api`. It is outside the normal API regression set. No runtime code, DB, network, patient data or STOW will be used. Status: **NOT RUN**; full STAGE-009 remains unverified even if this workload passes.
+
+## 23. DEC-012 execution and test-cleanup correction
+
+**Date:** 2026-10-03 Asia/Seoul. This section supersedes §§21–22's current-state notes, while preserving those historical observations. All new code in this continuation is test-only; production runtime, schema, grants, API and STOW behavior are unchanged.
+
+### Commands and results
+
+| Command / observation | Result |
+|---|---|
+| `npm run build:api` and `node --check tests/performance/temporary-imaging-maximum-study.test.mjs` | Exit 0 |
+| `node --test tests/performance/temporary-imaging-maximum-study.test.mjs` — first run | Exit 1; cancelled by the initial 600,000 ms harness timeout (total 606,121 ms). No complete maximum-workload result. Post-exit read-only inspection found zero `mediq-max-study-*` temporary directories; this attempt's cleanup completed |
+| `npx vitest run tests/api/orthanc-dicomweb-concurrency.test.mjs` — first run | 0/3: synthetic.invalid was rejected by the existing endpoint allowlist before HTTP. Corrected only the mock resolver's origin to the approved Test Orthanc shape; the injected responder still makes zero real HTTP requests |
+| Same focused concurrency command after fixture correction | Exit 0; 3/3 PASS — EOF, cancellation, bounded waiters/cancelled-queue recovery |
+| `npm run test:api` while maximum workload was running | Exit 1; 38 files, 699/700 passed. Existing 2,000-writer case timed out at 30 seconds; afterEach raced continuing writer creation, causing ENOTEMPTY and a FileHandle GC warning. This failed run is not regression acceptance |
+| `npx vitest run tests/api/ephemeral-encrypted-temporary-imaging-store.test.mjs -t 'stops a cancelled object-count'` | Exit 0; 1 PASS / 20 intentionally unselected. Deterministic cancellation after exactly three creations opened no fourth writer, drained/closed every writer and left an empty object directory |
+| `npm run test:api` after workload termination and cleanup correction | Exit 0; **38 files / 701 tests PASS**, start 11:56:38 KST, duration 22.85 seconds. Existing 2,000-object assertion and 30-second timeout unchanged; cleanup now waits for cooperative cancellation/finally completion |
+| Corrected-budget `node --test tests/performance/temporary-imaging-maximum-study.test.mjs` | Launched after API completion, approximately 11:58 KST. **RUNNING**, no final result yet. Same 2 GiB/2,000 objects/64 MiB instance/64 KiB chunks/512 MiB measured array-buffer guard; source 30 minutes, post-capture 15 minutes, outer 47 minutes including cleanup, per existing DEC-007 phase budgets |
+| Existing DEC-011 `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` | Same original run, not restarted. First payload-runtime and DB-009 boundary round passed, followed by EXC/Consent/Grant, fence, PROV/INT and policy-conformance sentinels. Final repeat/reset/reapply/exit and scratch teardown still pending |
+| `git diff --check` | Exit 0 at checkpoint; LF/CRLF normalization warnings only |
+
+### Scope and interpretation
+
+- `CONC-001~003` uses the actual adapter semaphore and multipart body wrappers with a synthetic responder. It proves the default two permits remain occupied until EOF/cancel, a third waits, the queue caps at eight, overflow is rejected before HTTP, queued cancellation removes waiters, and later requests can proceed. It is not a global multi-process/multi-adapter limit or a combined encrypted maximum-Study path.
+- MAX-001 uses `beginPackage()` only as the documented isolated primitive entry point, with real AES-GCM and filesystem I/O. It does not exercise DB reservations, Tenant authorization, actual DICOM encoding, a PACS server, or a production downstream consumer. A sequential test caller cannot establish the runtime plaintext-buffer lifetime requirement.
+- The initial full API failure coincided with the heavy workload; the corrected standalone run passes, but no host/storage root-cause claim is made. The concrete teardown race is addressed using the installed Vitest TestContext abort signal, a tracked exercise promise and drain-before-remove. Cleanup gets 30 seconds; the actual ceiling test still has its original 30-second assertion deadline.
+- One older failed API run left **313 zero-byte `.enc` files** in test-owned `mediq-temp-imaging-6SohzY` under the local Temp directory. Its worker process was confirmed absent; read-only inspection found no reparse entries. Explicit validated cleanup was rejected by execution policy, so no alternate deletion method was attempted. These empty synthetic test artifacts remain outside Git; manual/authorized cleanup remains open. No patient data or real ciphertext content was present in those files.
+
+**Judgment:** Adapter concurrency and cancellation regression are scoped PASS. MAX-001, full STAGE-009, final DEC-011 wrapper and full STAGE-005 are not yet accepted; `MEDIQ-PACS-001` remains **PARTIAL**. Observe the two existing live test handles instead of restarting on an observation timeout. No commit/push was requested for this continuation and none was performed.
+
+**Subsequent live observation:** The same DB wrapper emitted a second `pacs001_temporary_payload_runtime=PASS` plus DB-009 and EXC sentinels, but has not yet returned a final exit/cleanup verdict. The corrected maximum-workload run emitted `max_study_progress=STAGING objects=500`. Both process handles remain live; these are progress observations, not full-run PASS.
+
+## 24. DEC-012 maximum workload completed; DEC-013 pre-implementation
+
+The existing corrected workload process exited **0**: one test PASS, duration 633,316.97 ms. It actually generated, encrypted and authenticated **2,147,483,648 bytes / 2,000 objects** in 33,008 source chunks. Max source chunk 65,536 bytes; max active source/write/consumer-buffer counts each 1; max consumer buffer **67,108,864 bytes**. Measured peak RSS **157,192,192 bytes**, array buffers **78,466,979 bytes**, 32 delayed writes and 20 delayed consumer acknowledgements. Capture took **613,627 ms**, post-capture inventory/read took **14,499 ms**; elapsed including cleanup **633,187 ms**. Owned temporary-directory cleanup PASS; DB/PACS not accessed. This closes only the DEC-012 primitive MAX-001 run, not arbitrary caller lifetime enforcement or full STAGE-009.
+
+DEC-013 and LIFE-001~008 are recorded before implementation. Planned change: replace raw `readInstance` with a void-returning borrowed callback, shared one-active/eight-waiter in-process gate, immutable selectors, required pre/post-decrypt access-verifier hook, cancellation and zero-before-release. Actual Consent/Grant/RLS verifier/runtime wiring remains out of this primitive. Re-run the exact workload through the new API after unit/typecheck/API results; do not reuse the preceding raw-read harness result as proof of the new consumer API. DEC-011's original DB wrapper is still live and must not be restarted merely because polling yields no output.
+
+DEC-014 preparation: installed parser code ignores the optional byte counter's write backpressure; current Node's toWeb byte-length strategy was inspected and is not being blamed without evidence. Record FLOW-001~003 before reproducing with a held actual adapter consumer. No dependency change or limit relaxation is authorized.
+
+## 25. DEC-013/014 current commit checkpoint
+
+**Date:** 2026-10-03 Asia/Seoul. The user requested commit and push of the current state. This checkpoint supersedes older current-status descriptions, not historical evidence. No adapter fix or runtime activation is included; the failing regression is retained, not skipped. Ticket and full STAGE-005/009 remain **PARTIAL**.
+
+### Implemented scope and traceability
+
+- DEC-013 / LIFE-001~008: replace public internal raw-buffer reads with `consumeInstance`, private authenticated decrypt, immutable selectors, one active lifetime and eight metadata-only waiters shared within a Node module/process, required exact `VERIFIED` decisions before decrypt and delivery, expiry/purge rechecks, sanitized errors, and zeroing before admission release. Cancellation cannot release an active consumer's permit before it settles. The verifier hook is not an actual Consent/Grant/RLS implementation; the store remains unregistered.
+- DEC-012: standalone maximum-workload and adapter concurrency tests; cooperative cleanup for the existing object-count test. The synthetic workload uses generated bytes, not clinical DICOM data, a PACS, DB reservations or a runtime consumer.
+- DEC-014 / FLOW-001: added a regression demonstrating whole-instance read-ahead while the actual multipart adapter's consumer is stalled. The adapter fix and FLOW-002/003 are not implemented in this checkpoint. Do not treat the earlier aggregate API PASS as the current suite's verdict after this regression was added.
+
+### Commands and observed results
+
+| Command | Result |
+|---|---|
+| DEC-013 initial three-suite run | 91/92 passed; existing source-revocation filesystem case exceeded its unchanged five-second timeout. Retained as a failed attempt, not Acceptance |
+| Sequential focused store/source/lifetime rerun | 3 files / 99 tests PASS; typecheck PASS |
+| `npm run test:api -- --maxWorkers=1` before adding FLOW-001 | Build and 39 files / 722 tests PASS, start 12:24:25 KST, 67.51 seconds. Historical pre-FLOW-001 result only |
+| `npm run typecheck:api` | Exit 0, including commit-time rerun |
+| `node --check tests/performance/temporary-imaging-maximum-study.test.mjs` | Exit 0 |
+| `node --test tests/performance/temporary-imaging-maximum-study.test.mjs` through DEC-013 consumer | Exit 0; one test PASS and owned cleanup PASS; exact metrics below |
+| `npx vitest run tests/api/temporary-imaging-consumer-lifetime.test.mjs --maxWorkers=1` | Commit-time rerun: exit 0; 21/21 PASS, start 12:36:13 KST, 2.47 seconds |
+| `npx vitest run tests/api/orthanc-dicomweb-concurrency.test.mjs --maxWorkers=1` | Commit-time rerun: exit 1; 3 PASS / 1 FAIL, start 12:35:14 KST. FLOW-001 observed 8,388,608 bytes prefetched with the consumer stalled, exceeding the 524,288-byte test allowance |
+| Existing `./scripts/test-db-008-full-schema.ps1 -EnvFile .env -ScratchOnly` | Not restarted. Clean/repeat/reset and the reset-reapply payload-runtime/DB-009 sentinels observed; final wrapper exit and owned cleanup remain unconfirmed at this checkpoint. No full STAGE-005 PASS |
+
+### DEC-013 maximum-workload result
+
+Source, ciphertext and authenticated bytes each **2,147,483,648**, **2,000 objects**, **33,008 chunks**, largest chunk **65,536 bytes**. Maximum active sources, writes and consumer buffers each **1**; largest borrowed plaintext buffer **67,108,864 bytes**. Peak sampled RSS **160,940,032 bytes**, array buffers **77,263,727 bytes**; **32** delayed writes and **20** delayed consumer acknowledgements. Capture **599,312 ms**, post-capture **20,731 ms**, elapsed including cleanup **632,702 ms**; Node total **632,865.75 ms**. Buffer zeroing after callback and test-owned directory cleanup passed. DB/PACS not accessed. This is local primitive MAX-001/LIFE-008 evidence, not the actual multipart adapter pipeline or full STAGE-009.
+
+### Remaining risks and follow-up
+
+FLOW-001 is a known failing regression in this commit. Apply the recorded DEC-014 recommendation in a subsequent implementation task, preserve the 64 MiB cap, then verify FLOW-002/003 and full regression. Observe the existing scratch wrapper's final exit/cleanup without restarting it. SERVICE cleanup, privacy/no-side-effect gates, runtime activation, coordinator/Preflight/STOW/destination verification and P0 E2E remain open. Prior 313 empty test artifacts outside Git remain recorded in §23; no cleanup bypass or patient-data use occurred. No source-code repair, persistent DB mutation, deployment, dependency change or additional heavy workload was initiated solely for the commit request.

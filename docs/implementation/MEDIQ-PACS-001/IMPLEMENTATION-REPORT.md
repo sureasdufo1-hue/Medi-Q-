@@ -6,11 +6,29 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — prior scoped gates retained; DEC-011 ciphertext-I/O seam and fault tests implemented; latest API 37 files/697 tests PASS; current scratch DB run and full STAGE-005 judgment pending (latest checkpoint §11) |
+| 상태 | `PARTIAL` — DEC-013 borrowed-buffer implementation and 2 GiB workload verified; DEC-014 FLOW-001 regression FAIL, adapter fix pending; DEC-011 scratch final exit/cleanup unconfirmed; latest evidence §25 |
 
 ## 1. 목표 및 판정 범위
 
-**Latest commit checkpoint (2026-10-03):** §11 and [TEST-EVIDENCE.md §21](TEST-EVIDENCE.md#21-dec-011-commit-checkpoint--api-verified-db-run-pending) supersede earlier test counts/current-status descriptions below. The earlier DB wrapper PASS applies to DEC-010 only, not the pending DEC-011 run.
+**Current commit checkpoint (2026-10-03):** [TEST-EVIDENCE.md §25](TEST-EVIDENCE.md#25-dec-013014-current-commit-checkpoint) supersedes all older current-status notes below. DEC-013 is implemented: private authenticated reads, one-active/eight-waiter borrowed lifetime, explicit pre/post `VERIFIED` checks and zero-before-release. Commit-time lifetime tests 21/21 and typecheck pass; the revised exact 2 GiB/2,000-object primitive workload passed with cleanup. The new actual-adapter backpressure regression fails (8 MiB read ahead versus 512 KiB allowance); its fix is not included. The earlier 39-file/722-test API PASS predates that failing test. Full STAGE-005/009 and this Ticket remain PARTIAL; runtime and STOW stay disabled.
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: User-requested intermediate Git checkpoint of DEC-012/013/014 work
+Changed: Borrowed plaintext lifetime boundary; workload/concurrency/lifetime/cleanup tests; recommendation, Acceptance and implementation evidence
+Not changed: Adapter fix, dependencies, schema/grants/OpenAPI, runtime provider/worker/volume, public routes, destination calls or STOW
+Security impact: Internal authenticated buffer lifetime strengthened; real runtime authorization remains required and unimplemented here
+Tests executed: Typecheck PASS; lifetime 21/21 PASS; exact 2 GiB/2000-object consumer workload and cleanup PASS; adapter concurrency 3 PASS/1 FAIL
+Tests not executed: Full API after the new failing regression; integrated FLOW-002/003; product E2E; current scratch wrapper final exit/cleanup not confirmed
+Evidence: TEST-EVIDENCE.md section 25 (older API 722 PASS is pre-FLOW-001 only)
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Known FLOW-001 buffer read-ahead failure, pending DB wrapper and downstream activation/transfer gates
+Status: PARTIAL
+```
+
+**DEC-013 implementation record opened (before code):** DEC-012 maximum primitive workload completed with exact 2 GiB/2,000 objects and cleanup; see evidence §24. Next implement the approved borrowed authenticated-buffer lifetime and required verifier hooks, with LIFE-001~008 tests and an updated maximum workload. Raw read has no runtime callers; this remains a non-authorizing, unregistered internal API and does not implement PACS dispatch.
+
+**Latest execution checkpoint (2026-10-03):** [TEST-EVIDENCE.md §23](TEST-EVIDENCE.md#23-dec-012-execution-and-test-cleanup-correction) supersedes earlier test counts/current-state descriptions below, including the §11 commit checkpoint. Adapter concurrency (3/3), cooperative cancellation (1/1) and standalone API (38 files/701 tests) pass. The maximum workload initially timed out; its corrected-budget rerun and the unchanged DEC-011 scratch wrapper remain running. No overall STAGE-005/009 PASS. Production runtime is unchanged; the earlier DB wrapper PASS applies to DEC-010, not this live run.
 
 `PACS-001-DEC-002/003`에 따라 byte-preserving P0 transfer의 필수 source DICOM PatientID binding과 operation-time Authorization race 방지의 no-side-effect 선행 slice를 구현했다. 모든 synthetic source instance ID가 caller/application이 전달한 서버 검증 destination mapping ID와 canonical exact match일 때만 `IDENTITY_MATCHED`를 반환한다. PACS eligibility gate는 verified Tenant transaction 안에서 공통 ExchangeSession fence를 먼저 획득한 뒤 Consent/Grant/Study evidence를 다시 평가한다. 두 판정 모두 Authorization/Import permission 또는 STOW dispatch 승인이 아니다.
 
@@ -260,6 +278,10 @@ Status: PARTIAL
 | 2026-10-03 | `PARTIAL` | Exact 10 GiB environment boundary PASS in disposable PostgreSQL: five Packages at 2 GiB, sixth Package denied at 16 MiB with SQLSTATE `54000`, counters/ledger unchanged, no payload files allocated, and normal purge+Audit cleanup returned quota to zero. Final DB-008 `-ScratchOnly` wrapper exit 0 after clean/repeat/reset/reapply and owned cleanup. Complete injected DB/filesystem/Audit fault matrix remains open; runtime storage and coordinator remain disabled |
 
 ## 11. DEC-011 current commit checkpoint
+
+**Work in progress after this historical checkpoint:** DEC-012 records a maximum-Study workload probe before test implementation. Scope is test-only: real 2 GiB/2,000-object local ciphertext processing, not runtime activation or a full STAGE-009 PASS. See evidence §22; DEC-011's existing DB wrapper continues unchanged.
+
+**Subsequent implementation/result:** `tests/performance/temporary-imaging-maximum-study.test.mjs` and `tests/api/orthanc-dicomweb-concurrency.test.mjs` are added. The existing store test now uses abort-aware object creation and tracked cleanup after runner cancellation. Tests and rejected/failed attempts are recorded in evidence §23. The prior timed-out API run left 313 empty test files outside Git whose explicit cleanup was denied by execution policy; no bypass was attempted. Current maximum-workload rerun and scratch wrapper still require final exit/cleanup proof. Runtime consumer lifetime, SERVICE cleanup, privacy, Orthanc no-side-effect, full Preflight/STOW and E2E remain open.
 
 ```text
 Ticket: MEDIQ-PACS-001
