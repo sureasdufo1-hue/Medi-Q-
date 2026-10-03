@@ -13,6 +13,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function harness(error) {
   const failures=[],cancellations=[];let calls=0;
   const runtime=runInNewContext(`let activeTenantTransactions=0; const initialAuthorizationCommitted=true;
+    const assertOutsideTransaction=()=>assert.equal(activeTenantTransactions,0);
     const monitored=${expressions[0].getText(ast)};
     ({monitored,setActive:n=>{activeTenantTransactions=n;}})`,{
     ReadableStream,assert,reader:{async read(){calls++;if(error)throw error;

@@ -6,7 +6,7 @@
 | 제목 | PACS Import coordinator prerequisites — identity/fence, source-integrity handoff and encrypted spool/quota sub-gates |
 | 분류 | `CAPSTONE-P0` |
 | 작성일/최종 갱신 | `2026-10-03` (최초 작성 2026-10-01) |
-| 상태 | `PARTIAL` — R7 run 65501 historical 58-case PASS; current 38034 FAILED at HTTP_BODY_ASSERTION_TX_ACTIVE, automatically cleaned; 246 lightweight PASS; own/concurrent transaction diagnosis next; original runtime/STOW/P0 unfinished |
+| 상태 | `PARTIAL` — R9/R9-A actual 87439 58-case/overlap/cleanup PASS; 275 lightweight and API 33404 894/build/type/Port PASS; internal evidence reconciliation/runtime/full P0 remain open |
 
 ## 1. 목표 및 판정 범위
 
@@ -585,4 +585,36 @@ Evidence: TEST-EVIDENCE.md sections 56–57; Acceptance R7/R7-A/R7-B; policy DEC
 Implementation record: docs/implementation/MEDIQ-PACS-001/
 Remaining risks: Current test path fails with global transaction-active HTTP_BODY assertion; logical transaction owner unobserved, so product-versus-instrumentation cause not concluded. Earlier 17902 root cause unknown; no claim that zero-prefetch fixes it. Original A-to-B success still unachieved
 Status: PARTIAL; no live heavy process, diagnostic next step available
+```
+
+## 25. R8 transaction ownership and SQL lifetime diagnosis
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-017-R8 test-only diagnosis of the current source failure
+Changed: Recommendation/Acceptance followed by test-only AsyncLocalStorage and actual query-phase observer, fixed diagnostic projection and 9 actual-expression regression cases including the pre-created-stream context counterexample; status/evidence synchronized
+Not changed: Product source, schema/grants, infrastructure/dependencies, runtime activation, original global assertions and full P0 scope
+Security impact: Observe only bounded own/other transaction phases; no SQL/identifiers/secret/raw-error output or privileged runtime query
+Tests executed: 169 Node + 29 cleanup + 47 output + 10 readiness = 255 lightweight PASS; JS syntax/diff checks. Frozen diagnostic 97027 exited 0: 58 source cases/full observers/B/log privacy/automatic cleanup; independent zero resources/healthy stack and original frozen hash verified
+Tests not executed: Actual unrelated-transaction overlap and caller-side boundary correction; new full API/DB rerun (product inputs unchanged); original full P0 transfer
+Evidence: TEST-EVIDENCE.md §58; failed 38034 retained in §56
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Prior 38034/17902 causes remain unknown. Pre-created streams demonstrably retain a different pull context even when their caller awaits a read inside its own transaction; context snapshots alone cannot authorize I/O. Diagnostics do not correct or waive the required boundary
+Status: PARTIAL overall; R8 diagnostic execution scoped PASS, no live heavy process, no product fix claimed
+```
+
+## 26. R9 caller-side I/O and real unrelated transaction overlap
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 LIFECYCLE-010/014, test measurement and real concurrency proof
+Changed: DEC-017-R9 recommendation/Acceptance, caller-side read/effect guards with active-parent tracking, native reader wrapper, actual roundtrip READ ONLY holder/independent same-role observation, 15 model contracts and evidence
+Not changed: Product code, schema/grants, deployment, full original A-to-B goal, 58-case source matrix and expected Audit
+Security impact: Replace ambiguous process-wide measurement only with proven caller-side rejection, including pre-created streams/readers and nested transaction ownership
+Tests executed: Caller/overlap and repeat-purge RED/GREEN; 87439 actual 58-case/observer/B/privacy/automatic cleanup PASS, independently empty/healthy/unchanged inputs. Current 189 Node + 29 cleanup + 47 output + 10 readiness = 275 lightweight PASS. API 33404 build/43 files/894 tests/type/Port PASS after fixed timing diagnostics; targeted prior-timeout case PASS. Failed 44194 and 32141 retained
+Tests not executed: New DB scratch rerun (unchanged baseline 51950 reused); final internal STAGE evidence reconciliation, runtime activation and original product A-to-B P0
+Evidence: TEST-EVIDENCE.md §59
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Own/caller/ancestor guard and current native/getReader paths verified, not arbitrary future stream consumers. Older 38034/17902 and API 32141 roots remain unknown; passing current runs does not explain them. Deployed runtime/volume/SERVICE scheduling/full-transfer guarantees remain unproven
+Status: PARTIAL overall; R9/R9-A scoped actual concurrency PASS and current API regression PASS; no heavy process, no product fix or full P0 completion claim
 ```

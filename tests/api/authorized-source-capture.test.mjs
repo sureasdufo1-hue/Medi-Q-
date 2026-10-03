@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, onTestFailed } from "vitest";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
 import {
@@ -532,8 +532,28 @@ function auditActions(harness) {
   }));
 }
 
+function createLifecycleTimingDiagnostic(clock = () => performance.now()) {
+  const phases = ['SETUP_ROOT','SETUP_STORE','CHECK','ALLOCATE','OPEN_INSTANCE','WRITE','SYNC','SEAL',
+    'CAPTURE','READ','READ_VERIFY_ONE','READ_VERIFY_TWO','ASSERTIONS',
+    'FIXTURE_PURGE','FIXTURE_LIST','FIXTURE_RM','FIXTURE_ABSENCE','DONE'];
+  let phase = 'SETUP_ROOT', started = clock();
+  return Object.freeze({
+    mark(next) { phase = phases.includes(next) ? next : 'UNKNOWN'; started = clock(); },
+    marker() {
+      const current = clock();
+      const elapsed = typeof current === 'number' && typeof started === 'number' ? current - started : NaN;
+      const bucket = !Number.isFinite(elapsed) || elapsed < 0 ? 'UNKNOWN'
+        : elapsed < 1000 ? 'LT1000MS' : elapsed < 4000 ? 'LT4000MS' : 'GTE4000MS';
+      return `DEC017_API_LIFECYCLE_${phase}_${bucket}`;
+    },
+  });
+}
+
 async function withLifecycle(options, check) {
+  const mark = stage => options.diagnostic?.mark(stage);
+  mark('SETUP_ROOT');
   const root = await mkdtemp(join(tmpdir(), "mediq-source-lifecycle-"));
+  mark('SETUP_STORE');
   const storageRoot = join(root, "ciphertext");
   let harness;
   const attempted = [];
@@ -542,16 +562,18 @@ async function withLifecycle(options, check) {
     now: () => (harness?.captureTime.getTime() ?? now.getTime()) + (options.storeClockOffset ?? 0),
     ciphertextIo: {
       write: (file, bytes, offset, length, position) => {
+        mark('WRITE');
         expect(harness.activeTransactions).toBe(0);
         expect(harness.reservedBytes).toBeGreaterThanOrEqual(length);
         harness.lifecycleEvents.push("physical:write");
         return file.write(bytes, offset, length, position);
       },
-      sync: (file) => file.sync(),
+      sync: (file) => { mark('SYNC'); return file.sync(); },
     },
   });
   const port = {
     async beginReservedPackage(binding, ref, quota) {
+      mark('ALLOCATE');
       attempted.push({ storageRef: ref, binding });
       expect(harness.activeTransactions).toBe(0);
       expect(harness.payloadState).toMatchObject({ state: "STAGING", storageRef: ref });
@@ -562,10 +584,12 @@ async function withLifecycle(options, check) {
       return handle;
     },
     beginInstance(input) {
+      mark('OPEN_INSTANCE');
       expect(harness.activeTransactions).toBe(0);
       return store.beginInstance(input);
     },
     async sealPackage(input) {
+      mark('SEAL');
       expect(harness.activeTransactions).toBe(0);
       const receipt = await store.sealPackage(input);
       if (options.afterSeal) await options.afterSeal(harness, receipt);
@@ -576,6 +600,7 @@ async function withLifecycle(options, check) {
       let checks = 0;
       await store.consumeInstance(input, async (request, signal) => {
         checks += 1;
+        mark(checks === 1 ? 'READ_VERIFY_ONE' : checks === 2 ? 'READ_VERIFY_TWO' : 'UNKNOWN');
         await options.beforeReadVerification?.(harness, checks);
         const result = await verify(request, signal);
         expect(harness.activeTransactions).toBe(0);
@@ -598,15 +623,21 @@ async function withLifecycle(options, check) {
   };
   harness = makeHarness({ ...options, temporaryImagingStore: port });
   try {
+    mark('CHECK');
     return await check(harness, store, storageRoot);
   } finally {
     // Fixture teardown only; it is not product DB/purge acceptance.
+    mark('FIXTURE_PURGE');
     for (const input of attempted) await store.purgeByReference(input);
+    mark('FIXTURE_LIST');
     expect(await readdir(storageRoot)).toEqual([]);
     expect(resolve(dirname(root))).toBe(resolve(tmpdir()));
     expect(basename(root).startsWith("mediq-source-lifecycle-")).toBe(true);
+    mark('FIXTURE_RM');
     await rm(root, { recursive: true, force: true });
+    mark('FIXTURE_ABSENCE');
     await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    mark('DONE');
   }
 }
 
@@ -700,10 +731,15 @@ describe("DEC-017 R2 concrete read authorization (model DB, real engine/crypto)"
   ];
   it.each(changes.flatMap(([name, mutate]) => [1, 2].map(phase => [name, phase, mutate])))
     ("denies %s before read phase %s without callback", async (_name, phase, mutate) => {
-      await withLifecycle({ beforeReadVerification: (h, n) => { if (n === phase) mutate(h); } }, async (harness) => {
+      const diagnostic = createLifecycleTimingDiagnostic();
+      onTestFailed(() => { console.error(diagnostic.marker()); });
+      await withLifecycle({ diagnostic, beforeReadVerification: (h, n) => { if (n === phase) mutate(h); } }, async (harness) => {
+        diagnostic.mark('CAPTURE');
         const { handoff } = await harness.service.captureForCoordinator(command());
         const callback = vi.fn();
+        diagnostic.mark('READ');
         await expect(harness.service.consumeCapturedInstance(readCommand(handoff), callback)).rejects.toThrow("TEMPORARY_IMAGING_READ_UNAVAILABLE");
+        diagnostic.mark('ASSERTIONS');
         expect(callback).not.toHaveBeenCalled();
         expect(auditActions(harness).filter(e => e.action === "PACS_TEMPORARY_READ_AUTHORIZED")).toHaveLength(phase - 1);
         expect(harness.dicomCalls.instances).toBe(3);

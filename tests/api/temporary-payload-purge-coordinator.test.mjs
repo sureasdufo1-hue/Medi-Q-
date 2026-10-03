@@ -221,6 +221,17 @@ describe("PACS-001 DEC-009 temporary payload purge coordinator", () => {
     expect(runner.reservedBytes).toBe(0);
   });
 
+  it("rechecks physical absence on both ordinary purge attempts but records one Audit", async () => {
+    const events = [];
+    const runner = createRunner({ events });
+    const coordinator = new TemporaryPayloadPurgeCoordinator(runner, createStore(events));
+    await expect(coordinator.purge(command())).resolves.toEqual({ kind: "PURGED" });
+    await expect(coordinator.purge(command())).resolves.toEqual({ kind: "ALREADY_PURGED" });
+    expect(events.filter(event => event === "filesystem:purge")).toHaveLength(2);
+    expect(runner.auditCount).toBe(1);
+    expect(runner.reservedBytes).toBe(0);
+  });
+
   it("does not duplicate Audit after an ambiguous final commit and a retry", async () => {
     const events = [];
     let ambiguous = true;

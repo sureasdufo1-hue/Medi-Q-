@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, mkdtemp, readdir, rm, stat, lstat } from "node:fs/promises";
@@ -266,14 +267,142 @@ function partialDicomThenFail(response) {
   return new Response(body, { status: response.status, headers });
 }
 
+function createTransactionObservation() {
+  const context = new AsyncLocalStorage();
+  const active = new Set();
+  return Object.freeze({
+    async run(work) {
+      const frame = { phase: 'BEFORE_BEGIN', parent: context.getStore() };
+      active.add(frame);
+      return context.run(frame, async () => {
+        try { return await work(); }
+        finally { active.delete(frame); }
+      });
+    },
+    query(statement) {
+      const frame = context.getStore();
+      const pending = { BEGIN: 'BEGIN_PENDING', COMMIT: 'COMMIT_PENDING', ROLLBACK: 'ROLLBACK_PENDING' }[statement];
+      if (!active.has(frame) || !pending) return () => undefined;
+      frame.phase = pending;
+      let settled = false;
+      return succeeded => {
+        if (settled) return;
+        settled = true;
+        frame.phase = !succeeded ? 'UNKNOWN' : statement === 'BEGIN' ? 'OPEN' : 'CLOSED';
+      };
+    },
+    snapshot() {
+      const own = context.getStore();
+      const otherPhases = [...new Set([...active].filter(frame => frame !== own).map(frame => frame.phase))];
+      return Object.freeze({ own: active.has(own) ? own.phase : 'NONE',
+        other: otherPhases.length > 1 ? 'MULTIPLE' : otherPhases[0] ?? 'NONE' });
+    },
+    assertOutside() {
+      // Check at the caller/effect boundary, not only in a stream's pull.
+      // A completed inner run must not hide an active owning outer run.
+      for (let frame = context.getStore(); frame; frame = frame.parent) {
+        if (active.has(frame)) assert.fail('DEC017_IO_WITHIN_OWN_TRANSACTION');
+      }
+    },
+  });
+}
+
+function observeStreamReads(stream, assertOutsideTransaction) {
+  const getReader = stream.getReader.bind(stream);
+  Object.defineProperty(stream, 'getReader', { value: (...options) => {
+    const reader = getReader(...options);
+    return new Proxy(reader, { get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'read') return async (...args) => {
+        assertOutsideTransaction();
+        return Reflect.apply(value, target, args);
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+  } });
+  return stream;
+}
+
+async function startUnrelatedReadOnlyTransaction(harness, principal, tenantCandidate, signal) {
+  if (signal?.aborted) throw new Error('DEC017_OVERLAP_ABORTED');
+  let releaseHold, ready;
+  const released = new Promise(resolve => { releaseHold = resolve; });
+  const reached = new Promise(resolve => { ready = resolve; });
+  const onAbort = () => releaseHold();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const held = harness.actorContext.run(principal, tenantCandidate, async (_identity, client) => {
+    await client.query('SET TRANSACTION READ ONLY');
+    const row = (await client.query("SELECT pg_backend_pid() AS pid, current_user AS role, current_setting('transaction_read_only') AS readonly")).rows[0];
+    assert.equal(row.role, 'mediq_runtime'); assert.equal(row.readonly, 'on');
+    ready(row.pid);
+    if (signal?.aborted) releaseHold();
+    await released;
+    if (signal?.aborted) throw new Error('DEC017_OVERLAP_ABORTED');
+  });
+  // Attach a rejection handler immediately; setup still awaits the same result.
+  void held.catch(() => undefined);
+  let observer, closePromise;
+  const counts = { SOURCE: 0, WRITE: 0, SYNC: 0, CONSUMER: 0, PURGE: 0 };
+  try {
+    const pid = await Promise.race([reached, held.then(() => { throw new Error('DEC017_OVERLAP_NOT_HELD'); })]);
+    observer = await harness.database.connect();
+    const activity = async () => {
+      const result = await observer.query(`SELECT current_user AS observer_role, pg_backend_pid() AS observer_pid,
+        pid,state,xact_start FROM pg_stat_activity WHERE pid=$1 AND usename=current_user`, [pid]);
+      assert.equal(result.rowCount, 1); const row = result.rows[0];
+      assert.equal(row.observer_role, 'mediq_runtime'); assert.notEqual(row.observer_pid, pid);
+      assert.equal(row.pid, pid); return row;
+    };
+    return Object.freeze({
+      async assertHeld(stage) {
+        harness.assertOutsideTransaction();
+        assert.ok(Object.hasOwn(counts, stage));
+        const row = await activity();
+        assert.equal(row.state, 'idle in transaction', 'DEC017_REAL_OTHER_TRANSACTION_OPEN');
+        assert.ok(row.xact_start instanceof Date, 'DEC017_REAL_OTHER_TRANSACTION_STARTED');
+        counts[stage]++;
+      },
+      counts: () => ({ ...counts }),
+      close() {
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+          releaseHold();
+          try {
+            await held;
+            const row = await activity();
+            assert.equal(row.state, 'idle'); assert.equal(row.xact_start, null);
+            const returned = await harness.database.connect();
+            try {
+              const state = (await returned.query("SELECT pg_backend_pid() AS pid, current_setting('mediq.tenant_id',true) AS tenant, current_setting('transaction_read_only') AS readonly")).rows[0];
+              assert.equal(state.pid, pid, 'DEC017_EXACT_RETURNED_HOLDER_CLIENT');
+              assert.ok(['', null].includes(state.tenant)); assert.equal(state.readonly, 'off');
+            } finally { returned.release(); }
+          } catch { throw new Error('DEC017_OVERLAP_CLEANUP_FAILED'); }
+          finally { observer.release(); signal?.removeEventListener('abort', onAbort); }
+        })();
+        return closePromise;
+      },
+    });
+  } catch (error) {
+    releaseHold(); await held.catch(() => undefined);
+    observer?.release(); signal?.removeEventListener('abort', onAbort);
+    throw error;
+  }
+}
+
 function sourceFailureMarkers(failures) {
   const stages = ['FETCH','METADATA','INSTANCE_OPEN','HTTP_BODY','INSTANCE_BODY','FAILURE_AUDIT'];
   const codes = ['ASSERTION','ABORT','TIMEOUT','NETWORK','GENERIC',
     'SOURCE_READ_FAILED','SOURCE_CAPTURE_CANCELLED','SOURCE_CAPTURE_DEADLINE','SOURCE_CAPTURE_PERSISTENCE_FAILED'];
   if (!Array.isArray(failures)) return [];
+  const phases = ['NONE','BEFORE_BEGIN','BEGIN_PENDING','OPEN','COMMIT_PENDING','ROLLBACK_PENDING','CLOSED','UNKNOWN','MULTIPLE'];
   return [...new Set(failures.slice(0, 16).filter(item => item && stages.includes(item.stage) &&
     codes.includes(item.code) && typeof item.transactionActive === 'boolean')
-    .map(item => `DEC017_STAGE_${item.stage}_${item.code}_TX_${item.transactionActive ? 'ACTIVE' : 'CLOSED'}`))].slice(0, 8);
+    .flatMap(item => [
+      `DEC017_STAGE_${item.stage}_${item.code}_TX_${item.transactionActive ? 'ACTIVE' : 'CLOSED'}`,
+      ...(phases.includes(item.transactionContext?.own) && phases.includes(item.transactionContext?.other)
+        ? [`DEC017_CONTEXT_${item.stage}_OWN_${item.transactionContext.own}_OTHER_${item.transactionContext.other}`] : []),
+    ]))].slice(0, 8);
 }
 
 function createHarness({
@@ -285,6 +414,7 @@ function createHarness({
   oidcAuthentication,
   temporaryImagingStore,
   afterMetadata,
+  beforeSourceRequest,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
   const config = Object.freeze({ ...parsedConfig,
@@ -295,10 +425,13 @@ function createHarness({
   let quotaReservations = 0;
   const databaseFailures = [];
   const sourceFailures = [];
+  const transactionObservation = createTransactionObservation();
+  const assertOutsideTransaction = transactionObservation.assertOutside;
   const recordSourceFailure = (stage, error) => {
     const code = error?.code === 'ERR_ASSERTION' ? 'ASSERTION' : error?.name === 'AbortError' ? 'ABORT'
       : error?.name === 'TimeoutError' ? 'TIMEOUT' : ['ECONNRESET','ECONNREFUSED','EPIPE'].includes(error?.code) ? 'NETWORK' : 'GENERIC';
-    if (sourceFailures.length < 16) sourceFailures.push({stage,code,transactionActive:activeTenantTransactions > 0});
+    if (sourceFailures.length < 16) sourceFailures.push({stage,code,transactionActive:activeTenantTransactions > 0,
+      transactionContext: transactionObservation.snapshot()});
   };
   const databaseForContext = Object.freeze({
     connect: async () => {
@@ -339,11 +472,17 @@ function createHarness({
                               ? "TENANT_SETUP"
                               : "OTHER_QUERY";
               const queryStartedAt = performance.now();
-              return Reflect.apply(target.query, target, args).then((result) => {
+              const querySettled = transactionObservation.query(statement);
+              let queryResult;
+              try { queryResult = Reflect.apply(target.query, target, args); }
+              catch (error) { querySettled(false); throw error; }
+              return queryResult.then((result) => {
+                querySettled(true);
                 if (statement.includes('INSERT INTO audit_events') && args[1]?.[7] === 'PACS_SOURCE_CAPTURE_FAILED' &&
                     ['SOURCE_READ_FAILED','SOURCE_CAPTURE_CANCELLED','SOURCE_CAPTURE_DEADLINE','SOURCE_CAPTURE_PERSISTENCE_FAILED'].includes(args[1]?.[9]) && sourceFailures.length < 16) {
                   // Statement returned, not proof of commit. Only fixed reason enums.
-                  sourceFailures.push({stage:'FAILURE_AUDIT',code:args[1][9],transactionActive:activeTenantTransactions > 0});
+                  sourceFailures.push({stage:'FAILURE_AUDIT',code:args[1][9],transactionActive:activeTenantTransactions > 0,
+                    transactionContext: transactionObservation.snapshot()});
                 }
                 if (statement.includes("reserve_temporary_payload_quota")) quotaReservations += 1;
                 if (statement === "BEGIN" || statement === "ROLLBACK") recordedCaptureStart = false;
@@ -356,6 +495,7 @@ function createHarness({
                 }
                 return result;
               }).catch((error) => {
+                querySettled(false);
                 const failureClass = safeDatabaseErrorClass(error);
                 const durationBucket = safeQueryDurationBucket(performance.now() - queryStartedAt);
                 databaseFailures.push(`${queryLabel}_${failureClass}_${durationBucket}`);
@@ -403,7 +543,7 @@ function createHarness({
       activeTenantTransactions += 1;
       let committed = false;
       try {
-        const result = await rawActorContext.run(...args);
+        const result = await transactionObservation.run(() => rawActorContext.run(...args));
         committed = true;
         return result;
       } catch (error) {
@@ -453,8 +593,9 @@ function createHarness({
         assert.equal(init?.redirect, "error", "Upstream redirects must not change the configured origin");
         const authorization = new Headers(init?.headers).get("authorization");
         assert.ok(authorization === configuredAAuthorization, "The source request must use the configured A Authorization header");
-        assert.equal(activeTenantTransactions, 0, "No verified-Tenant transaction may span WADO");
+        assertOutsideTransaction();
         assert.equal(initialAuthorizationCommitted, true, "A WADO must follow committed initial authorization");
+        if (beforeSourceRequest) await beforeSourceRequest();
         sourceRequestObservations.push(Object.freeze({
           protocol: url.protocol,
           hostname: url.hostname,
@@ -485,7 +626,7 @@ function createHarness({
           const monitored = new ReadableStream({
             async pull(controller) {
               try {
-                assert.equal(activeTenantTransactions, 0, "No transaction may span DICOM stream consumption");
+                assertOutsideTransaction();
                 assert.equal(initialAuthorizationCommitted, true);
                 const part = await reader.read();
                 if (part.done) controller.close();
@@ -499,7 +640,7 @@ function createHarness({
               await reader.cancel(reason).catch(() => undefined);
             },
           }, { highWaterMark: 0 });
-          return new Response(monitored, {
+          return new Response(observeStreamReads(monitored, assertOutsideTransaction), {
             status: response.status,
             headers: response.headers,
           });
@@ -520,7 +661,10 @@ function createHarness({
     },
     retrieveInstanceStream: async (request) => {
       instanceCalls += 1;
-      if (!observeInstanceStreams) return adapter.retrieveInstanceStream(request);
+      if (!observeInstanceStreams) {
+        const stream = await adapter.retrieveInstanceStream(request);
+        return Object.freeze({ ...stream, body: observeStreamReads(stream.body, assertOutsideTransaction) });
+      }
 
       instanceStreamOpenOrder.push(request.sopInstanceUid);
       activeInstanceStreams += 1;
@@ -593,7 +737,7 @@ function createHarness({
           settle();
         },
       }, { highWaterMark: 0 });
-      return Object.freeze({ ...source, body });
+      return Object.freeze({ ...source, body: observeStreamReads(body, assertOutsideTransaction) });
     },
     storeInstanceStream: async () => {
       stowCalls += 1;
@@ -637,6 +781,7 @@ function createHarness({
     database,
     actorContext,
     executor,
+    assertOutsideTransaction,
     counters: () => Object.freeze({
       tenantContextRuns,
       quotaReservations,
@@ -927,7 +1072,11 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     jwksRequests += 1;
     response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ keys: [jwk] }));
   });
-  let root, store, harness, signedPrincipal;
+  let root, store, harness, signedPrincipal, overlapObserver;
+  const verifyOverlap = async stage => {
+    harness.assertOutsideTransaction();
+    if (overlapObserver) await overlapObserver.assertHeld(stage);
+  };
   const attempted = [];
   const observedQuotaRefs = new Set();
   let callbacks = 0;
@@ -978,7 +1127,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     });
     store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, ciphertextIo: {
       async write(file, buffer, offset, length, position) {
-        assert.equal(harness.counters().activeTenantTransactions, 0, "DEC017_WRITE_OUTSIDE_OWN_TRANSACTION");
+        await verifyOverlap('WRITE');
         assert.ok(harness.counters().quotaReservations > 0, "DEC017_COMMITTED_QUOTA_BEFORE_WRITE");
         const ref = attempted.at(-1).storageRef;
         if (!observedQuotaRefs.has(ref)) {
@@ -988,14 +1137,15 @@ async function runTemporaryLifecycleCase(scenario, signal) {
         if (scenario.name === "capture_write_failure") throw new Error("DEC017_SYNTHETIC_WRITE_FAILURE");
         return file.write(buffer, offset, length, position);
       },
-      sync: file => {
+      sync: async file => {
+        await verifyOverlap('SYNC');
         if (scenario.name === "capture_fsync_failure") throw new Error("DEC017_SYNTHETIC_FSYNC_FAILURE");
         return file.sync();
       },
     } });
     const port = {
       async beginReservedPackage(binding, ref, quota) {
-        assert.equal(harness.counters().activeTenantTransactions, 0);
+        harness.assertOutsideTransaction();
         const state = await currentMetadata();
         assert.equal(state.temporary_payload_state, "STAGING", "DEC017_RESERVED_BEFORE_ALLOCATION");
         assert.equal(state.temporary_storage_ref, ref);
@@ -1012,7 +1162,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
       sealPackage: input => store.sealPackage(input),
       async purgeByReference(input) {
         physicalPurgeCalls += 1;
-        assert.equal(harness.counters().activeTenantTransactions, 0);
+        await verifyOverlap('PURGE');
         const state = await currentMetadata();
         assert.ok(["PURGE_PENDING", "PURGED"].includes(state.temporary_payload_state));
         assert.equal(state.temporary_storage_ref, input.storageRef);
@@ -1024,7 +1174,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
         let phase = 0;
         await store.consumeInstance(input, async (...args) => {
           const result = await verify(...args);
-          assert.equal(harness.counters().activeTenantTransactions, 0);
+          harness.assertOutsideTransaction();
           phase += 1;
           if (phase === 1 && scenario.mutation && scenario.boundary === 'BETWEEN') await applyMutation();
           if (phase === 1 && scenario.name === "read_revoked") {
@@ -1071,6 +1221,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
       await observePrivacy(scenario, 'WITHDRAWN', signal);
     };
     harness = createHarness({ temporaryImagingStore: port, oidcAuthentication: auth, observeInstanceStreams: true,
+      beforeSourceRequest: () => verifyOverlap('SOURCE'),
       ...(noAllocation ? { afterMetadata: scenario.consentWithdrawal ? withdrawAfterMetadata : applyMutation } : {}) });
     const runtime = await harness.database.connect();
     try {
@@ -1086,6 +1237,21 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     const cross = await harness.service.captureForCoordinator({ ...input, principal: crossPrincipal, tenantCandidate: fixture.otherTenantId });
     assert.equal(cross.kind, "DENIED");
     assert.equal(harness.counters().instanceCalls, 0);
+
+    if (scenario.name === 'roundtrip') {
+      let forbiddenReads = 0;
+      const precreated = observeStreamReads(new ReadableStream({
+        pull(controller) { forbiddenReads++; controller.close(); },
+      }, { highWaterMark: 0 }), harness.assertOutsideTransaction).getReader();
+      try {
+        await harness.actorContext.run(signedPrincipal, fixture.tenantId, async (_identity, client) => {
+          await client.query('SET TRANSACTION READ ONLY');
+          await assert.rejects(precreated.read(), error => error?.code === 'ERR_ASSERTION' && error.message === 'DEC017_IO_WITHIN_OWN_TRANSACTION');
+          assert.equal(forbiddenReads, 0, 'DEC017_REAL_OWN_TRANSACTION_NO_PHYSICAL_READ');
+        });
+      } finally { await precreated.cancel().catch(() => undefined); precreated.releaseLock(); }
+      overlapObserver = await startUnrelatedReadOnlyTransaction(harness, signedPrincipal, fixture.tenantId, signal);
+    }
 
     const restoreAfterDenial = async storageRef => {
       assert.equal(callbacks, 0, 'DEC017_MUTATION_NO_CALLBACK');
@@ -1148,7 +1314,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
       assert.equal(handoff.sourceEvidence.aggregateDigest, expectedSourceManifestDigest(manifest));
       const readInput = objectRef => ({ principal: signedPrincipal, tenantCandidate: fixture.tenantId,
         correlationId: scenario.correlationId, consentId: scenario.consentId, grantId: scenario.grantId, handoff, objectRef });
-      const consume = async bytes => { callbacks += 1; assert.equal(harness.counters().activeTenantTransactions, 0); };
+      const consume = async bytes => { await verifyOverlap('CONSUMER'); callbacks += 1; };
       if (scenario.boundary === 'BEFORE') await applyMutation();
       const verifyExactRead = async (selectedHandoff, instance) => {
         const known = manifest.instances.find(item => item.sopInstanceUID === instance.sopInstanceUid);
@@ -1236,6 +1402,14 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     else assert.ok(finalState.temporary_payload_purged_at instanceof Date);
     assert.deepEqual(await children(storageRoot), []);
     await observePrivacy(scenario, "FINAL", signal);
+    if (overlapObserver) {
+      assert.ok(overlapObserver.counts().SOURCE >= 4);
+      assert.ok(overlapObserver.counts().WRITE >= 3);
+      assert.equal(overlapObserver.counts().SYNC, 3);
+      assert.equal(overlapObserver.counts().CONSUMER, 3);
+      assert.equal(overlapObserver.counts().PURGE, 2);
+      await overlapObserver.close();
+    }
     const counts = harness.counters();
     const expectedInstances = noAllocation ? 0 : actorCapture || ["capture_write_failure", "capture_fsync_failure"].includes(scenario.name) ? 1
       : scenario.name === "replay_refetch" ? 6 : 3;
@@ -1269,6 +1443,8 @@ async function runTemporaryLifecycleCase(scenario, signal) {
     // Fixture teardown cannot count as product purge. The assertions above
     // run first; failures remain failures even when owned scratch data is removed.
     try {
+      let overlapCleanupFailed = false;
+      if (overlapObserver) await overlapObserver.close().catch(() => { overlapCleanupFailed = true; });
       releaseReservation();
       if (winner) await winner.catch(() => undefined);
       if (store) for (const target of attempted) await store.purgeByReference(target);
@@ -1278,6 +1454,7 @@ async function runTemporaryLifecycleCase(scenario, signal) {
         await rm(root, { recursive: true, force: true });
         await assert.rejects(stat(root), { code: "ENOENT" });
       }
+      if (overlapCleanupFailed) throw new Error('DEC017_OVERLAP_CLEANUP_FAILED');
     } finally {
       await harness?.database.onModuleDestroy();
       server.closeAllConnections();
