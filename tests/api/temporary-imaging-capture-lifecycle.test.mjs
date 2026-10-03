@@ -163,4 +163,72 @@ describe("DEC-017 explicit capture quota and completion TTL (unit contract)", ()
     expect(quota.reserve).toHaveBeenCalledOnce();
     expect(quota.settle).toHaveBeenCalledOnce();
   });
+
+  it("rejects a concurrent seal before a second quota settlement starts", async () => {
+    const entered = deferred();
+    const duplicateEntered = deferred();
+    const release = deferred();
+    const quota = quotaPort();
+    let attempts = 0;
+    quota.settle.mockImplementation(async () => {
+      attempts += 1;
+      if (attempts === 1) entered.resolve();
+      else duplicateEntered.resolve({ kind: "DUPLICATE_SETTLEMENT" });
+      await release.promise;
+    });
+    const fixture = await setup({ sharedQuota: quota });
+    const packageBinding = binding();
+    const handle = await reserve(fixture, packageBinding);
+    await stage(fixture, handle, packageBinding);
+    const request = { storageRef: handle.storageRef, binding: packageBinding };
+    const outcome = (promise) => promise.then(
+      (receipt) => ({ kind: "SEALED", receipt }),
+      (error) => ({ kind: "REJECTED", code: error.code }),
+    );
+    const first = outcome(fixture.store.sealPackage(request));
+    let second;
+    try {
+      await entered.promise;
+      second = outcome(fixture.store.sealPackage(request));
+      // Either a guarded rejection or an unguarded second settlement is
+      // observed deterministically; no sleep or timing assertion is needed.
+      expect(await Promise.race([second, duplicateEntered.promise])).toEqual({
+        kind: "REJECTED", code: "BINDING_MISMATCH",
+      });
+      expect(quota.settle).toHaveBeenCalledOnce();
+      release.resolve();
+      expect(await first).toMatchObject({ kind: "SEALED", receipt: { objectCount: 1, totalBytes: bytes.length } });
+    } finally {
+      release.resolve();
+      await Promise.all([first, second]);
+    }
+  });
+
+  it("does not return a sealed receipt after purge finishes during quota settlement", async () => {
+    const entered = deferred();
+    const release = deferred();
+    const quota = quotaPort();
+    quota.settle.mockImplementation(async () => { entered.resolve(); await release.promise; });
+    const fixture = await setup({ sharedQuota: quota });
+    const packageBinding = binding();
+    const handle = await reserve(fixture, packageBinding);
+    await stage(fixture, handle, packageBinding);
+    const request = { storageRef: handle.storageRef, binding: packageBinding };
+    const sealing = fixture.store.sealPackage(request).then(
+      () => ({ kind: "SEALED" }),
+      (error) => ({ kind: "REJECTED", code: error.code }),
+    );
+    try {
+      await entered.promise;
+      await fixture.store.purgeByReference(request);
+      expect(await readdir(fixture.storageRoot)).toEqual([]);
+      release.resolve();
+      expect(await sealing).toEqual({ kind: "REJECTED", code: "STORAGE_UNAVAILABLE" });
+      expect(quota.settle).toHaveBeenCalledOnce();
+      expect(await readdir(fixture.storageRoot)).toEqual([]);
+    } finally {
+      release.resolve();
+      await sealing;
+    }
+  });
 });

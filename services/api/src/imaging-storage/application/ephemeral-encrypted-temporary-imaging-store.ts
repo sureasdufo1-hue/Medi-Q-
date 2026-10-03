@@ -229,10 +229,12 @@ interface StoredPackage {
   readonly idleWaiters: Array<() => void>;
   readonly quotaWriterId: string;
   readonly quotaRequired: boolean;
+  readonly quota: TemporaryPayloadQuotaReservationPort | undefined;
   quotaStudyRefId: string | null;
   sharedQuotaReservedBytes: number;
   quotaReservationTail: Promise<void>;
   quotaFinalizing: boolean;
+  sealInFlight: boolean;
   byteLength: number;
   activeStages: number;
   sealed: boolean;
@@ -252,6 +254,28 @@ const CIPHERTEXT_FILE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 
 function storageError(code: TemporaryImagingStorageErrorCode): never {
   throw new TemporaryImagingStorageError(code);
+}
+
+function snapshotQuota(value: unknown): TemporaryPayloadQuotaReservationPort {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      storageError("QUOTA_UNAVAILABLE");
+    }
+    const candidate = value as TemporaryPayloadQuotaReservationPort;
+    const reserve = candidate.reserve;
+    const settle = candidate.settle;
+    if (typeof reserve !== "function" || typeof settle !== "function") {
+      storageError("QUOTA_UNAVAILABLE");
+    }
+    // Copy methods before any await and preserve the adapter's receiver.
+    // Later method replacement cannot switch a live package's Tenant runner.
+    return Object.freeze<TemporaryPayloadQuotaReservationPort>({
+      reserve: (input) => Reflect.apply(reserve, candidate, [input]),
+      settle: (input) => Reflect.apply(settle, candidate, [input]),
+    });
+  } catch {
+    return storageError("QUOTA_UNAVAILABLE");
+  }
 }
 
 function validateUuid(value: unknown): value is string {
@@ -401,15 +425,19 @@ export class EphemeralEncryptedTemporaryImagingStore {
   async beginReservedPackage(
     binding: TemporaryImagingPackageBinding,
     storageRef: string,
+    ...scopedQuota: [] | [TemporaryPayloadQuotaReservationPort]
   ): Promise<TemporaryImagingPackageHandle> {
-    if (!this.sharedQuota) storageError("QUOTA_UNAVAILABLE");
-    return this.createPackage(binding, storageRef, true);
+    // An explicitly invalid adapter must not silently fall back to another
+    // principal. Constructor-only behavior remains for isolated legacy tests.
+    const quota = snapshotQuota(scopedQuota.length === 0 ? this.sharedQuota : scopedQuota[0]);
+    return this.createPackage(binding, storageRef, true, quota);
   }
 
   private async createPackage(
     binding: TemporaryImagingPackageBinding,
     storageRef: string,
     quotaRequired: boolean,
+    quota?: TemporaryPayloadQuotaReservationPort,
   ): Promise<TemporaryImagingPackageHandle> {
     await this.ready;
     this.assertRecoveryComplete();
@@ -451,10 +479,12 @@ export class EphemeralEncryptedTemporaryImagingStore {
       idleWaiters: [],
       quotaWriterId: randomUUID(),
       quotaRequired,
+      quota,
       quotaStudyRefId: null,
       sharedQuotaReservedBytes: 0,
       quotaReservationTail: Promise.resolve(),
       quotaFinalizing: false,
+      sealInFlight: false,
       byteLength: 0,
       activeStages: 0,
       sealed: false,
@@ -733,44 +763,65 @@ export class EphemeralEncryptedTemporaryImagingStore {
     await this.ready;
     const storedPackage = this.getPackage(input.storageRef);
     this.assertPackageBinding(storedPackage, input.binding);
-    if (storedPackage.sealed || storedPackage.purgePending || storedPackage.activeStages > 0 || storedPackage.objects.size < 1) {
+    if (storedPackage.sealed || storedPackage.sealInFlight || storedPackage.purgePending || storedPackage.activeStages > 0 || storedPackage.objects.size < 1) {
       storageError("BINDING_MISMATCH");
     }
-    const expiresAt = this.now() + this.limits.packageTtlMilliseconds;
-    if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()) storageError("INVALID_INPUT");
-    if (storedPackage.quotaRequired) {
-      const studyRefId = storedPackage.quotaStudyRefId;
-      if (
-        !this.sharedQuota ||
-        !studyRefId ||
-        storedPackage.sharedQuotaReservedBytes < storedPackage.byteLength
-      ) {
-        storageError("QUOTA_UNAVAILABLE");
+    storedPackage.sealInFlight = true;
+    try {
+      if (storedPackage.quotaRequired) {
+        const quota = storedPackage.quota;
+        const studyRefId = storedPackage.quotaStudyRefId;
+        if (
+          !quota ||
+          !studyRefId ||
+          storedPackage.sharedQuotaReservedBytes < storedPackage.byteLength
+        ) {
+          storageError("QUOTA_UNAVAILABLE");
+        }
+        // Freeze writes before settlement. A failed/ambiguous completed
+        // attempt can retry identically, but never concurrently with itself.
+        storedPackage.quotaFinalizing = true;
+        try {
+          await quota.settle({
+            tenantId: storedPackage.binding.tenantId,
+            studyRefId,
+            storageRef: storedPackage.handle.storageRef,
+            writerId: storedPackage.quotaWriterId,
+            actualBytes: storedPackage.byteLength,
+          });
+        } catch {
+          storageError("QUOTA_UNAVAILABLE");
+        }
       }
-      // Freeze the package before awaiting settlement. If the DB commit is
-      // ambiguous, the safe recovery is retrying this seal or purging it.
-      storedPackage.quotaFinalizing = true;
+      // Purge may finish while quota I/O is pending. It must win over seal;
+      // never return a receipt for a removed or no-longer-readable package.
+      if (storedPackage.purgePending || storedPackage.abortController.signal.aborted ||
+        this.packages.get(storedPackage.handle.storageRef) !== storedPackage) {
+        storageError("STORAGE_UNAVAILABLE");
+      }
+      let completedAt: number;
       try {
-        await this.sharedQuota.settle({
-          tenantId: storedPackage.binding.tenantId,
-          studyRefId,
-          storageRef: storedPackage.handle.storageRef,
-          writerId: storedPackage.quotaWriterId,
-          actualBytes: storedPackage.byteLength,
-        });
+        completedAt = this.now();
       } catch {
-        storageError("QUOTA_UNAVAILABLE");
+        storageError("INVALID_INPUT");
       }
+      const expiresAt = completedAt + this.limits.packageTtlMilliseconds;
+      if (!Number.isSafeInteger(completedAt) || !Number.isSafeInteger(expiresAt) ||
+        expiresAt <= completedAt || !Number.isFinite(new Date(expiresAt).getTime())) {
+        storageError("INVALID_INPUT");
+      }
+      storedPackage.sealed = true;
+      storedPackage.expiresAt = expiresAt;
+      return Object.freeze({
+        storageRef: storedPackage.handle.storageRef,
+        packageId: storedPackage.handle.packageId,
+        objectCount: storedPackage.objects.size,
+        totalBytes: storedPackage.byteLength,
+        expiresAt: new Date(expiresAt),
+      });
+    } finally {
+      storedPackage.sealInFlight = false;
     }
-    storedPackage.sealed = true;
-    storedPackage.expiresAt = expiresAt;
-    return Object.freeze({
-      storageRef: input.storageRef,
-      packageId: storedPackage.handle.packageId,
-      objectCount: storedPackage.objects.size,
-      totalBytes: storedPackage.byteLength,
-      expiresAt: new Date(expiresAt),
-    });
   }
 
   /**
@@ -1132,7 +1183,7 @@ export class EphemeralEncryptedTemporaryImagingStore {
     requiredBytes: number,
   ): Promise<void> {
     if (!storedPackage.quotaRequired) return;
-    const quota = this.sharedQuota;
+    const quota = storedPackage.quota;
     const studyRefId = studyRefIdInput.toLowerCase();
     if (
       !quota ||

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, dirname, basename } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MODULE_METADATA } from "@nestjs/common/constants";
 import { AuthorizationEngine } from "../../services/api/dist/authorization/application/authorization-engine.js";
@@ -13,6 +13,7 @@ import { ResolvedObjectAuthorizationPolicy } from "../../services/api/dist/autho
 import { PostgresAuthorizationEvidenceReader } from "../../services/api/dist/authorization/persistence/postgres-authorization-evidence.reader.js";
 import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrity/application/authorized-source-capture.service.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
+import { ActorTenantContextDeniedError, ActorTenantContextUnavailableError } from "../../services/api/dist/identity/identity-context.types.js";
 import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
 import {
   TEST_HOSPITAL_A_ID,
@@ -162,6 +163,7 @@ function makeHarness(options = {}) {
       ...(options.mappingOverrides ?? {}),
     });
   let authorizationNow = new Date(now);
+  let captureNow = new Date(now);
   let currentAuthorization = {
     consentStatus: options.consentStatus ?? "ACTIVE",
     ...(options.authorizationInitial ?? {}),
@@ -186,6 +188,11 @@ function makeHarness(options = {}) {
   const committedAudits = [];
   const committedEvidence = [];
   const rollbackReasons = [];
+  const lifecycleEvents = [];
+  const observedPrincipals = [];
+  const reservationExpiries = [];
+  let committedPayload = options.existingPayload ? { ...options.existingPayload } : null;
+  let committedQuota = 0;
   const dicomCalls = {
     metadata: 0,
     instances: 0,
@@ -195,15 +202,83 @@ function makeHarness(options = {}) {
   };
 
   const actorTenantContext = {
-    run: async (_principal, tenantCandidate, work) => {
+    run: async (capturePrincipal, tenantCandidate, work) => {
       if (tenantCandidate !== ids.tenant) throw new Error("ACTOR_TENANT_CONTEXT_DENIED");
+      observedPrincipals.push({ ...capturePrincipal });
+      if (capturePrincipal.issuer !== issuer || capturePrincipal.subject !== subject) throw new ActorTenantContextDeniedError();
+      if (options.denyIdentityAfterReservation && committedPayload) throw new ActorTenantContextDeniedError();
       activeTransactions += 1;
+      lifecycleEvents.push("transaction:begin");
       const txAudits = [];
       const txEvidence = [];
+      let txPayload = committedPayload ? { ...committedPayload } : null;
+      let txQuota = committedQuota;
+      let didReserve = false;
+      let didComplete = false;
+      let committed = false;
       const client = {
         query: async (statement, values = []) => {
           const sql = String(statement);
           if (sql.includes("pg_advisory_xact_lock")) return { rowCount: 1, rows: [] };
+          // Transaction model for ordering/rollback, not PostgreSQL/RLS proof.
+          // Handle UPDATEs before their nested FROM operation-graph predicates.
+          if (sql.includes("UPDATE study_references AS sr")) {
+            if (sql.includes("SET temporary_storage_ref = $1::uuid")) {
+              if (options.failReservationSql) throw new Error("TEST_RESERVATION_SQL_FAILURE");
+              if (txPayload && txPayload.state !== "PURGED") return { rowCount: 0, rows: [] };
+              expect(values.slice(2)).toEqual([ids.studyRef, ids.package, ids.tenant, ids.operation, ids.session, TEST_HOSPITAL_A_ID]);
+              txPayload = { storageRef: values[0], state: "STAGING", expiresAt: new Date(values[1]) };
+              reservationExpiries.push(new Date(values[1]));
+              didReserve = true;
+              lifecycleEvents.push("metadata:reserve");
+              return { rowCount: 1, rows: [] };
+            }
+            if (!txPayload || txPayload.storageRef !== values[3]) return { rowCount: 0, rows: [] };
+            if (sql.includes("SET temporary_payload_state = 'AVAILABLE'")) {
+              if (options.failCompletionSql) throw new Error("TEST_COMPLETION_SQL_FAILURE");
+              if (txPayload.state !== "STAGING" || txPayload.expiresAt <= values[4]) return { rowCount: 0, rows: [] };
+              expect(values[8]).toBeInstanceOf(Date);
+              txPayload = { ...txPayload, state: "AVAILABLE", expiresAt: new Date(values[8]) };
+              didComplete = true;
+              lifecycleEvents.push("metadata:available");
+              return { rowCount: 1, rows: [] };
+            }
+            if (sql.includes("SET temporary_payload_state = CASE")) {
+              if (options.failPurgeAdmission) throw new Error("TEST_PURGE_ADMISSION_FAILURE");
+              if (txPayload.state !== "PURGED") txPayload.state = "PURGE_PENDING";
+              lifecycleEvents.push("metadata:purge-pending");
+              return { rowCount: 1, rows: [] };
+            }
+            if (sql.includes("SET temporary_payload_state = 'PURGED'")) {
+              if (txPayload.state !== "PURGE_PENDING") return { rowCount: 0, rows: [] };
+              txPayload.state = "PURGED";
+              lifecycleEvents.push("metadata:purged");
+              return { rowCount: 1, rows: [{ study_ref_id: ids.studyRef }] };
+            }
+            throw new Error("TEST_UNKNOWN_METADATA_TRANSITION");
+          }
+          if (sql.includes("SELECT sr.temporary_payload_state")) {
+            return { rows: txPayload?.storageRef === values[3] ? [{
+              temporary_payload_state: txPayload.state, temporary_storage_ref: txPayload.storageRef,
+            }] : [] };
+          }
+          if (sql.includes("reserve_temporary_payload_quota") || sql.includes("settle_temporary_payload_quota")) {
+            if (options.failQuota) throw new Error("TEST_QUOTA_FAILURE");
+            expect(txPayload?.state).toBe("STAGING");
+            expect(values[0]).toBe(ids.studyRef);
+            expect(values[1]).toBe(txPayload.storageRef);
+            const reserve = sql.includes("reserve_temporary_payload_quota");
+            if (!reserve) expect(txQuota).toBeGreaterThanOrEqual(values[3]);
+            txQuota = reserve ? txQuota + values[3] : values[3];
+            lifecycleEvents.push(reserve ? "quota:reserve" : "quota:settle");
+            return { rowCount: 1, rows: [] };
+          }
+          if (sql.includes("release_temporary_payload_quota")) {
+            expect(txPayload?.state).toBe("PURGED");
+            txQuota = 0;
+            lifecycleEvents.push("quota:release");
+            return { rowCount: 1, rows: [] };
+          }
           if (sql.includes("FROM pacs_transfer_operations AS op")) {
             return { rowCount: 1, rows: [{ ...currentScope }] };
           }
@@ -225,6 +300,7 @@ function makeHarness(options = {}) {
               throw new Error("synthetic Audit sink failure");
             }
             txAudits.push([...values]);
+            lifecycleEvents.push(`audit:${action}`);
             return { rowCount: 1, rows: [] };
           }
           if (sql.includes("INSERT INTO integrity_evidence")) {
@@ -246,6 +322,7 @@ function makeHarness(options = {}) {
               created_at: values[4],
             };
             txEvidence.push(row);
+            lifecycleEvents.push("evidence:insert");
             return { rowCount: 1, rows: [row] };
           }
           if (sql.includes("SELECT integrity_id, operation_id")) {
@@ -256,7 +333,10 @@ function makeHarness(options = {}) {
       };
 
       try {
-        const result = await work(identity, client);
+        const workIdentity = options.changeIdentityAfterReservation && committedPayload
+          ? { ...identity, actorId: "02000000-0000-4000-8000-000000000099" } : identity;
+        const result = await work(workIdentity, client);
+        if (didReserve && options.failReservationCommit) throw new Error("TEST_RESERVATION_COMMIT_FAILURE");
         if (
           options.failFinalCommit === true &&
           txAudits.some((values) => values[7] === "PACS_SOURCE_CAPTURED")
@@ -265,12 +345,21 @@ function makeHarness(options = {}) {
         }
         committedAudits.push(...txAudits);
         committedEvidence.push(...txEvidence);
-        activeTransactions -= 1;
+        committedPayload = txPayload;
+        committedQuota = txQuota;
+        committed = true;
+        lifecycleEvents.push("transaction:commit");
+        if ((didReserve && options.loseReservationCommitAck) || (didComplete && options.loseFinalCommitAck)) {
+          throw new ActorTenantContextUnavailableError();
+        }
+        if (didComplete) options.afterCompletionCommit?.();
         return result;
       } catch (error) {
         rollbackReasons.push(error?.message ?? "UNKNOWN");
-        activeTransactions -= 1;
+        lifecycleEvents.push(committed ? "transaction:ack-lost" : "transaction:rollback");
         throw error;
+      } finally {
+        activeTransactions -= 1;
       }
     },
   };
@@ -292,6 +381,8 @@ function makeHarness(options = {}) {
       if (options.revokeAfterMetadata) {
         currentAuthorization = { ...currentAuthorization, consentStatus: "WITHDRAWN" };
       }
+      if (options.delayMetadataMilliseconds) captureNow = new Date(captureNow.getTime() + options.delayMetadataMilliseconds);
+      options.afterMetadata?.();
       if (options.metadataFailure) throw new Error("private upstream response");
       const metadata = studyMetadata({ patientId: options.metadataPatientId });
       switch (options.metadataShape) {
@@ -362,7 +453,7 @@ function makeHarness(options = {}) {
     executor,
     actorTenantContext,
     gateway,
-    () => new Date(now),
+    () => new Date(captureNow),
     undefined,
     options.temporaryImagingStore,
   );
@@ -374,6 +465,13 @@ function makeHarness(options = {}) {
     committedAudits,
     committedEvidence,
     rollbackReasons,
+    lifecycleEvents,
+    observedPrincipals,
+    reservationExpiries,
+    get payloadState() { return committedPayload; },
+    get reservedBytes() { return committedQuota; },
+    get captureTime() { return new Date(captureNow); },
+    set captureTime(value) { captureNow = new Date(value); },
     dicomCalls,
     get activeTransactions() { return activeTransactions; },
     get authorizationCalls() { return authorizationCalls; },
@@ -401,6 +499,259 @@ function auditActions(harness) {
     reason: values[9],
   }));
 }
+
+async function withLifecycle(options, check) {
+  const root = await mkdtemp(join(tmpdir(), "mediq-source-lifecycle-"));
+  const storageRoot = join(root, "ciphertext");
+  let harness;
+  const attempted = [];
+  const store = new EphemeralEncryptedTemporaryImagingStore({
+    rootDirectory: storageRoot,
+    now: () => (harness?.captureTime.getTime() ?? now.getTime()) + (options.storeClockOffset ?? 0),
+    ciphertextIo: {
+      write: (file, bytes, offset, length, position) => {
+        expect(harness.activeTransactions).toBe(0);
+        expect(harness.reservedBytes).toBeGreaterThanOrEqual(length);
+        harness.lifecycleEvents.push("physical:write");
+        return file.write(bytes, offset, length, position);
+      },
+      sync: (file) => file.sync(),
+    },
+  });
+  const port = {
+    async beginReservedPackage(binding, ref, quota) {
+      attempted.push({ storageRef: ref, binding });
+      expect(harness.activeTransactions).toBe(0);
+      expect(harness.payloadState).toMatchObject({ state: "STAGING", storageRef: ref });
+      expect(quota).toBeDefined();
+      harness.lifecycleEvents.push("physical:allocate");
+      const handle = await store.beginReservedPackage(binding, ref, quota);
+      if (options.failAfterAllocation) throw new Error("TEST_AFTER_ALLOCATION_FAILURE");
+      return handle;
+    },
+    beginInstance(input) {
+      expect(harness.activeTransactions).toBe(0);
+      return store.beginInstance(input);
+    },
+    async sealPackage(input) {
+      expect(harness.activeTransactions).toBe(0);
+      const receipt = await store.sealPackage(input);
+      if (options.afterSeal) await options.afterSeal(harness, receipt);
+      return receipt;
+    },
+    async purgeByReference(input) {
+      expect(harness.activeTransactions).toBe(0);
+      expect(["PURGE_PENDING", "PURGED"]).toContain(harness.payloadState?.state);
+      expect(harness.payloadState.storageRef).toBe(input.storageRef);
+      harness.lifecycleEvents.push("physical:purge");
+      if (options.failPurgePhysical) throw new Error("TEST_PHYSICAL_PURGE_FAILURE");
+      await store.purgeByReference(input);
+      expect(await readdir(storageRoot)).toEqual([]);
+    },
+  };
+  harness = makeHarness({ ...options, temporaryImagingStore: port });
+  try {
+    return await check(harness, store, storageRoot);
+  } finally {
+    // Fixture teardown only; it is not product DB/purge acceptance.
+    for (const input of attempted) await store.purgeByReference(input);
+    expect(await readdir(storageRoot)).toEqual([]);
+    expect(resolve(dirname(root))).toBe(resolve(tmpdir()));
+    expect(basename(root).startsWith("mediq-source-lifecycle-")).toBe(true);
+    await rm(root, { recursive: true, force: true });
+    await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+}
+
+describe("DEC-017 source lifecycle wiring (real store/AuthorizationEngine, modeled DB)", () => {
+  it("commits reservation before allocation, quota before writes, and AVAILABLE with evidence/Audit", async () => {
+    await withLifecycle({}, async (harness) => {
+      const result = await harness.service.captureForCoordinator(command());
+      expect(result.kind).toBe("CAPTURED_FOR_COORDINATOR");
+      expect(harness.payloadState).toMatchObject({ state: "AVAILABLE", storageRef: result.handoff.temporaryPackage.storageRef });
+      expect(harness.payloadState.expiresAt.toISOString()).toBe(result.handoff.temporaryPackage.expiresAt);
+      expect(harness.reservedBytes).toBe(12);
+      expect(harness.committedEvidence).toHaveLength(1);
+      expect(harness.authorizationCalls).toBe(3);
+      const events = harness.lifecycleEvents;
+      const allocation = events.indexOf("physical:allocate");
+      expect(events[allocation - 1]).toBe("transaction:commit");
+      expect(events.indexOf("metadata:reserve")).toBeLessThan(allocation);
+      expect(events.indexOf("quota:reserve")).toBeLessThan(events.indexOf("physical:write"));
+      expect(events.indexOf("metadata:available")).toBeLessThan(events.indexOf("evidence:insert"));
+      expect(events.slice(-4)).toEqual(["metadata:available", "evidence:insert", "audit:PACS_SOURCE_CAPTURED", "transaction:commit"]);
+      expect(events).not.toContain("physical:purge");
+      expect(harness.dicomCalls).toMatchObject({ metadata: 1, instances: 3, destinationWrites: 0 });
+      expect(harness.activeTransactions).toBe(0);
+    });
+  });
+
+  it("snapshots command identity before metadata awaits and every quota transaction", async () => {
+    const mutablePrincipal = { ...principal };
+    const input = command({ principal: mutablePrincipal });
+    await withLifecycle({ afterMetadata: () => { mutablePrincipal.subject = "TEST-OTHER-SUBJECT"; input.tenantCandidate = "01000000-0000-4000-8000-000000000099"; } }, async (harness) => {
+      expect((await harness.service.captureForCoordinator(input)).kind).toBe("CAPTURED_FOR_COORDINATOR");
+      expect(harness.observedPrincipals.length).toBeGreaterThanOrEqual(5);
+      expect(harness.observedPrincipals.every((value) => value.issuer === issuer && value.subject === subject)).toBe(true);
+    });
+  });
+
+  it("keeps the invocation deadline when metadata takes time", async () => {
+    await withLifecycle({ delayMetadataMilliseconds: 5 * 60_000 }, async (harness) => {
+      const result = await harness.service.captureForCoordinator(command());
+      expect(Date.parse(result.handoff.temporaryPackage.expiresAt)).toBe(now.getTime() + 35 * 60_000);
+      // Reservation uses the original invocation deadline, not the later
+      // metadata completion time or the completed-copy expiry.
+      expect(harness.reservationExpiries.map((value) => value.getTime())).toEqual([now.getTime() + 30 * 60_000]);
+    });
+  });
+
+  it("denies before reservation or instance I/O if the original deadline elapsed in metadata", async () => {
+    await withLifecycle({ delayMetadataMilliseconds: 30 * 60_000 }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState).toBeNull();
+      expect(harness.dicomCalls.instances).toBe(0);
+      expect(harness.lifecycleEvents).not.toContain("physical:allocate");
+    });
+  });
+
+  it("revalidates Consent after metadata before reservation/allocation/WADO instances", async () => {
+    await withLifecycle({ revokeAfterMetadata: true }, async (harness) => {
+      expect(await harness.service.captureForCoordinator(command())).toEqual({ kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+      expect(harness.payloadState).toBeNull();
+      expect(harness.dicomCalls.instances).toBe(0);
+    });
+  });
+
+  it.each([
+    ["reservation SQL", { failReservationSql: true }],
+    ["reservation commit rollback", { failReservationCommit: true }],
+  ])("does not touch physical storage after %s failure", async (_name, options) => {
+    await withLifecycle(options, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState).toBeNull();
+      expect(harness.lifecycleEvents).not.toContain("physical:allocate");
+      expect(harness.lifecycleEvents).not.toContain("physical:purge");
+      expect(harness.dicomCalls.instances).toBe(0);
+      expect(auditActions(harness)).toContainEqual({
+        action: "PACS_SOURCE_CAPTURE_FAILED", result: "FAILURE", reason: "SOURCE_CAPTURE_PERSISTENCE_FAILED",
+      });
+    });
+  });
+
+  it.each([
+    ["reservation acknowledgement loss", { loseReservationCommitAck: true }, 0],
+    ["allocation before handle return", { failAfterAllocation: true }, 0],
+    ["quota reserve", { failQuota: true }, null],
+    ["completion SQL", { failCompletionSql: true }, 3],
+    ["evidence insert", { failEvidenceInsert: true }, 3],
+    ["success Audit", { failAuditAction: "PACS_SOURCE_CAPTURED" }, 3],
+    ["final commit rollback", { failFinalCommit: true }, 3],
+    ["mismatched clocks", { storeClockOffset: 24 * 60 * 60_000 }, 3],
+    ["staging expiry before final CAS", { afterSeal: (harness) => { harness.payloadState.expiresAt = new Date(now.getTime() - 1); } }, 3],
+  ])("retains the exact ref and purges through the saga after %s failure", async (_name, options, instanceCount) => {
+    await withLifecycle(options, async (harness, _store, root) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState.state).toBe("PURGED");
+      expect(harness.reservedBytes).toBe(0);
+      expect(await readdir(root)).toEqual([]);
+      expect(harness.committedEvidence).toHaveLength(0);
+      expect(harness.committedAudits.filter((values) => values[7] === "PACS_SOURCE_CAPTURED")).toHaveLength(0);
+      expect(harness.committedAudits.filter((values) => values[7] === "PACS_TEMPORARY_OBJECT_PURGED")).toHaveLength(1);
+      const events = harness.lifecycleEvents;
+      expect(events.indexOf("metadata:purge-pending")).toBeLessThan(events.indexOf("physical:purge"));
+      expect(events.indexOf("physical:purge")).toBeLessThan(events.indexOf("metadata:purged"));
+      expect(events[events.indexOf("physical:purge") - 1]).toBe("transaction:commit");
+      if (instanceCount !== null) expect(harness.dicomCalls.instances).toBe(instanceCount);
+      expect(harness.dicomCalls.destinationWrites).toBe(0);
+    });
+  });
+
+  it("does not release a handoff on lost final commit acknowledgement or re-fetch", async () => {
+    await withLifecycle({ loseFinalCommitAck: true }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.committedEvidence).toHaveLength(1); // Commit happened; never pretend rollback.
+      expect(harness.payloadState.state).toBe("PURGED");
+      expect(harness.reservedBytes).toBe(0);
+      expect(harness.dicomCalls.instances).toBe(3);
+    });
+  });
+
+  it("does not release a handoff if cancellation arrives after completion commit", async () => {
+    const abort = new AbortController();
+    await withLifecycle({ afterCompletionCommit: () => abort.abort() }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command({ signal: abort.signal }))).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.committedEvidence).toHaveLength(1);
+      expect(harness.payloadState.state).toBe("PURGED");
+      expect(harness.dicomCalls.instances).toBe(3);
+    });
+  });
+
+  it("does not release a handoff when completion commit returns after the invocation deadline", async () => {
+    let running;
+    await withLifecycle({ afterCompletionCommit: () => { running.captureTime = new Date(now.getTime() + 30 * 60_000); } }, async (harness) => {
+      running = harness;
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.committedEvidence).toHaveLength(1);
+      expect(harness.payloadState.state).toBe("PURGED");
+      expect(harness.dicomCalls.instances).toBe(3);
+      expect(harness.committedAudits.some((values) => values[9] === "SOURCE_CAPTURE_DEADLINE")).toBe(true);
+    });
+  });
+
+  it.each([
+    ["purge admission", { failPurgeAdmission: true }, "STAGING", false],
+    ["physical purge", { failPurgePhysical: true }, "PURGE_PENDING", false],
+    ["purge Audit", { failAuditAction: "PACS_TEMPORARY_OBJECT_PURGED" }, "PURGE_PENDING", true],
+  ])("retains exact recovery metadata and quota after %s failure", async (_label, options, state, physicallyAbsent) => {
+    await withLifecycle({ ...options, failCompletionSql: true }, async (harness, _store, root) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState.state).toBe(state);
+      expect(harness.reservedBytes).toBe(12);
+      expect((await readdir(root)).length === 0).toBe(physicallyAbsent);
+      expect(harness.committedEvidence).toHaveLength(0);
+      expect(harness.committedAudits.some((values) => values[7] === "PACS_TEMPORARY_OBJECT_PURGED")).toBe(false);
+    });
+  });
+
+  it("denies changed registry actor before quota use, without elevating cleanup identity", async () => {
+    await withLifecycle({ changeIdentityAfterReservation: true }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.lifecycleEvents).not.toContain("quota:reserve");
+      expect(harness.lifecycleEvents).not.toContain("physical:write");
+      expect(harness.payloadState.state).toBe("PURGED");
+      expect(harness.reservedBytes).toBe(0);
+    });
+  });
+
+  it("retains recovery metadata if registry identity disappears after reservation", async () => {
+    await withLifecycle({ denyIdentityAfterReservation: true }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState.state).toBe("STAGING");
+      expect(harness.lifecycleEvents).not.toContain("quota:reserve");
+      expect(harness.lifecycleEvents).not.toContain("physical:purge");
+      expect(harness.committedAudits.some((values) => values[7] === "PACS_TEMPORARY_OBJECT_PURGED")).toBe(false);
+    });
+  });
+
+  it("does not delete a different winning ref when a reservation loses", async () => {
+    const winner = { state: "AVAILABLE", storageRef: "07000000-0000-4000-8000-000000000099", expiresAt: new Date(now.getTime() + 600_000) };
+    await withLifecycle({ existingPayload: winner }, async (harness) => {
+      await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+      expect(harness.payloadState).toEqual(winner);
+      expect(harness.lifecycleEvents).not.toContain("physical:allocate");
+      expect(harness.lifecycleEvents).not.toContain("physical:purge");
+      expect(harness.dicomCalls.instances).toBe(0);
+    });
+  });
+
+  it.each([null, { beginPackage: vi.fn(), purgePackage: vi.fn() }])("fails closed for a malformed lifecycle seam before I/O (%s)", async (store) => {
+    const harness = makeHarness({ temporaryImagingStore: store });
+    await expect(harness.service.captureForCoordinator(command())).rejects.toMatchObject({ message: "SOURCE_CAPTURE_UNAVAILABLE" });
+    expect(harness.authorizationCalls).toBe(0);
+    expect(harness.dicomCalls).toMatchObject({ metadata: 0, instances: 0, destinationWrites: 0 });
+  });
+});
 
 function expectSourceCaptureAuditMetadata(harness, expectedEvents) {
   const records = harness.committedAudits.map((values) => ({
@@ -547,7 +898,7 @@ describe("AuthorizedSourceCaptureService", () => {
     const root = await mkdtemp(join(tmpdir(), "mediq-authorized-source-spool-"));
     try {
       const storageRoot = join(root, "private-spool");
-      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, now: () => now.getTime() });
       const harness = makeHarness({ temporaryImagingStore: store });
       const result = await harness.service.captureForCoordinator(command());
 
@@ -619,7 +970,7 @@ describe("AuthorizedSourceCaptureService", () => {
     const root = await mkdtemp(join(tmpdir(), "mediq-authorized-source-spool-deny-"));
     try {
       const storageRoot = join(root, "private-spool");
-      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, now: () => now.getTime() });
       const harness = makeHarness({ temporaryImagingStore: store, revokeAfterStreams: true });
 
       const result = await harness.service.captureForCoordinator(command());

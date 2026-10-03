@@ -2490,9 +2490,9 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 
 P0 temporary payload expiry cleanup (DEC-016) is a separate internal per-Tenant batch path: fresh trusted principal → active Tenant-level SERVICE registry/RLS context → bounded expired metadata discovery → committed transaction → sequential existing purge saga with SERVICE/expiry revalidation → aggregate outcome. No DB transaction spans filesystem I/O and no scheduler/provider is activated in this slice. Tenant selection for future scheduling must be server-owned; the helper does not authenticate arbitrary principal objects.
 
-### DEC-017 integrated source lifecycle — approved design, not implemented
+### DEC-017 integrated source lifecycle — source wiring implemented, actual integration pending
 
-The next slice connects the existing components; it does not add a public storage API or dispatch permission. Start code changes after DEC-016's current full-wrapper acceptance. The normal source-capture projection remains unchanged.
+DEC-016's full ScratchOnly wrapper completed before sequence-1/2 edits. The optional source lifecycle connects fenced STAGING reservation, actor-bound quota, encrypted capture, common expiry/AVAILABLE/evidence/Audit and exact-ref failure purge. It stays unregistered and preserves ordinary capture output. API unit/model tests pass; concrete two-check read authorization and actual signed-OIDC/PostgreSQL/RLS/Orthanc acceptance remain pending. No public storage API or dispatch permission follows (evidence §§35–36).
 
 | Component | Planned integrated responsibility |
 |---|---|

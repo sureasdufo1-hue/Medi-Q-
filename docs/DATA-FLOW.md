@@ -2354,7 +2354,7 @@ Prohibited flows include Patient ID-only global PACS search, Assignment-to-Grant
 
 # P0 Source Capture / Temporary Lifecycle Integration — DEC-017
 
-**Status:** Approved design; implementation NOT STARTED; `TC-PACS-001-LIFECYCLE-001~014` NOT RUN. This is a pre-dispatch prerequisite, not the A→B transfer itself. Preserve the original P0 E2E success condition.
+**Status:** Sequence-1 store/metadata and sequence-2 optional source lifecycle wiring are implemented with unit/model API evidence (§§35–36). Exact reservation, identity-bound quota, completion transaction and failure purge are connected; actual PostgreSQL/RLS/Orthanc proof and the concrete read verifier remain pending. `TC-PACS-001-LIFECYCLE-001~014` integrated Acceptance remains NOT RUN. This unregistered pre-dispatch prerequisite is not the A→B transfer; preserve the original P0 E2E success condition.
 
 ```text
 Authenticated caller + strict internal operation/Consent/Grant refs

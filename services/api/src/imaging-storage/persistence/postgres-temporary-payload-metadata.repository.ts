@@ -206,6 +206,29 @@ export class PostgresTemporaryPayloadMetadataRepository {
     readonly storageRef: string;
     readonly now: Date;
   }): Promise<void> {
+    return this.activateStaging(input, null);
+  }
+
+  /** Capture completion must use the actual sealed receipt's bounded expiry. */
+  async completeStaging(input: {
+    readonly binding: TemporaryPayloadOperationBinding;
+    readonly storageRef: string;
+    readonly now: Date;
+    readonly expiresAt: Date;
+  }): Promise<void> {
+    if (!input || !validDate(input.now) || !validDate(input.expiresAt) ||
+      input.expiresAt.getTime() <= input.now.getTime() ||
+      input.expiresAt.getTime() - input.now.getTime() > 30 * 60 * 1000) {
+      throw new TemporaryPayloadMetadataPersistenceError();
+    }
+    return this.activateStaging(input, new Date(input.expiresAt.getTime()));
+  }
+
+  private async activateStaging(input: {
+    readonly binding: TemporaryPayloadOperationBinding;
+    readonly storageRef: string;
+    readonly now: Date;
+  }, completedExpiry: Date | null): Promise<void> {
     if (
       !input ||
       !validBinding(input.binding) ||
@@ -218,7 +241,8 @@ export class PostgresTemporaryPayloadMetadataRepository {
     try {
       const result = await this.transaction.query(
         `UPDATE study_references AS sr
-            SET temporary_payload_state = 'AVAILABLE'
+            SET temporary_payload_state = 'AVAILABLE',
+                temporary_payload_expires_at = COALESCE($9::timestamptz, sr.temporary_payload_expires_at)
           WHERE sr.study_ref_id = $1::uuid
             AND sr.package_id = $2::uuid
             AND sr.source_hospital_id = $3::uuid
@@ -249,10 +273,11 @@ export class PostgresTemporaryPayloadMetadataRepository {
           binding.packageId,
           binding.sourceHospitalId,
           input.storageRef.toLowerCase(),
-          input.now,
+          new Date(input.now.getTime()),
           binding.tenantId,
           binding.operationId,
           binding.exchangeSessionId,
+          completedExpiry,
         ],
       );
       if (result.rowCount !== 1) throw new Error("STAGING_ACTIVATION_REJECTED");

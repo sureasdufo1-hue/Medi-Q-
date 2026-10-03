@@ -52,6 +52,12 @@ import type {
   TemporaryImagingPackageBinding,
   TemporaryImagingPackageReceipt,
 } from "../../imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
+import {
+  PostgresTemporaryPayloadMetadataRepository,
+  type TemporaryPayloadOperationBinding,
+} from "../../imaging-storage/persistence/postgres-temporary-payload-metadata.repository.js";
+import { PostgresTemporaryPayloadQuotaRepository } from "../../imaging-storage/persistence/postgres-temporary-payload-quota.repository.js";
+import { TemporaryPayloadPurgeCoordinator } from "../../imaging-storage/application/temporary-payload-purge.coordinator.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -148,7 +154,7 @@ export interface AuthorizedSourceCaptureCoordinatorHandoff {
 
 type TemporaryImagingCaptureStore = Pick<
   EphemeralEncryptedTemporaryImagingStore,
-  "beginPackage" | "beginInstance" | "sealPackage" | "purgePackage"
+  "beginReservedPackage" | "beginInstance" | "sealPackage" | "purgeByReference"
 >;
 
 export type AuthorizedSourceCaptureCoordinatorResult =
@@ -192,6 +198,7 @@ type StartDecision =
 
 interface CaptureDeadline {
   readonly signal: AbortSignal;
+  readonly expiresAtMilliseconds: number;
   timedOut(): boolean;
   callerCancelled(): boolean;
   dispose(): void;
@@ -228,11 +235,15 @@ function exactCommand(value: unknown): CaptureCommand {
   }
 
   const candidate = value as Record<string, unknown>;
+  const principalFields = candidate.principal && typeof candidate.principal === "object"
+    ? Object.getOwnPropertyDescriptors(candidate.principal) : {};
+  const issuer = principalFields.issuer?.value;
+  const subject = principalFields.subject?.value;
   if (
     !candidate.principal ||
     typeof candidate.principal !== "object" ||
-    typeof (candidate.principal as VerifiedAuthenticationPrincipal).issuer !== "string" ||
-    typeof (candidate.principal as VerifiedAuthenticationPrincipal).subject !== "string" ||
+    typeof issuer !== "string" || issuer.length === 0 ||
+    typeof subject !== "string" || subject.length === 0 || subject.length > 255 ||
     !validUuid(candidate.tenantCandidate) ||
     !validUuid(candidate.correlationId) ||
     !validUuid(candidate.operationId) ||
@@ -246,7 +257,7 @@ function exactCommand(value: unknown): CaptureCommand {
   }
 
   return Object.freeze({
-    principal: candidate.principal as VerifiedAuthenticationPrincipal,
+    principal: Object.freeze({ issuer, subject }),
     tenantCandidate: (candidate.tenantCandidate as string).toLowerCase(),
     correlationId: (candidate.correlationId as string).toLowerCase(),
     operationId: (candidate.operationId as string).toLowerCase(),
@@ -256,7 +267,18 @@ function exactCommand(value: unknown): CaptureCommand {
   });
 }
 
-function captureDeadline(inputSignal?: AbortSignal): CaptureDeadline {
+function captureDeadline(clock: () => Date, inputSignal?: AbortSignal): CaptureDeadline {
+  let startedAt: number;
+  try {
+    startedAt = clock().getTime();
+    if (!Number.isFinite(startedAt) ||
+      !Number.isFinite(new Date(startedAt + TOTAL_CAPTURE_DEADLINE_MS).getTime())) {
+      throw new Error("INVALID_CAPTURE_TIME");
+    }
+  } catch {
+    throw new AuthorizedSourceCaptureUnavailableError();
+  }
+  const expiresAtMilliseconds = startedAt + TOTAL_CAPTURE_DEADLINE_MS;
   const controller = new AbortController();
   let expired = false;
   let callerCancelled = false;
@@ -274,7 +296,17 @@ function captureDeadline(inputSignal?: AbortSignal): CaptureDeadline {
 
   return {
     signal: controller.signal,
-    timedOut: () => expired,
+    expiresAtMilliseconds,
+    timedOut: () => {
+      if (!expired) {
+        try {
+          const now = clock().getTime();
+          expired = !Number.isFinite(now) || now >= expiresAtMilliseconds;
+        } catch { expired = true; }
+        if (expired) controller.abort(new Error("SOURCE_CAPTURE_DEADLINE"));
+      }
+      return expired;
+    },
     callerCancelled: () => callerCancelled,
     dispose: () => {
       clearTimeout(timer);
@@ -284,7 +316,13 @@ function captureDeadline(inputSignal?: AbortSignal): CaptureDeadline {
 }
 
 function assertNotAborted(deadline: CaptureDeadline): void {
-  if (deadline.signal.aborted) throw new Error("SOURCE_CAPTURE_ABORTED");
+  if (deadline.timedOut() || deadline.signal.aborted) throw new Error("SOURCE_CAPTURE_ABORTED");
+}
+
+function sameCaptureIdentity(left: VerifiedActorTenantContext, right: VerifiedActorTenantContext): boolean {
+  return left.issuer === right.issuer && left.subject === right.subject &&
+    left.actorId === right.actorId && left.tenantId === right.tenantId &&
+    left.hospitalId === right.hospitalId && left.actorType === right.actorType;
 }
 
 function sameIdentityHospital(
@@ -580,13 +618,16 @@ export class AuthorizedSourceCaptureService {
     coordinatorHandoff: boolean,
   ): Promise<AuthorizedSourceCaptureResult | AuthorizedSourceCaptureCoordinatorResult> {
     const command = exactCommand(input);
-    const deadline = captureDeadline(command.signal);
+    const deadline = captureDeadline(this.clock, command.signal);
     let started = false;
     let initialScope: SourceCaptureScope | undefined;
     let initialMapping: DestinationMappingBinding | undefined;
+    let initialIdentity: VerifiedActorTenantContext | undefined;
     let temporaryPackageBinding: TemporaryImagingPackageBinding | undefined;
+    let temporaryOperationBinding: TemporaryPayloadOperationBinding | undefined;
+    let attemptedStorageRef: string | undefined;
     let temporaryPackageHandle: Awaited<
-      ReturnType<TemporaryImagingCaptureStore["beginPackage"]>
+      ReturnType<TemporaryImagingCaptureStore["beginReservedPackage"]>
     > | undefined;
     let temporaryPackageReceipt: TemporaryImagingPackageReceipt | undefined;
     let temporaryPackageHandoff: AuthorizedSourceCaptureCoordinatorHandoff["temporaryPackage"];
@@ -595,6 +636,10 @@ export class AuthorizedSourceCaptureService {
 
     try {
       assertNotAborted(deadline);
+      if (coordinatorHandoff && this.temporaryImagingStore !== undefined &&
+        (!this.temporaryImagingStore || ["beginReservedPackage", "beginInstance", "sealPackage", "purgeByReference"].some(
+          (method) => typeof this.temporaryImagingStore![method as keyof TemporaryImagingCaptureStore] !== "function",
+        ))) throw new AuthorizedSourceCaptureUnavailableError();
       let start: StartDecision;
       try {
         start = await this.operationExecutor.executeWithResolvedSessionFence(
@@ -706,6 +751,10 @@ export class AuthorizedSourceCaptureService {
             });
             initialScope = current;
             initialMapping = mapping;
+            initialIdentity = Object.freeze({
+              issuer: context.issuer, subject: context.subject, actorId: context.actorId,
+              tenantId: context.tenantId, hospitalId: context.hospitalId, actorType: context.actorType,
+            });
             return Object.freeze({ kind: "STARTED", scope: current, mapping });
           },
         );
@@ -756,21 +805,105 @@ export class AuthorizedSourceCaptureService {
       }
 
       if (coordinatorHandoff && this.temporaryImagingStore) {
+        let reservationDenial: Extract<AuthorizedSourceCaptureResult, { kind: "DENIED" }> | null;
+        try {
+          reservationDenial = await this.operationExecutor.executeWithResolvedSessionFence(
+            command.principal,
+            command.tenantCandidate,
+            async (identity, transactionClient) => {
+              const scope = await this.resolveScope(transactionClient, command.operationId, identity.tenantId);
+              if (!this.isSupportedScope(identity, scope) || !sameCaptureIdentity(identity, initialIdentity!)) {
+                throw new AuthorizationDeniedError();
+              }
+              return AuthorizationContext.create({
+                identity, exchangeSessionId: scope.exchangeSessionId,
+                resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
+                consentId: command.consentId, grantId: command.grantId,
+              });
+            },
+            async (identity, transactionClient) => {
+              assertNotAborted(deadline);
+              const current = await this.resolveScope(transactionClient, command.operationId, identity.tenantId);
+              if (!sameSourceCaptureBinding(start.scope, current) ||
+                current.operationState !== IMPORTABLE_OPERATION_STATE ||
+                !IMPORTABLE_SESSION_STATES.has(current.sessionState)) {
+                return Object.freeze({ kind: "DENIED", reason: "OPERATION_NOT_CAPTUREABLE" } as const);
+              }
+              const mapping = await mappingBinding(current, transactionClient);
+              if (!mapping || mapping.mappingId !== start.mapping.mappingId ||
+                mapping.localPatientId !== start.mapping.localPatientId) {
+                return Object.freeze({ kind: "DENIED", reason: "PATIENT_MAPPING_INVALID" } as const);
+              }
+              temporaryOperationBinding = Object.freeze({
+                operationId: current.operationId, tenantId: current.tenantId,
+                exchangeSessionId: current.exchangeSessionId, packageId: current.packageId,
+                studyRefId: current.studyRefId, sourceHospitalId: current.sourceHospitalId,
+              });
+              // Retain the exact attempted ref even if SQL/COMMIT acknowledgement
+              // fails. A losing attempt can never purge the winner's different ref.
+              attemptedStorageRef = randomUUID();
+              await new PostgresTemporaryPayloadMetadataRepository(transactionClient).reserveStaging({
+                binding: temporaryOperationBinding,
+                storageRef: attemptedStorageRef,
+                expiresAt: new Date(deadline.expiresAtMilliseconds),
+              });
+              return null;
+            },
+          );
+        } catch (error) {
+          if (error instanceof AuthorizationDeniedError || error instanceof ActorTenantContextDeniedError) {
+            await this.bestEffortAudit(command, "PACS_SOURCE_CAPTURE_DENIED", "DENY", "AUTHORIZATION_DENIED");
+            return Object.freeze({ kind: "DENIED", reason: "AUTHORIZATION_DENIED" });
+          }
+          await this.bestEffortAudit(
+            command, "PACS_SOURCE_CAPTURE_FAILED", "FAILURE",
+            deadline.timedOut() ? "SOURCE_CAPTURE_DEADLINE" : deadline.callerCancelled()
+              ? "SOURCE_CAPTURE_CANCELLED" : "SOURCE_CAPTURE_PERSISTENCE_FAILED",
+          );
+          throw new AuthorizedSourceCaptureUnavailableError();
+        }
+        if (reservationDenial) {
+          await this.bestEffortAudit(command, "PACS_SOURCE_CAPTURE_DENIED", "DENY", reservationDenial.reason);
+          return reservationDenial;
+        }
+        assertNotAborted(deadline);
+        if (!temporaryOperationBinding || !attemptedStorageRef || !initialIdentity) {
+          throw new AuthorizedSourceCaptureUnavailableError();
+        }
+        const quotaIdentity = initialIdentity;
+        const quotaPrincipal = command.principal;
+        const quotaTenant = start.scope.tenantId;
+        const quota = new PostgresTemporaryPayloadQuotaRepository(Object.freeze({
+          withTenant: <T>(tenantId: string, work: (transaction: Pick<PoolClient, "query">) => Promise<T>) => {
+            if (tenantId !== quotaTenant) throw new ActorTenantContextDeniedError();
+            assertNotAborted(deadline);
+            return this.actorTenantContext.run(quotaPrincipal, quotaTenant, async (identity, transaction) => {
+              if (!sameCaptureIdentity(identity, quotaIdentity)) throw new ActorTenantContextDeniedError();
+              assertNotAborted(deadline);
+              return work(transaction);
+            });
+          },
+        }));
         temporaryPackageBinding = Object.freeze({
           tenantId: start.scope.tenantId,
           exchangeSessionId: start.scope.exchangeSessionId,
           packageId: start.scope.packageId,
           purpose: "PACS_IMPORT",
         });
-        temporaryPackageHandle = await this.temporaryImagingStore.beginPackage(
-          temporaryPackageBinding,
+        temporaryPackageHandle = await this.temporaryImagingStore.beginReservedPackage(
+          temporaryPackageBinding, attemptedStorageRef, quota,
         );
+        if (!temporaryPackageHandle || temporaryPackageHandle.storageRef !== attemptedStorageRef ||
+          temporaryPackageHandle.packageId !== start.scope.packageId) {
+          throw new AuthorizedSourceCaptureUnavailableError();
+        }
       }
 
       const instanceDescriptors = descriptors.map((descriptor) => {
         return Object.freeze({
           sopInstanceUid: descriptor.sopInstanceUid,
           openStream: async (signal?: AbortSignal) => {
+            assertNotAborted(deadline);
             if (!signal) throw new Error("SOURCE_CAPTURE_ABORTED");
             const sourceStream = await this.dicomGateway.retrieveInstanceStream({
               context: Object.freeze({ ...context, signal }),
@@ -914,6 +1047,10 @@ export class AuthorizedSourceCaptureService {
       const manifest: SourceIntegrityManifest = capture.manifest;
 
       assertNotAborted(deadline);
+      if (coordinatorHandoff && this.temporaryImagingStore &&
+        (!temporaryOperationBinding || !attemptedStorageRef || !temporaryPackageReceipt || !temporaryPackageHandoff)) {
+        throw new AuthorizedSourceCaptureUnavailableError();
+      }
       let completion: AuthorizedSourceCaptureResult | AuthorizedSourceCaptureCoordinatorResult;
       try {
         completion = await this.operationExecutor.executeWithResolvedSessionFence(
@@ -925,7 +1062,8 @@ export class AuthorizedSourceCaptureService {
               command.operationId,
               identity.tenantId,
             );
-            if (!this.isSupportedScope(identity, scope)) {
+            if (!this.isSupportedScope(identity, scope) ||
+              (temporaryOperationBinding && !sameCaptureIdentity(identity, initialIdentity!))) {
               throw new AuthorizationDeniedError();
             }
             return AuthorizationContext.create({
@@ -989,6 +1127,12 @@ export class AuthorizedSourceCaptureService {
               } as const);
             }
 
+            if (temporaryOperationBinding && attemptedStorageRef && temporaryPackageHandoff) {
+              await new PostgresTemporaryPayloadMetadataRepository(transactionClient).completeStaging({
+                binding: temporaryOperationBinding, storageRef: attemptedStorageRef,
+                now: this.clock(), expiresAt: new Date(temporaryPackageHandoff.expiresAt),
+              });
+            }
             const evidence = await new PostgresSourceIntegrityEvidenceRepository(
               transactionClient,
               this.createId,
@@ -1056,6 +1200,8 @@ export class AuthorizedSourceCaptureService {
       }
 
       if (completion.kind === "DENIED") return completion;
+      // COMMIT returning late or cancellation after it is never a usable handoff.
+      assertNotAborted(deadline);
       if (
         completion.kind === "CAPTURED_FOR_COORDINATOR" &&
         temporaryPackageReceipt
@@ -1088,14 +1234,17 @@ export class AuthorizedSourceCaptureService {
     } finally {
       try {
         if (
-          temporaryPackageBinding &&
-          temporaryPackageHandle &&
+          temporaryOperationBinding &&
+          attemptedStorageRef &&
           this.temporaryImagingStore &&
           !keepTemporaryPackage
         ) {
-          await this.temporaryImagingStore.purgePackage({
-            storageRef: temporaryPackageHandle.storageRef,
-            binding: temporaryPackageBinding,
+          await new TemporaryPayloadPurgeCoordinator(
+            this.actorTenantContext, this.temporaryImagingStore, this.clock, this.createId,
+          ).purge({
+            principal: command.principal, tenantCandidate: command.tenantCandidate,
+            storageRef: attemptedStorageRef, binding: temporaryOperationBinding,
+            correlationId: command.correlationId, reason: "CAPTURE_FAILURE",
           });
         }
       } catch {
