@@ -2710,7 +2710,7 @@ Registry의 Hospital→Tenant/Organization 및 Actor→Tenant/Hospital owner-pai
 - Viewer open, retrieval, deny, expiry, close는 기존 Audit 구조에 event로 기록한다.
 - 임시 DICOM Payload는 PostgreSQL에 저장하지 않는다.
 - Temporary Cache가 필요하면 object metadata의 opaque storage reference, operation-scoped state, expiry와 purge timestamp만 관리하고 영상 Binary는 TTL 기반 암호화 임시 저장소에 둔다. `PACS-001-DEC-008`은 payload lifecycle metadata를 기존 `StudyReference` 행에 둔다. `PACS-001-DEC-010`은 새 운영 제어 테이블 3개에 비식별 예약량 집계/opaque reservation만 저장하며 영상 Binary·DICOM UID·raw key는 DB에 두지 않는다.
-- Current implementation status (2026-10-03): DEC-008 metadata and DEC-009 purge/restart gates are scoped PASS; DEC-010 bounds/contention/exact quota-accounting results are recorded in PACS-001 evidence §§17–19. Scratch baseline remains 21 tables/26 migrations/catalog `21|55|17|48` and 244 runtime column grants. DEC-011's first fault-injection round passed but its full wrapper/cleanup is pending; STAGE-005 stays PARTIAL. DEC-012 adds only workload/concurrency/test-cleanup probes, not schema/grant changes; runtime registration remains prohibited.
+- Current implementation status (2026-10-03): DEC-008/009 metadata/purge and DEC-010/011 quota/fault gates have scoped PASS, including final scratch clean/repeat/reset/reapply/cleanup. Schema baseline remains 21 tables/26 migrations/catalog `21|55|17|48`, 20 forced-RLS tables and 244 runtime column grants. DEC-014/015 streaming/consumer work changes no schema/grant. Tenant SERVICE cleanup and runtime registration remain gated; see PACS-001 evidence §26.
 
 ## Schema Change Gate
 

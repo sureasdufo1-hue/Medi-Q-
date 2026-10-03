@@ -637,3 +637,63 @@ Source, ciphertext and authenticated bytes each **2,147,483,648**, **2,000 objec
 ### Remaining risks and follow-up
 
 FLOW-001 is a known failing regression in this commit. Apply the recorded DEC-014 recommendation in a subsequent implementation task, preserve the 64 MiB cap, then verify FLOW-002/003 and full regression. Observe the existing scratch wrapper's final exit/cleanup without restarting it. SERVICE cleanup, privacy/no-side-effect gates, runtime activation, coordinator/Preflight/STOW/destination verification and P0 E2E remain open. Prior 313 empty test artifacts outside Git remain recorded in §23; no cleanup bypass or patient-data use occurred. No source-code repair, persistent DB mutation, deployment, dependency change or additional heavy workload was initiated solely for the commit request.
+
+## 26. DEC-014 implementation and integrated workload
+
+## 27. DEC-016 verified SERVICE expiry cleanup
+
+**Pre-implementation (2026-10-03):** Previous goal turn made concrete progress: STAGE-005/009 scoped PASS with final API 732 and integrated workload evidence. Current worktree contains those uncommitted changes and is preserved. DEC-016 and CLEAN-001~008 precede implementation. Reuse existing runtime identity/RLS and purge saga; add no grant/schema or runtime registration. Tests will use mocked transactions for narrow unit assertions and a dedicated disposable DB-008 integration with signed synthetic OIDC, active SERVICE registry resolution, two Tenants and actual generated ciphertext. Privileged fixture setup/inspection is not worker behavior. No current test PASS is claimed yet.
+
+**Pre-implementation checkpoint (2026-10-03):** Work resumes from clean commit `cc44fdb`. The previous turn made progress by recording DEC-013 completed workload and the actual FLOW-001 failure. The same DB-008 scratch handle is confirmed live; no restart. DEC-014 already authorizes removing only the multipart library's optional non-backpressured counter and adding the unchanged 64 MiB check before each adapter enqueue. Header/count/transfer-syntax, terminal iterator failure, cancellation and semaphore release behavior must remain intact. No dependency, endpoint permission, STOW, schema or runtime activation change is allowed.
+
+FLOW-002 will directly verify exact 64 MiB success, +1-byte rejection, cancellation and permit reuse, plus existing malformed/timeout/abort regressions. FLOW-003 will route the unchanged maximum workload through the real multipart adapter using injected synthetic HTTP only. Bounded adapter prefetch may legitimately overlap an awaited encrypted write: measure produced-minus-acknowledged bytes at every source pull and require at most 512 KiB, instead of asserting zero upstream pull across internal stream buffers. Keep sequential source instances, one active write, exact bytes/digests/objects, one authenticated consumer buffer, unchanged memory/deadline limits and cleanup. This refines the integration measurement; it does not relax the source-consumer backpressure requirement. Results pending.
+
+First build/focused run (`npm run build:api`, then `npx vitest run tests/api/orthanc-dicomweb-concurrency.test.mjs tests/api/orthanc-dicomweb.adapter.test.mjs --maxWorkers=1`, 12:41:50 KST): 35 assertions passed but the runner exited 1 with an uncaught `Controller is already closed` from the flowing Node-to-Web bridge during multipart cancellation. Not accepted as PASS. DEC-014 records the pull-based async-iterator corrective recommendation before its implementation.
+
+After the pull-based bridge correction, focused adapter tests passed 35/35, then 39/39 with exact-cap/+1-byte, manifest denial, recovery and started-body abort/idle/total cases. API build/regression passed 39 files/727 tests (12:46:08 KST, 23.87 s), API typecheck and DICOM Port type contract passed. These precede DEC-015 and are not its final Acceptance.
+
+Three FLOW-003 attempts ended with exit 1 in the first source instance (approximately 431, 458 and 377 ms); final diagnostic showed exactly 64 MiB source/acknowledged bytes, one active source/write, and 262,144-byte maximum lag, then failure while awaiting EOF. All attempts terminated normally through the test's cleanup finally; no maximum-workload PASS. A direct slow-reader diagnostic of installed 1.1.0 reproduced its premature `MultipartTruncatedError` despite a valid boundary. DEC-015 records the local pinned-source correction and slow valid/truncated regression before dependency changes.
+
+**DEC-011 final result:** The original DB-008 `-ScratchOnly` process exited 0 after clean/repeat/reset/reapply; `db008_reset_reapply=PASS product_tables=21 ledger=26`, `db008_ephemeral_cleanup=PASS` and `db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED` were observed. All three payload runtime rounds passed, including settlement/release failure cases, forced RLS and exact 244 runtime column grants. Earlier exact quota/bounds evidence plus this completed failure matrix close **STAGE-005 (scoped PASS)**. Persistent DB-002~007 regressions were intentionally skipped; this run does not certify subsequent DEC-014/015 adapter/dependency changes or any runtime activation.
+
+DEC-015 red/green: the delayed-consumer pair on upstream 1.1.0 produced 1 FAIL (valid response) / 1 PASS (truncated rejection), 12:53:07 KST. After the local patch, both adapter suites passed 41/41, exit 0 (12:54:35 KST). `npm install --ignore-scripts --offline` succeeded; `npm ls` resolved API → local `1.1.0-mediq.1` → unchanged `streamsearch@1.1.0`. API build/regression subsequently passed 39 files/729 tests (12:55:41 KST, 40.99 s), typecheck and Port type contract passed. The upstream ESM comparison confirmed only the approved callback change plus newline normalization/removal of two dangling source-map directives; declarations and license are preserved. The first run warned about a missing upstream source map; both non-executable directives were then removed. The added local source/lockfile/Docker provenance suite passes 3/3 (12:57:35 KST); a final aggregate rerun remains required after these test additions.
+
+The first runtime image build succeeded with the local package in build and runtime stages. A final image build/isolated module-resolution probe will use the final source hash and explicit `--ignore-scripts`; no application, DB or PACS service is launched. The post-patch maximum workload is running through the actual multipart adapter; final evidence is still pending here, not inferred from progress counts.
+
+### Final results (supersede pending observations above)
+
+| Command | Final observed result |
+|---|---|
+| `node --test tests/performance/temporary-imaging-maximum-study.test.mjs` | Exit 0; FLOW-003 exact 2 GiB/2,000-object adapter → manifest/encryption → authenticated borrowed-consumer workload and owned cleanup PASS; metrics below |
+| `docker build --target runtime -f services/api/Dockerfile -t mediq-api:dec015-validation .` | Final build exit 0; build/runtime both include local dependency and install with `--ignore-scripts`; final image config `sha256:56ce1ba6c71a73e2dcab99ff21d5ee4f126e46daa188f61a46d406567ac852e7` |
+| Network-disabled, read-only, non-root container module probe (command below) | Exit 0; local package version, normalized source hash, parser and compiled adapter imports PASS. Container removed by `--rm`; no application startup, DB, PACS, credential injection or service deployment |
+| `npm run test:api -- --maxWorkers=1` after workload completion | Exit 0; **40 files / 732 tests PASS**, start 13:01:48 KST, 44.22 seconds; no uncaught errors or source-map warnings |
+| `npm run typecheck:api` | Exit 0 |
+| `npm run test:dicom-port-contract` | Exit 0 |
+| `git diff --check` | Exit 0; Git LF/CRLF normalization warnings only |
+
+FLOW-003 measured **2,147,483,648 bytes** each at source/ciphertext/authenticated consumption, **2,000 adapter requests/objects**, **33,008 source chunks** ≤65,536 bytes. Maximum produced-minus-acknowledged lag **262,145 bytes** (≤524,288 allowance); active sources/writes/consumer buffers each **1**, largest released plaintext buffer **67,108,864 bytes**. Peak sampled RSS **216,408,064 bytes**, array buffers **121,836,015 bytes** (<512 MiB test guard). **32** delayed writes and **20** delayed consumer acknowledgements; capture **237,159 ms**, post-capture **15,556 ms**, elapsed including cleanup **259,965 ms** (Node total **260,310.48 ms**). Exact digests/lengths and zero-after-consumer passed. No DB/PACS or actual clinical DICOM was used; timings are local observations, not production SLOs or comparative performance proof.
+
+Reproducible final container probe (PowerShell):
+
+```powershell
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --workdir /workspace/services/api --entrypoint node mediq-api:dec015-validation --input-type=module -e 'import assert from "node:assert/strict"; import {readFileSync} from "node:fs"; import {createHash} from "node:crypto"; import {createRequire} from "node:module"; const require=createRequire(import.meta.url); const pkg=JSON.parse(readFileSync(require.resolve("@ubercode/multipart-stream/package.json"),"utf8")); assert.equal(pkg.version,"1.1.0-mediq.1"); const source=readFileSync("/workspace/vendor/multipart-stream/index.js","utf8").replace(/\r\n/g,"\n"); assert.equal(createHash("sha256").update(source).digest("hex"),"3574331e86ab1cde0a4def60895b212e5edb7b345f7cab03990ebe8b560b5c5d"); const parser=await import("@ubercode/multipart-stream"); assert.equal(typeof parser.parseMultipartRelated,"function"); const adapter=await import("./dist/dicom/infrastructure/orthanc-dicomweb.adapter.js"); assert.equal(typeof adapter.OrthancDicomwebAdapter,"function"); assert.notEqual(process.getuid(),0); console.log("dec015_container_resolution=PASS runtime_user=non_root network=none source_hash=PASS adapter_import=PASS application_started=false");'
+```
+
+**Judgment:** STAGE-005 is **PASS (scoped)** by the completed DEC-011 fault matrix plus prior exact quota/bounds evidence. STAGE-009 is **PASS (scoped, unregistered single-process boundary)** from the combined actual-adapter FLOW-001~003, default two-permit/eight-waiter CONC-001~003, production-intended borrowed lifetime LIFE-001~008 and exact workload evidence. The workload's own `full_stage009=NOT_PROVEN` marker is intentionally conservative: it alone does not prove concurrency/lifetime; those have separate recorded tests. No cross-process/global memory ceiling, clinical DICOM conformance, actual downstream STOW consumer, active runtime Authorization or product E2E is claimed. MEDIQ-PACS-001 remains **PARTIAL**. Next: STAGE-010 verified per-Tenant SERVICE cleanup, followed by privacy/no-side-effect and runtime/coordinator gates. No new commit/push was performed in this goal continuation.
+
+## 28. User-requested Git checkpoint
+
+**Date:** 2026-10-03 Asia/Seoul. The user requested saving the current state with commit and push. Existing DEC-014/015 implementation, tests and scoped evidence are preserved. DEC-016 is recommendation/Acceptance only, with no cleanup-runner implementation or test PASS. No further feature work or runtime activation is performed for this checkpoint.
+
+| Command/check | Observed result |
+|---|---|
+| `npm run typecheck:api` | Exit 0 |
+| `npm run test:dicom-port-contract` | Exit 0 |
+| `npm run test:api -- --maxWorkers=1` | Build and **40 files / 732 tests PASS**, exit 0; start 13:22:20 KST, duration 24.69 seconds |
+| `git -c core.safecrlf=false diff --check` | Exit 0 |
+| Candidate-file inspection | 25 files: source, tests, documentation, dependency metadata and retained third-party license. No excluded runtime/data file, binary/large-file flag or selected high-confidence secret pattern found. This is a limited pre-commit check, not a comprehensive PHI/security audit |
+| `git check-ignore .env services/api/dist/main.js` | Both paths ignored; neither is included in the checkpoint |
+| `git fetch origin` | Exit 0; remote points to the user-requested Medi-Q- repository |
+
+No new disposable PostgreSQL, exact 2 GiB workload, Docker image, real Orthanc or product E2E run was performed for this Git-only task. Earlier results remain historical evidence in section 26 and are not represented as reruns. No patient data, runtime credentials or generated imaging payload is intentionally included. Full Ticket status remains **PARTIAL**; successful commit/push is a repository checkpoint, not product completion.

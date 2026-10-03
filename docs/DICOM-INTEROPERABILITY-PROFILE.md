@@ -509,6 +509,7 @@ DCM-002 adapter의 즉시 적용되는 P0 guardrail은 아래 표처럼 확정�
 
 - Study 전체를 Buffer/Blob 한 개로 메모리에 적재하지 않는다.
 - Node Web Streams와 backpressure를 사용한다.
+- PACS-001-DEC-014/015의 WADO 경로는 pull 기반 multipart part 소비와 adapter 소유의 enqueue 전 64 MiB 검사를 사용한다. 설치된 multipart-stream 1.1.0의 optional counter/backpressured EOF 결함을 실제 시험으로 재현했으며, MIT 원본 출처·해시·라이선스를 보존한 `vendor/multipart-stream` 패치를 사용한다. 정상 EOF는 parser의 closing-boundary 검사와 part drain으로 확인하며, source/parser 오류·truncation·idle/total deadline·abort를 성공으로 변환하지 않는다. 최대 2 GiB/2,000-object 통합 시험은 생성된 합성 byte workload이며 임상 DICOM 적합성 또는 실제 PACS 전송 성공을 뜻하지 않는다.
 - 임시 저장 정책은 `PACS-001-DEC-007/008`을 따른다. 구현에는 optional internal same-stream AES-GCM seam이 있으나 Nest/Compose runtime에는 등록되지 않았다. `STAGE-001`은 synthetic unit harness에서만 PASS이며 per-Study metadata/lifecycle 및 `STAGE-002~013`은 아직 검증되지 않았다. 이 scoped result는 persistent storage activation이나 dispatch permission이 아니다.
 - Study/Package 전체를 memory에 적재하지 않는다. 객체마다 새 DEK의 AES-256-GCM으로 암호화하고, synthetic 단일 프로세스 P0에서는 DEK를 process memory에만 둔다. Restart 또는 다른 replica에서는 복호화하지 않고 fail closed/purge 처리한다. Tenant/Session/Package/StudyReference/operation/고정 purpose/object reference/예상 길이·digest에 결속한다.
 - 구현 시 가드레일은 객체 64 MiB, Package/Exchange 2 GiB·2,000 객체, Environment 10 GiB, 전송 최대 15분, 성공한 source capture 후 TTL 30분이다. 어느 한도든 넘으면 fail closed하고 부분 staging을 폐기한다.

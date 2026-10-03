@@ -2485,9 +2485,12 @@ Viewer Gateway는 일반 video streaming server가 아니다. Viewer가 필요�
 - Cloud temporary copy는 의료영상 Source of Record나 장기 Archive가 아니다.
 - DEC-011의 내부 ciphertext-I/O seam은 이미 암호화된 buffer의 write/sync만 시험에서 제어하며 기본 동작은 Node FileHandle이다. Runtime 설정이나 호출자 입력으로 주입하지 않는다. DEC-012 maximum-Study/adapter 동시성 probe는 독립적인 합성 시험이며 authorization·DB quota·downstream consumer lifetime·runtime 등록을 대신하지 않는다.
 - DEC-013의 내부 `consumeInstance` 경계는 프로세스 내 단일 평문 인스턴스 수명을 직렬화한다. 최대 8개의 metadata-only 대기 요청은 admission 후 필수 trusted verifier → private authenticated decrypt → verifier 재검사·expiry/purge 검사 → awaited consumer → buffer zeroing → permit release 순서로 처리한다. Raw-buffer 반환 경로는 제거한다. 이 verifier hook은 실제 Consent/Grant/RLS 구현을 대신하지 않으며, runtime coordinator 연결 전에는 계속 미등록 상태다. 여러 프로세스 전체의 메모리 제한이나 이미 전달된 데이터 회수는 보장하지 않는다.
+- DEC-014/015: WADO multipart 소비는 pull 기반 Node async iterator로 backpressure를 전달하고 adapter가 enqueue 전에 64 MiB 한도를 검사한다. 원본 multipart-stream 1.1.0의 선택적 byte counter는 쓰기 backpressure를 무시하므로 사용하지 않는다. HTTP EOF 한 tick 후 parser 종료를 가정하는 라이브러리 결함은 MIT 원본·타입·라이선스와 해시를 보존한 `vendor/multipart-stream` 로컬 패키지의 단일 callback 패치로 수정한다. Parser의 closing-boundary 검증, 오류, idle/total timeout 및 취소는 유지한다. API/lockfile과 Docker build/runtime 모두 같은 로컬 패키지를 사용하며 설치 lifecycle script는 실행하지 않는다. 실제 느린 소비자·잘린 응답·제한·취소·최대 Study 시험이 의존성 교체의 필수 근거다.
 - Source PACS unavailable 시 영구 Cloud Copy로 우회하지 않고 Fail Closed한다.
 
 ## P1 Mobile Viewer Path
+
+P0 temporary payload expiry cleanup (DEC-016) is a separate internal per-Tenant batch path: fresh trusted principal → active Tenant-level SERVICE registry/RLS context → bounded expired metadata discovery → committed transaction → sequential existing purge saga with SERVICE/expiry revalidation → aggregate outcome. No DB transaction spans filesystem I/O and no scheduler/provider is activated in this slice. Tenant selection for future scheduling must be server-owned; the helper does not authenticate arbitrary principal objects.
 
 ```text
 MediQ MOBILE_EXPORT

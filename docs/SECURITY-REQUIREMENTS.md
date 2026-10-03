@@ -1231,18 +1231,20 @@ Temporary Imaging Payload는 Exchange 종료 이후 bounded TTL, 즉시 expiry d
 
 ## SEC-DATA-003 — Encryption at Rest
 
+DEC-016 expiry cleanup is authorized only for a registry-verified active Tenant-level SERVICE Actor (no Hospital binding). Discovery and every TTL purge metadata transaction must verify that context under forced RLS; candidate input cannot supply paths/refs/authority. Discovery alone is not purge permission: current exact binding and expiry are rechecked before PURGE_PENDING commit and physical effects. Final metadata/quota/Audit remain atomic; loss of service identity cannot be converted into success. This internal worker remains unregistered until later runtime/security gates pass.
+
 **Classification:** CAPSTONE-P0
 **Priority:** MUST — accepted P0 design recommendation; implementation remains pending
 
 DEC-013 tightens the internal plaintext-consumer boundary: no raw-buffer return; one admitted instance lifetime per Node module/process, bounded metadata-only queue, required trusted access checks after admission and immediately before delivery, GCM/hash/length verification before callback, and owned-buffer zeroing before permit release. The primitive is not Authorization; runtime activation must supply the actual approved operation-time Consent/Grant/RLS verifier. No caller-controlled or default allow-all verifier is permitted. An active consumer must settle before admission is released, including cancellation; zeroing cannot recall copies or bytes already dispatched.
 
-Current checkpoint supersedes the older Acceptance status below: the hook must return exactly `VERIFIED` at both checks. DEC-013 unit and maximum-workload evidence passes, but DEC-014 actual multipart backpressure fails and the integrated flow remains unverified. No runtime activation follows; see MEDIQ-PACS-001 evidence §25.
+Current checkpoint: the hook must return exactly `VERIFIED` at both checks. DEC-013 unit and primitive maximum-workload evidence passes. DEC-014/015 fixes actual multipart read-ahead, cancellation and slow-consumer EOF handling while retaining the 64 MiB cap and real truncation rejection. The local third-party patch is versioned with provenance/license and pinned-file tests, never an installed-file edit. The exact integrated maximum workload and cleanup passed; no runtime activation follows. DEC-011 scratch wrapper completed with cleanup, closing scoped STAGE-005; combined FLOW/CONC/LIFE evidence closes scoped single-process STAGE-009. See MEDIQ-PACS-001 evidence §26.
 
 Temporary Imaging Payload가 저장되는 경우 개발환경에서 적용 가능한 저장 암호화 또는 동등한 보호수단을 적용해야 한다. Store staging은 database-backed shared quota admission이 성공한 뒤에만 ciphertext write를 시작하며, seal은 실제 byte 수로 reservation을 정산한다. 물리 payload 경로 부재가 확인되기 전에는 quota를 반환해서는 안 된다.
 
 `PACS-001-DEC-007/008/010`에 따라 각 instance는 AES-256-GCM으로 암호화하고, P0 random DEK는 process-memory-only이며 파일·DB에 저장하지 않는다. Tenant/Session/Package/StudyReference/operation/Purpose binding, per-Study temporary ref/state/expiry/purge evidence, 64 MiB/object, 2 GiB/package, 10 GiB/environment, TTL을 강제하도록 설계한다. Shared quota는 16 MiB 단위로 DB admission 후 저장하고, 실제 payload size로 seal 정산하며, purge 이후에만 release한다. 한 Study의 purge나 retry는 sibling Study/ImagingPackage 상태를 바꿀 수 없다. Process restart/다른 replica에서는 해당 객체를 복호화할 수 없고 fail closed 및 Tenant-RLS purge 대상으로 처리한다. Enterprise HSM/KMS는 P0 필수가 아니며 생산용 multi-replica Managed KMS/HSM 통합은 별도 Gate다. 현재 storage 경로는 Nest/Compose/runtime에 등록되지 않았고, complete quota Acceptance 전에도 활성화하지 않는다.
 
-**Acceptance:** `TC-PACS-001-STAGE-001~003/005/009` (`ACCEPTANCE-TESTS.md`). STAGE-001 has scoped synthetic PASS; STAGE-005 bounds/contention/exact 2 GiB/10 GiB accounting already have scoped evidence (§§17–19), while DEC-011's final fault-matrix DB wrapper/cleanup remains pending. STAGE-009 adapter-only concurrency passes; the maximum workload and integrated consumer lifetime remain unverified. STAGE-002/003 and runtime activation remain unaccepted. See `MEDIQ-PACS-001/TEST-EVIDENCE.md` §23; test-only probes do not grant access authority.
+**Acceptance:** `TC-PACS-001-STAGE-001~003/005/009` (`ACCEPTANCE-TESTS.md`). STAGE-001 has scoped synthetic PASS; STAGE-005 quota/fault matrix now has complete scoped unit/disposable PostgreSQL wrapper and cleanup evidence; STAGE-009 actual multipart/crypto/borrowed consumer, bounded admission and maximum workload have scoped single-process PASS. STAGE-002/003 and runtime Authorization/activation remain unaccepted. See MEDIQ-PACS-001 evidence §26; synthetic verifiers and tests do not grant access authority.
 
 ---
 

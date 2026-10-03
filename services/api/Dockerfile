@@ -5,7 +5,8 @@ COPY package.json package-lock.json ./
 COPY services/api/package.json services/api/package.json
 COPY services/worker/package.json services/worker/package.json
 COPY web/package.json web/package.json
-RUN npm ci
+COPY vendor/multipart-stream vendor/multipart-stream
+RUN npm ci --ignore-scripts
 
 COPY services/api/tsconfig.json services/api/tsconfig.json
 COPY services/api/src services/api/src
@@ -19,7 +20,8 @@ COPY package.json package-lock.json ./
 COPY services/api/package.json services/api/package.json
 COPY services/worker/package.json services/worker/package.json
 COPY web/package.json web/package.json
-RUN npm ci --omit=dev
+COPY vendor/multipart-stream vendor/multipart-stream
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=build --chown=node:node /workspace/services/api/dist services/api/dist
 USER node

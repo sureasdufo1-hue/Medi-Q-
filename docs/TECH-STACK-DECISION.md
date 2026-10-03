@@ -3,7 +3,7 @@
 **Project:** MediQ  
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS  
 **Document Type:** Technology Stack Decision / Architecture Decision Record  
-**Version:** v1.3 MEDIQ-DCM-002 Orthanc Adapter Spike
+**Version:** v1.4 PACS-001 DEC-014/015 bounded multipart and pinned local EOF correction
 **Decision Date:** 2026-09-20  
 **Primary Scope:** CAPSTONE-P0  
 **Decision Status:** ACCEPTED FOR P0 SCAFFOLDING  
@@ -284,7 +284,7 @@ Drizzle는 PostgreSQL SQL, transaction, raw SQL 및 RLS 정책을 비교적 직�
 | Test DICOM Server/PACS | Orthanc 1.13 + DICOMweb plugin | DOCUMENTED |
 | DICOM File/Metadata Parsing | dcmjs stable pinned version | DOCUMENTED |
 | QIDO/WADO/STOW Client | `OrthancDicomwebAdapter` + standards HTTP | IMPLEMENTED — DCM-002 scoped; live STOW intentionally not exercised |
-| Multipart parser | `@ubercode/multipart-stream@1.1.0` | IMPLEMENTED — one-part stream; source/lockfile reviewed; residual maintainer risk |
+| Multipart parser | Local MIT-derived `@ubercode/multipart-stream@1.1.0-mediq.1` | IMPLEMENTED — DEC-015 pinned EOF patch; source/types/license hashes, lockfile and Docker resolution checked; local maintenance risk |
 | Large payload transport | Node Web Streams/native fetch-undici | IMPLEMENTED — A WADO instance/frame; bounded mock STOW |
 | Pixel Decode/Render | OHIF/Cornerstone3D | DOCUMENTED |
 | Transcoding | Orthanc/GDCM capability only | DOCUMENTED |
@@ -296,7 +296,7 @@ P0에서는 TypeScript DICOM Gateway를 사용한다. DICOMweb은 HTTP 표준이
 
 `dcmjs`는 metadata/UID/Part 10 validation과 테스트 도구로 제한한다. Pixel Data decode나 의료영상 렌더링은 직접 구현하지 않는다. 압축 Transfer Syntax 지원은 Orthanc/GDCM과 Viewer capability를 검증하여 결정한다.
 
-`MEDIQ-DCM-002` spike 결과 native `fetch` + WHATWG streams와 `@ubercode/multipart-stream@1.1.0` parser를 사용한다. A의 QIDO·WADO metadata·instance streaming·rendered frame은 Test Orthanc로 확인했다. Parser는 part bytes를 전체 적재하지 않고 64 MiB cap 및 16 KiB header cap을 제공한다. 단일 maintainer/낮은 사용량에 따른 supply-chain/maintenance risk가 남으므로 lockfile을 고정하고 version update 전 재검토한다. STOW request/response는 mocked contract로만 시험했고 실제 B write는 수행하지 않았다. `dicomweb-client`는 byte streaming behavior를 채택하지 않는다. `MEDIQ-DCM-001`은 선행 typed Port다.
+`MEDIQ-DCM-002` spike는 native `fetch` + WHATWG streams와 multipart-stream 1.1.0을 채택했다. 후속 PACS-001 DEC-014/015 통합 시험은 optional byte counter의 무제한 선행 읽기와 느린 소비자의 정상 EOF를 truncation으로 오판하는 결함을 재현했다. 현재는 adapter의 pull 기반 소비와 enqueue 전 64 MiB cap을 사용하며, EOF callback 한 곳만 수정한 MIT-derived `vendor/multipart-stream` 로컬 패키지 `1.1.0-mediq.1`로 고정한다. 원본·수정본 hash, 원본 선언·라이선스, lockfile 및 Docker build/runtime 입력을 추적한다. Header/part-count, 실제 truncation, parser/source 오류, timeout·취소 검증은 유지한다. 2 GiB 합성 byte workload 및 API 732개 시험은 통과했지만 실제 임상 DICOM/Orthanc 통합을 새 의존성으로 재검증한 것은 아니다. 이전 A의 read-only Orthanc spike는 역사적 증거이며 STOW는 여전히 mocked contract만 검증했다. 새 dependency 교체 전 로컬 patch와 모든 회귀 시험을 재검토해야 한다. `dicomweb-client`의 buffered byte 경로는 채택하지 않는다.
 
 ## 8.3 Required Adapter Contract
 
@@ -528,7 +528,7 @@ OHIF, dcmjs, dicomweb-client, NestJS, Fastify 및 React 계열의 라이선스�
 | PACS | Orthanc 1.13 + DICOMweb | DOCUMENTED | 재현 가능한 QIDO/WADO/STOW | dcm4chee |
 | DICOM Processing | dcmjs | DOCUMENTED | TypeScript metadata 처리 | pydicom worker |
 | DICOMweb Client | MediQ Adapter + HTTP streams | DOCUMENTED | auth/binding/streaming 통제 | Python dicomweb-client |
-| DICOMweb Helper | Node native fetch + `@ubercode/multipart-stream@1.1.0` | IMPLEMENTED — DCM-002 scoped; dependency risk recorded | bounded per-instance stream and cleanup | buffered client library |
+| DICOMweb Helper | Node native fetch + local `multipart-stream@1.1.0-mediq.1` | IMPLEMENTED — PACS-001 DEC-014/015 scoped tests; provenance/local maintenance risk recorded | bounded pull-based instance stream, adapter cap and validated EOF | buffered client library |
 | DICOM Gateway | Internal `OrthancDicomwebAdapter` behind typed Port | IMPLEMENTED — DCM-002 scoped; not route-registered; no live STOW | preserve Authorization integration boundary | 독립 Python service |
 | Viewer | OHIF 3.11 | DOCUMENTED | 완성형 DICOMweb viewer | Cornerstone3D custom |
 | JWT Validation | jose 6.x | DOCUMENTED | JWKS/JWT 표준 검증 | passport-jwt |

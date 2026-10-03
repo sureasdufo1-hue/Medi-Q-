@@ -1644,8 +1644,8 @@ PACS-001-DEC-008: StudyReference-scoped temporary ref/state/expiry/purge metadat
 PACS-001-DEC-009: internal PURGE_PENDING → physical unlink → PURGED+Audit saga; restart recovery is purge-only
 30-minute P0 TTL / immediate expiry denial / Tenant-RLS purge Audit
 one Study purge cannot mutate a shared ImagingPackage or sibling Study
-`STAGE-001` and scoped `STAGE-006/007/008/013/014` PASS only in synthetic/local filesystem + disposable PostgreSQL/RLS tests; `STAGE-005/009` remain PARTIAL and `STAGE-010/011/012` remain unverified; no runtime staging path may be enabled
-DEC-010 quota edges, independent-session contention, exact 2 GiB/10 GiB accounting and scoped denials passed; DEC-011 fault tests passed API and the first scratch round but final wrapper/cleanup is pending. DEC-012 adapter-only concurrency passed; maximum-workload rerun and integrated consumer lifetime remain open
+`STAGE-001` and scoped `STAGE-005/006/007/008/009/013/014` PASS only in recorded synthetic/local filesystem, disposable PostgreSQL/RLS and single-process stream tests; `STAGE-010/011/012` remain unverified; no runtime staging path may be enabled
+DEC-010/011 quota bounds, contention, exact accounting and fault matrix completed with scratch cleanup. DEC-013/014/015 lifetime, actual multipart backpressure/cancellation/EOF and exact 2 GiB workload passed; local third-party patch provenance is recorded. These do not validate a production/runtime lifecycle
 ```
 
 ### Requirements
@@ -1658,11 +1658,11 @@ SEC-CACHE-001
 
 ### Residual Risk
 
-MEDIUM — Physical purge/restart and quota size/contention sub-gates have scoped synthetic and disposable PostgreSQL/RLS evidence. Final fault-matrix wrapper, maximum-workload/integrated memory bounds, runtime lifecycle, cleanup scheduling, privacy and no-side-effect Acceptance remain incomplete.
+MEDIUM — Physical purge/restart, quota/fault matrix and single-process maximum-workload/memory sub-gates have scoped evidence. Runtime lifecycle, verified Tenant cleanup scheduling, privacy and no-side-effect Acceptance remain incomplete; the pinned local multipart patch adds maintenance risk.
 
 이유:
 
-The 30-minute retention rule applies only to synthetic P0; production retention remains unset. The same-stream encrypted staging seam and purge coordinator remain unregistered. Scoped tests verify purge ordering, retry/Audit idempotency, physical removal, restart purge-only recovery and independent-session quota accounting. They do not prove forensic erasure, host crash/fsync durability, runtime-volume protection, scheduled verified Tenant SERVICE cleanup or cross-process crash/failover recovery. STAGE-005 still awaits the final fault-test wrapper/cleanup, STAGE-009 integrated bounds remain incomplete, and STAGE-010/011/012 are open. Do not activate persistent imaging storage before these gates pass.
+The 30-minute retention rule applies only to synthetic P0; production retention remains unset. The same-stream encrypted staging seam and purge coordinator remain unregistered. Scoped tests verify purge ordering, retry/Audit idempotency, physical removal, restart purge-only recovery, independent-session quota accounting/faults and single-process integrated bounds. They do not prove forensic erasure, host crash/fsync durability, runtime-volume protection, scheduled verified Tenant SERVICE cleanup or cross-process crash/failover recovery. STAGE-010/011/012 and runtime activation are open. Do not activate persistent imaging storage before these gates pass.
 
 ---
 
@@ -1672,7 +1672,7 @@ The 30-minute retention rule applies only to synthetic P0; production retention 
 
 Related in-process exposure control (DEC-013, implementation/Acceptance pending): replace raw plaintext-buffer return with a single-active borrowed callback lifetime, bounded metadata-only waiters, required pre/post-decrypt access-verifier calls, authenticate-before-delivery and zero-before-admission-release. A compromised process or trusted consumer that copies bytes remains outside this protection; Node/GC copies and forensic erasure are not guaranteed. Missing/rejecting verifier, queued cancellation, expiry/purge and consumer failure must never open a fallback access path. Runtime authorization wiring and cross-process memory admission remain unverified.
 
-Current implementation checkpoint (supersedes the pending label above): DEC-013 is implemented and scoped lifetime/maximum-workload tests pass. DEC-014 exposed excessive multipart upstream buffering with a stalled consumer; its regression remains FAIL and the fix/integrated flow are open. The primitive workload bypasses that adapter, so it cannot close the combined memory-bound or runtime risk. See MEDIQ-PACS-001 evidence §25; full STAGE-009 remains PARTIAL.
+Current implementation checkpoint (supersedes historical pending labels): DEC-013 lifetime and DEC-014/015 multipart read-ahead/cancellation/EOF fixes pass scoped unit and exact integrated maximum-workload tests. STAGE-005/009 are scoped PASS (PACS-001 evidence §26). Local patched third-party source adds maintenance risk; types/license/source hash and lockfile/container resolution are verified. SERVICE cleanup, privacy/no-side-effect, runtime Authorization and global multi-process guarantees remain open; no storage activation is authorized.
 
 ### Scenario
 

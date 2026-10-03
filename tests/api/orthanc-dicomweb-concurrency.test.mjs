@@ -1,7 +1,8 @@
-import { setImmediate as nextTurn } from "node:timers/promises";
+import { setImmediate as nextTurn, setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { OrthancDicomwebAdapter } from "../../services/api/dist/dicom/infrastructure/orthanc-dicomweb.adapter.js";
 import { TEST_HOSPITAL_A_ID } from "../../services/api/dist/dicom/infrastructure/test-orthanc-endpoint-resolver.js";
+import { buildSourceIntegrityCapture } from "../../services/api/dist/integrity/application/source-integrity-manifest.builder.js";
 
 function setup() {
   const fetch = vi.fn(async () => new Response([
@@ -37,6 +38,135 @@ async function consume(body) {
 }
 
 describe("STAGE-009 adapter-only operation admission", () => {
+  it.each([true, false])("waits for a slow consumer but still validates closing boundary: complete=%s", async (complete) => {
+    let index = -1;
+    const instance = new OrthancDicomwebAdapter({
+      resolve: () => ({ origin: new URL("https://orthanc-a:8042/dicom-web/"), authorization: "Basic synthetic-test-only" }),
+    }, {
+      fetch: async () => new Response(new ReadableStream({
+        pull(controller) {
+          if (index++ === -1) controller.enqueue(Buffer.from("--slow\r\nContent-Type: application/dicom\r\n\r\n"));
+          else if (index <= 16) controller.enqueue(new Uint8Array(64 * 1024));
+          else {
+            if (complete) controller.enqueue(Buffer.from("\r\n--slow--\r\n"));
+            controller.close();
+          }
+        },
+      }, { highWaterMark: 0 }), {
+        headers: { "content-type": 'multipart/related; type="application/dicom"; boundary=slow' },
+      }),
+    });
+    const captured = buildSourceIntegrityCapture({
+      expectedInstanceCount: 1,
+      instances: [{
+        sopInstanceUid: "2.25.3",
+        async openStream() {
+          return {
+            ...await instance.retrieveInstanceStream({
+              context: { hospitalId: TEST_HOSPITAL_A_ID, correlationId: "synthetic-slow-reader", signal: new AbortController().signal },
+              studyInstanceUid: "2.25.1", seriesInstanceUid: "2.25.2", sopInstanceUid: "2.25.3",
+            }),
+            observer: { writeChunk: async () => { await delay(5); }, complete: async () => {}, abort: async () => {} },
+          };
+        },
+      }],
+    });
+    if (complete) expect((await captured).manifest.totalBytes).toBe(1024 * 1024);
+    else await expect(captured).rejects.toMatchObject({ code: "STREAM_FAILED" });
+  });
+
+  it("accepts exactly 64 MiB, rejects one extra byte without a manifest, and recovers its permit", async () => {
+    const cap = 64 * 1024 * 1024;
+    let calls = 0;
+    let overflowCancelled = false;
+    const instance = new OrthancDicomwebAdapter({
+      resolve: () => ({ origin: new URL("https://orthanc-a:8042/dicom-web/"), authorization: "Basic synthetic-test-only" }),
+    }, {
+      concurrency: 1,
+      fetch: async () => {
+        const call = ++calls;
+        const length = call === 1 ? cap : call === 2 ? cap + 1 : 32;
+        let prefixed = false;
+        let suffixed = false;
+        let sent = 0;
+        return new Response(new ReadableStream({
+          pull(controller) {
+            if (!prefixed) {
+              prefixed = true;
+              controller.enqueue(Buffer.from("--exact-cap\r\nContent-Type: application/dicom\r\n\r\n"));
+            } else if (sent < length) {
+              const size = Math.min(64 * 1024, length - sent);
+              sent += size;
+              controller.enqueue(new Uint8Array(size));
+            } else if (!suffixed) {
+              suffixed = true;
+              controller.enqueue(Buffer.from("\r\n--exact-cap--\r\n"));
+              // Leave the overflowing HTTP source open to prove cancellation.
+              if (call !== 2) controller.close();
+            }
+          },
+          cancel() { if (call === 2) overflowCancelled = true; },
+        }, { highWaterMark: 0 }), {
+          headers: { "content-type": 'multipart/related; type="application/dicom"; boundary=exact-cap' },
+        });
+      },
+    });
+    const open = () => instance.retrieveInstanceStream({
+      context: { hospitalId: TEST_HOSPITAL_A_ID, correlationId: "synthetic-exact-cap", signal: new AbortController().signal },
+      studyInstanceUid: "2.25.1", seriesInstanceUid: "2.25.2", sopInstanceUid: "2.25.3",
+    });
+    expect(await consume((await open()).body)).toBe(cap);
+    const overflowing = await open();
+    const recoveredPromise = open();
+    const observer = { writeChunk: vi.fn(async () => {}), complete: vi.fn(async () => {}), abort: vi.fn(async () => {}) };
+    try {
+      expect(calls).toBe(2);
+      await expect(buildSourceIntegrityCapture({
+        expectedInstanceCount: 1,
+        instances: [{ sopInstanceUid: "2.25.3", openStream: async () => ({ ...overflowing, observer }) }],
+      })).rejects.toMatchObject({ code: "STREAM_FAILED" });
+      expect(observer.complete).not.toHaveBeenCalled();
+      expect(observer.abort).toHaveBeenCalledOnce();
+      expect(overflowCancelled).toBe(true);
+      expect(await consume((await recoveredPromise).body)).toBe(32);
+      expect(calls).toBe(3);
+    } finally {
+      await overflowing.body.cancel().catch(() => undefined);
+      await (await recoveredPromise).body.cancel().catch(() => undefined);
+    }
+  }, 20_000);
+
+  it.each(["abort", "idle", "total"])("closes a started stalled multipart body on %s without a late enqueue", async (mode) => {
+    const controller = new AbortController();
+    let cancelled = false;
+    let prefixed = false;
+    const instance = new OrthancDicomwebAdapter({
+      resolve: () => ({ origin: new URL("https://orthanc-a:8042/dicom-web/"), authorization: "Basic synthetic-test-only" }),
+    }, {
+      fetch: async () => new Response(new ReadableStream({
+        pull(target) {
+          if (!prefixed) {
+            prefixed = true;
+            target.enqueue(Buffer.from("--stall\r\nContent-Type: application/dicom\r\n\r\nSYNTHETIC-ONLY"));
+          }
+        },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 }), {
+        headers: { "content-type": 'multipart/related; type="application/dicom"; boundary=stall' },
+      }),
+      deadlines: { wadoHeadersMs: 5000, wadoIdleMs: mode === "idle" ? 50 : 5000, wadoTotalMs: mode === "total" ? 50 : 5000 },
+    });
+    const result = await instance.retrieveInstanceStream({
+      context: { hospitalId: TEST_HOSPITAL_A_ID, correlationId: "synthetic-started-cancel", signal: controller.signal },
+      studyInstanceUid: "2.25.1", seriesInstanceUid: "2.25.2", sopInstanceUid: "2.25.3",
+    });
+    const rejected = expect(consume(result.body)).rejects.toThrow("DICOM_WADO_STREAM_FAILED");
+    if (mode === "abort") controller.abort();
+    await rejected;
+    await nextTurn();
+    expect(cancelled).toBe(true);
+  });
+
   it("preserves bounded upstream prefetch when a multipart instance consumer is stalled", async () => {
     const boundary = "synthetic-backpressure";
     const prefix = Buffer.from(`--${boundary}\r\nContent-Type: application/dicom\r\n\r\n`);

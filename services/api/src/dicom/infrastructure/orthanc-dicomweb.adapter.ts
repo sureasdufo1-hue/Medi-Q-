@@ -485,7 +485,8 @@ export class OrthancDicomwebAdapter implements DicomGateway {
         signal: scope.signal,
         idleTimeoutMs: this.#deadlines.wadoIdleMs,
         totalTimeoutMs: this.#deadlines.wadoTotalMs,
-        maxPartBytes: MAX_INSTANCE_BYTES,
+        // DEC-014: the parser's optional maxPartBytes counter ignores write
+        // backpressure. Enforce the same cap in our awaited body read below.
         maxParts: 1,
         maxHeadersPerPart: 16,
         maxHeaderBytesPerPart: 16 * 1024,
@@ -1036,8 +1037,10 @@ function nodeReadableToWebStream(
   scope: RequestScope,
   release: () => void,
 ): ReadableStream<Uint8Array> {
-  const reader = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
-  const source = reader.getReader();
+  // Pull directly: a flowing toWeb bridge can enqueue after parser cancellation
+  // closes its controller. Async iteration also preserves parser backpressure.
+  const source = nodeStream[Symbol.asyncIterator]();
+  let receivedBytes = 0;
   const iteratorAdvance = iterator.next().then((extra) => {
     if (!extra.done) {
       extra.value.body.destroy();
@@ -1065,10 +1068,12 @@ function nodeReadableToWebStream(
       try {
         if (scope.signal.aborted) throw new Error("DICOM_OPERATION_ABORTED");
         const next = await Promise.race([
-          source.read().then((result) => ({ kind: "body" as const, result })),
+          source.next().then((result) => ({ kind: "body" as const, result })),
           iteratorFailure,
         ]);
         if (!next.result.done) {
+          receivedBytes += next.result.value!.byteLength;
+          if (receivedBytes > MAX_INSTANCE_BYTES) throw new Error("DICOM_UPSTREAM_TOO_LARGE");
           controller.enqueue(next.result.value!);
           return;
         }
@@ -1077,7 +1082,8 @@ function nodeReadableToWebStream(
         controller.close();
       } catch {
         scope.abort();
-        await source.cancel().catch(() => undefined);
+        nodeStream.destroy();
+        await source.return?.().catch(() => undefined);
         await iterator.return().catch(() => undefined);
         finish();
         controller.error(new Error("DICOM_WADO_STREAM_FAILED"));
@@ -1085,7 +1091,8 @@ function nodeReadableToWebStream(
     },
     async cancel() {
       scope.abort();
-      await source.cancel().catch(() => undefined);
+      nodeStream.destroy();
+      await source.return?.().catch(() => undefined);
       await iterator.return().catch(() => undefined);
       finish();
     },

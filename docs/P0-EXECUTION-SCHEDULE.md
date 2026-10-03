@@ -1,6 +1,6 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
-**최신 커밋 체크포인트 (2026-10-03, 아래 현황보다 우선):** DEC-013 메모리 수명 관리 구현, 집중시험 21개·타입검사·2 GiB/2,000-object 암호화/복호화 및 정리 시험은 통과했다. DEC-014 실제 multipart adapter 버퍼링 시험은 1개 실패(512 KiB 허용 대비 8 MiB 선행 읽기)이며 수정 전 상태를 저장한다. 기존 전체 API 722 PASS는 이 실패 시험 추가 전 결과다. DB-008 기존 실행의 최종 종료·정리는 미확인이다. STAGE-005/009 및 MEDIQ-PACS-001은 PARTIAL로 유지하고, 다음 작업은 버퍼링 수정·통합 검증 및 DB 최종 증거 확인이다. runtime·STOW는 열지 않는다. [증거 §25](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#25-dec-013014-current-commit-checkpoint).
+**최신 실행 체크포인트 (2026-10-03, 아래 이력보다 우선):** STAGE-005 DB 장애시험은 기존 실행의 최종 종료·정리까지 확인되어 scoped PASS다. STAGE-009는 multipart 선행 읽기·취소·느린 소비자 EOF 결함 수정 후 2 GiB/2,000-object 실제 adapter→암호화→검증 후 복호화 시험과 정리를 통과했다. 최종 API 40 files/732 tests, 타입·Port 검사 및 격리 컨테이너 의존성 확인도 PASS다. MEDIQ-PACS-001은 PARTIAL이며 다음은 STAGE-010 Tenant별 SERVICE 만료 정리, 이후 개인정보·무부작용·runtime/coordinator Gate다. 실제 PACS 전송·STOW는 미구현 상태를 유지한다. [증거 §26](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#26-dec-014-implementation-and-integrated-workload).
 
 **최신 실행 체크포인트 (2026-10-03, DEC-012):** 동시성·취소 후 정리 시험을 추가했고 API 38 files/701 tests가 단독 실행에서 통과했다. 최대 2 GiB/2,000-object 시험의 최초 시도는 시험 도구 시간 제한으로 취소됐으며 기존 설계의 단계별 시간 기준으로 재실행 중이다. 기존 DB-008 ScratchOnly 실행도 첫 runtime 구간은 통과했지만 최종 종료·정리는 미확인이다. STAGE-005/009 및 MEDIQ-PACS-001은 PARTIAL이다. 아래 체크포인트는 이전 이력이며 현재 결과는 [증거 §23](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#23-dec-012-execution-and-test-cleanup-correction)을 따른다. 두 기존 실행 확인 → consumer 메모리 수명/통합 Gate → SERVICE cleanup 순서를 유지하며 runtime·STOW는 열지 않는다.
 
