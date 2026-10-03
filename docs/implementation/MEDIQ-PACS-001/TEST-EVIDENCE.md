@@ -1,5 +1,46 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 77. User-requested R3-B / DEC-021 Git checkpoint — 2026-10-04
+
+Latest explicit user authority: commit and push the current state. Initial HEAD `a7022ae`, branch `main`, origin `https://github.com/sureasdufo1-hue/Medi-Q-.git`; 17 changed/new files. This is a WIP snapshot, not a request to continue or fix implementation. Preserve prior actual R3-B results and failures in their original evidence sections.
+
+Actual checkpoint checks:
+
+- `node --test tests/scripts/int001-dispatch-quota-observer.test.mjs`: exit0, 19 tests / 19 PASS / 0 FAIL; controlled helper clients only, no actual DB contacted.
+- `node --check scripts/verify-int001-dispatched-reads.mjs`: exit0.
+- `npm.cmd --prefix 'C:\Users\user\Documents\ChatGPT\메디큐 프로젝트' run typecheck:api`: exit0, TypeScript noEmit; not parser behavioral or HTTP acceptance.
+- `git -c core.safecrlf=false diff --check`: exit0 before checkpoint documentation additions; staged check required again before commit.
+- Installed YAML `parseDocument` with `uniqueKeys:true` reports `DUPLICATE_KEY`, line585. This diagnostic invocation returned0 because it printed structured findings rather than asserting validity: **YAML validity FAILED**, not PASS. No duplicate-path repair made in this Git-only turn.
+- `fs.existsSync('tests/contracts/pacs-import.openapi.test.mjs')`: false. The new package script references a not-yet-created test; contract validation NOT RUN.
+- Bounded scan of all17 selected paths/contents for binary NUL, private-key/AWS/GitHub/OpenAI/JWT literal patterns and sensitive filenames: zero findings. Does not certify absence of every secret or PHI. `.env` and `services/api/dist/main.js` confirmed ignored.
+- `git fetch origin`: exit0; pre-commit `git rev-list --left-right --count HEAD...origin/main`: `0/0`.
+
+Not rerun: full current API, parser behavioral/JSON-schema contract, actual DB migration/RLS/Orthanc/full Preflight/B transfer/terminal verification/security/E2E. DEC-021 contract/parser/normative synchronization remain incomplete; overall PARTIAL. Native Git must independently confirm commit, push, clean working tree and exact remote SHA after this record is saved; this pre-commit evidence does not infer those outcomes.
+
+## 76. DEC-021 import API contract and strict parser verification — opened before edits
+
+2026-10-04. Worktree inspected at a7022ae with prior R3-B uncommitted files; retain them. Original76676 terminal0, no live handle. Inspected OpenAPI3.1 existing synchronous POST with false allowed/defaulttrue, no key or Tenant parameter and no status route; result admits FAILED/PENDING/unverified/missing provenance. Existing durable digest/state/UQ/grants and Web/SaaS unknown-status gaps inspected. DEC-021 recommendation and API Acceptance recorded before changes. Registry `npm view yaml version --json` exited0, yaml2.9.1 observed; local installed ajv8.20.0/ajv-formats3.0.1 read from package metadata. Pin development tools; no runtime dependency/network library or schema/role change. Initial tests NOT RUN. Prior R3-B §75 and API/DB §72 results are not substituted for new contract/parser verification.
+
+## 75. R3-B quota observer role scope — opened before edits
+
+**Terminal/current judgment:** original76676 **exited0**. Exact wrapper markers: source58/failed0, live/final source privacy and Audit/evidence observers, six mutation restorations, synthetic dispatch fixture17, dispatch-read18/failed0/actual-runtime-RLS, separate dispatched independent observer (exact Audit/Provenance, pending SOURCE_CAPTURE only, quota0), B EMPTY before/after, both helper log privacy and automatic temporary-project cleanup PASS. No full Preflight, STOW, destination bytes or completed transfer occurred. New helper verifies read-only/repeatable-read role scopes, unchanged runtime253 catalog before role switch and post-COMMIT migrator reset before the exact observer marker.
+
+Independent post-terminal native commands all exited0: exact owned project mediq-int001-capture-6ec4b9e338bf containers0/volumes0/networks0; original existing development container/volume/network inventory exactly unchanged. Recomputed301 input hash equals launch `7d4f6f198a08dc0be213826140401057baa20216e301e459dbfa10a7f1d06607`; diff check PASS. No executable edit while running and no manual recovery. Only generated disposable fixtures were removed by the wrapper and can be reproduced by the script. No current live handle.
+
+R3-B-001–004 and R3-005 **PASS within prerequisite scope**, together with separately recorded unchanged API81864 and DB18484/R3-001–004 evidence (§72), not a new persistent DB deployment or full P0 result. Original53311 stays FAILED; current role correction plus actual whole gate resolves the identified observer omission, not all past unknown failure roots. Whole MEDIQ-PACS-001/P0 **PARTIAL**. Next execute the original whole Preflight/coordinator/real A-to-B/terminal evidence/security/E2E dependency sequence, not more unchanged prerequisite reruns. No automatic Git action.
+
+Independent actual scratch role probe on owned mediq-int001-capture-6ec4b9e338bf (local socket, all transactions READ ONLY, no password-auth claim): after fixture/migration readiness, minimized catalog reports migrator NOINHERIT/NOSUPER/NOBYPASS with existing SET membership; all three quota tables owned by mediq_quota_owner, ENABLE/FORCE RLS, migrator direct SELECT=false. Each of the observer's three direct quota projections with WHERE false exited1/SQLSTATE42501. The same connection with BEGIN READ ONLY + SET LOCAL ROLE quota-owner and a zero-row projection exited0; scope/read-only and ROLLBACK role reset markers both true. This proves the independently identified direct-query defect on actual current schema; it does not establish53311's unique failure origin or full data/observer acceptance. A first probe before tables existed had no catalog table rows and query failures without42501; preserve it as NOT READY, not denial proof. No data/schema/credential mutations or raw logs, and no executable edits while76676 lives.
+
+Fresh actual command launched as original handle **76676**, owned project **mediq-int001-capture-6ec4b9e338bf**. Handle confirmed live; same301 input hash fixed. Resume this exact handle, not another wrapper, until authoritative terminal output. Running observer correction is not yet scoped PASS; final independent observer/B-after/privacy/cleanup and post-run inventory/hash evidence remain mandatory.
+
+Pre-actual verification: `node --check scripts/verify-int001-dispatched-reads.mjs`, focused three Node files37, all `tests/scripts/*.test.mjs` plus migration-runner232 PASS. Actual helper AST has19 positive/role/read-only/isolation/nonzero/malformed/query-failure/transaction-boundary tests. PowerShell actual wrapper guards: r3-audit-result21, cleanup29, output privacy47, readiness10 PASS. Wrapper parse and diff check PASS. `git diff --quiet HEAD -- services/api/src services/worker/src infra package.json package-lock.json` exits0: product/schema/grant/roles/dependencies unchanged. No new full API/DB rerun is claimed; prior API81864 (1026/build/type/Port) and actual complete scratch18484 (§72) are separately recorded unchanged-input prerequisites, with their scope limits.
+
+Before one fresh actual command `./scripts/test-int001-source-capture.ps1 -EnvFile .env -IncludeDispatchedReads`, executable/config/test input freeze301 SHA256 `7d4f6f198a08dc0be213826140401057baa20216e301e459dbfa10a7f1d06607`. Existing development inventory remains the §72 baseline; only new observer/helper-test inputs differ. Record original handle after launch and keep these files frozen until terminal. Full R3-B/R3-005 is NOT RUN before launch and requires whole wrapper0 plus independent terminal resource/hash verification. No auto Git/deployment/B STOW.
+
+2026-10-04. Clean a7022ae verified, no live test handle; earlier commit/push succeeded with remote equality and clean tree. Read-only inspection: migration0024 transfers quota tables to mediq_quota_owner, setup/bootstrap role is NOINHERIT with existing SET membership, existing source observer uses SET LOCAL ROLE inside READ ONLY. New dispatch observer lacks that switch. This is an independently identified defect, not proof that53311 has no other failure.
+
+Diagnostic attempts made no DB writes: first .env probe rejected wrong POSTGRES_DB key before SQL, next controlled local migrator projection exited1 without safe rows and is inconclusive. Admin local-socket `BEGIN READ ONLY;` catalog probe exited0: runtime and migrator NOINHERIT/NOSUPER/NOBYPASS; quota-table count0. It confirms existing development DB cannot stand in for the scratch schema, not authentication or new quota SQL proof. No raw errors, credentials or payload output. R3-B decision/Acceptance recorded before implementation; scoped tests/fresh actual gate initially NOT RUN.
+
 ## 74. User-requested R3 current-state Git checkpoint — 2026-10-04
 
 Authority: explicit user request to commit and push the current repository state. Preserve existing changes and all failed evidence; no product/observer fix, persistent migration, deployment or extra rights are implemented for this Git-only task. Branch main; origin https://github.com/sureasdufo1-hue/Medi-Q-.git. Fetch succeeded and pre-checkpoint HEAD...origin/main was 0/0.

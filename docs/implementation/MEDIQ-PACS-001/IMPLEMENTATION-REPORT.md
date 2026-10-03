@@ -1,5 +1,49 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 41. User-requested R3-B / DEC-021 WIP Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Save the current 17-file working state on main to the user-designated origin; no continued implementation
+Changed: Git-checkpoint reporting/evidence/index only in this turn; preserve R3-B observer correction and unfinished DEC-021 contract/parser/development dependency changes
+Not changed: No repair of OpenAPI, new contract tests, route registration, DB migration/grants, PACS transfer, deployment or runtime configuration
+Security impact: Bounded selected-file secret/path/binary scan found zero findings; not a comprehensive PHI/secret audit. Local .env and compiled API output are ignored
+Tests executed: Actual observer helper unit tests 19/19; observer JavaScript syntax; API TypeScript noEmit; unstaged diff whitespace check; strict YAML diagnostic and missing-contract-test check; Git branch/remote/fetch/divergence inspection
+Tests not executed: Complete current API/DB/Orthanc/security/E2E suites or production parser behavioral tests; missing PACS contract suite cannot run
+Evidence: TEST-EVIDENCE.md §77
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: OPENAPI.yaml duplicate key at line585; test:pacs-import-contract points to an absent file; DEC-021 normative synchronization and implementation/testing remain incomplete. Prior R3-B actual76676 proof is prerequisite evidence, not acceptance of this new contract/parser tree
+Status: PARTIAL / WIP, not release-ready; verify commit/push/remote equality and clean tree with native Git before reporting success
+```
+
+## 40. DEC-021 import contract and production request validation — opened before code
+
+2026-10-04 CAPSTONE-P0. Revalidated dirty a7022ae with prior R3-B changes preserved, no live test process; previous turn is concrete progress, full R3 prerequisite accepted in§39/§75. Plan step1 now executed: amend synchronous import/idempotency/replay/owned-status/mandatory completion contract and implement production strict request parsers, without a premature route/DB grant/deployment. Adopted DEC-021 and API-001–007 Acceptance precede edits. Pin development YAML/JSON-schema validators for actual parsed normative contract tests instead of regex-only checks. All image-access invariants, semantic digest, terminal RESULT_UNKNOWN/no-resend and complete original end state preserved. Initial PARTIAL/NOT RUN; evidence§76. Contract/parser success cannot certify HTTP/DB ownership, complete Preflight or actual A-to-B transfer.
+
+## 39. R3-B independent observer quota scope — opened before implementation
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 R3-B independent observer correction and complete actual R3 prerequisite verification
+Changed: Observer-only read-only/local quota-owner helper, COMMIT role-reset check,19 actual-AST tests; decision/Acceptance/security/plan/index/report/evidence synchronized
+Not changed: Product source, database schema/grants/roles/RLS, runtime config/dependencies/public API, persistent DB/deployment or B STOW; no commit/push
+Security impact: App retains exact253 rights and no owner/fixture URL. Existing observer membership is transaction-local with scope guards; nonzero/malformed/missing quotas and every query failure deny
+Tests executed: Node232 including focused37/helper19; PS21+29+47+10=107; syntax/diff; actual76676 exit0, source58/dispatch18/full independent observers/B-before+after EMPTY/privacy/6 restorations/automatic cleanup; actual read-only scratch role denial/SET/rollback proof; independent empty owned inventories/unchanged dev resources/frozen301 hash
+Tests not executed: New full API/DB rerun (unchanged prerequisites81864/18484 separately recorded); original full Preflight/actual B transfer/destination bytes/terminal state/security/E2E/runtime maintenance lifecycle
+Evidence: TEST-EVIDENCE.md §75 plus prerequisite §72; original53311 FAILED retained in§73
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: P0 end-state composition/API contract/terminal evidence still incomplete; scoped source-read fixture success is not destination import or full runtime assurance
+Status: R3/R3-B prerequisite scoped PASS; overall MEDIQ-PACS-001/P0 PARTIAL; no live handle
+```
+
+The live/initial labels below are historical. Continue the original end-to-end sequence in IMPLEMENTATION-PLAN rather than redefine the objective around the accepted prerequisite.
+
+Fresh actual original **76676 live**, owned mediq-int001-capture-6ec4b9e338bf,301 inputs frozen. Do not restart or edit executable inputs while live; resume76676. Full R3-B/R3-005 verdict pending, original53311 failure retained.
+
+Implemented only observer helper and19 actual-AST tests: six fixed queries guard migrator/READ ONLY/repeatable-read, transaction-local existing quota-owner role, exact zero counts/decimal singleton; outer COMMIT role reset checked before marker and failure rollback before release preserved. Current focused37/whole Node232, PS21+29+47+10, syntax/diff PASS. Product/schema/grants/runtime configuration unchanged, prior full API/DB scope retained rather than invented reruns. Fresh whole58+18 gate pending with301 frozen inputs hash `7d4f6f198a08dc0be213826140401057baa20216e301e459dbfa10a7f1d06607`; evidence§75. Current PARTIAL, no new commit/push.
+
+2026-10-04 CAPSTONE-P0/MEDIQ-PACS-001. Revalidated clean a7022ae and terminal53311, previous turn progress rather than blocker. Static migration0024/bootstrap/old observer show a concrete missing transaction-local quota-owner role in new observer; original42501 exact query phase remains unknown. Approved recommendation and R3-B Acceptance precede edits. Preserve every graph/claim/Audit/Provenance/zero quota assertion and exact253 runtime rights; implement only observer helper with verified read-only/local-role scope and post-COMMIT reset, then actual-AST negatives and fresh frozen whole58+18 gate. No app/product/migration/grant/public API/deployment/Git changes. Initial PARTIAL/NOT RUN; evidence§75. Local development catalog contains zero quota tables, so cannot validate current scratch acceptance. Original full A-to-B/security/E2E scope remains unfinished.
+
 ## 38. User-requested R3 current-state Git checkpoint — 2026-10-04
 
 ```text

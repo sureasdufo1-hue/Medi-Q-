@@ -13,6 +13,7 @@
     "typecheck:api": "tsc --project services/api/tsconfig.json --noEmit",
     "test:api": "npm run build:api && vitest run tests/api",
     "test:dicom-port-contract": "tsc --project tests/types/tsconfig.json --noEmit",
+    "test:pacs-import-contract": "node --test tests/contracts/pacs-import.openapi.test.mjs",
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
     "db:migrate": "node scripts/run-database-migrations.mjs",
     "db:migrations:check": "drizzle-kit check --config=drizzle.config.ts",
@@ -25,10 +26,13 @@
     "@nestjs/testing": "12.1.1",
     "@types/node": "24.19.0",
     "@types/pg": "8.23.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "drizzle-kit": "0.31.11",
     "typescript": "6.0.3",
     "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "yaml": "2.9.1"
   },
   "overrides": {
     "esbuild": "0.28.2"

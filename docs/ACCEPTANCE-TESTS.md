@@ -1,5 +1,32 @@
 # MediQ Acceptance Test Specification
 
+### DEC-021 PACS Import submission/replay/status contract — before implementation
+
+CAPSTONE-P0/MEDIQ-PACS-001, initial NOT IMPLEMENTED/NOT RUN; no protected route registration in this slice. R3 actual prerequisite evidence remains §75, not full transfer proof.
+
+| ID (`TC-PACS-001-API-*`) | Required evidence |
+|---|---|
+| 001 | Strict normalized UUID session/Tenant-candidate/key/correlation and exact grantId/studyRefId body; verifyDestination absent or literal true only. Reject missing/duplicate-array/null/false/type coercion, unknown fields, endpoint/credentials/actor/consent/action claims, non-plain object, symbol/non-enumerable/accessor/Proxy without executing getters or Proxy traps. Freeze copied output, independent from later input mutation. Status parser uses same Session/Tenant/key/correlation, no unknown operationId required after lost POST response. Parsing is not authorization. |
+| 002 | Parse the real entire OpenAPI YAML with unique keys; validate all internal refs, paths/parameters/operationId uniqueness/security, actual JSON Schema request/result/status/noncompleted response fixtures with no coercion/default insertion/property removal. Synchronous200 only verified success; false verification, incomplete/failed integrity, missing provenance/Audit/purge, unknown/completed envelope mismatch and nonmatching error-code/state reject. All failures have no-store contract; no async202, resend/reconcile endpoint or automatic retry. |
+| 003 | Idempotency semantics match existing server digest and durable UQ: same normalized identity+meaning replays, any Tenant/Actor/Session/Study/Consent/Grant/action change conflicts. Tests of contract/parser are not actual DB concurrency evidence; existing PACS-007 actual persistence proof is separate, future route must exercise it. |
+| 004 | Status metadata permission limited to current active Hospital USER plus exact Tenant/Actor/destination Hospital/Session/key ownership. Grant revocation does not revive image permission; missing/foreign row concealed404. No payload/UID/PatientID/endpoint/credential/digest/raw reason, no PACS/business state/quota effect; GET does not reconcile or authorize resend. Actual signed API/RLS/ownership/Audit tests are required before route acceptance, not satisfied by this parser slice. |
+| 005 | Compile production parsers, focused actual implementation cases, parsed YAML/schema negative fixtures, current full API/build/type/Port and Node/PS regression PASS. Development tools pinned and lock reproducible, no runtime dependency/DB/grant change; evidence states exact commands/results and prior failures. |
+| 006 | Before response/route acceptance, real coordinator must prove full fresh Mandatory Preflight, one durable dispatch/one Study STOW, raw destination bytes/identity, terminal Integrity/Provenance/Audit/state/purge. Ledger/JSON literals alone cannot mint success. Definite failure vs uncertain result separated; replay/concurrency/lost response cannot cause another capture/STOW. NOT RUN in contract slice. |
+| 007 | Original A-to-B success and no consent/invalid scope/cross-Tenant/wrong destination/mapping/expiry/withdrawal/tamper/duplicates/concurrency/lost response/terminal evidence fault tests, Viewer/Download separation, runtime maintenance and full P0/E2E remain necessary. Do not close P0 with contract-only PASS. |
+
+### DEC-020-R3-B observer-only quota scope — recorded before implementation
+
+Current evidence (2026-10-04): R3-B-001–004 and R3-005 scoped PASS, actual76676 exit0/full58+18+independent quota/Audit/Provenance/B-empty/privacy/cleanup, independent empty resources/frozen301 hash; prior unchanged API81864 and complete scratch18484 in PACS-001 evidence§72, current§75. This does not close the full coordinator/Preflight/STOW/destination/security/E2E or whole P0. Historical53311 remains failed; initial NOT RUN/FAILED labels below are historical.
+
+CAPSTONE-P0/MEDIQ-PACS-001; original53311 FAILED, exact failing SQL not observed. Fix independently identified NOINHERIT quota-role omission without weakening predicates or expanding app grants.
+
+| ID (`TC-PACS-001-DISPREAD-R3-B-*`) | Required evidence |
+|---|---|
+| 001 | Helper runs only inside existing repeatable-read/read-only transaction as mediq_migrator, then fixed SET LOCAL ROLE mediq_quota_owner using already approved membership. Guard role/read-only/isolation before scope change and owner/read-only afterward. Runtime role/app environment never receives membership or fixture URL. No grant/schema/RLS/product change. |
+| 002 | Three exact final quota projections require zero reservations, package quotas and reserved environment bytes; missing/malformed singleton or nonzero state denies. Model fault injection at every query must fail; no success on failed SET or missing role check. Outer rollback must precede release, and COMMIT resets local role, checked before emitting exact success marker. |
+| 003 | Actual helper AST tests plus current fixture/wrapper/privilege/script/PS guards and syntax/diff checks PASS. Models are not actual role/SQL/RLS proof. Prior failure and development-schema mismatch remain explicitly recorded. |
+| 004 | Fresh frozen full58+18 real wrapper exits0 including independent exact graph/Audit/Provenance/purge/quota observer, old live/final observers and six restorations, output/helper privacy, B EMPTY before/after, owned cleanup, independent empty inventories and unchanged input/development resources. Unchanged exact253 runtime catalog required; whole P0 additionally needs full Preflight/real B transfer/destination/security/E2E. |
+
 ### DEC-020-R3 grant prerequisite — recorded before implementation
 
 CAPSTONE-P0; adopted recommendation, initial **NOT IMPLEMENTED / NOT RUN**. Actual R2 39941/82055 FAILED/cleaned; independent current runtime exact Audit projection denied with SQLSTATE 42501. R3 supersedes R2's unchanged-244 constraint only after its explicit additive migration, not historical results. Preserve original claim predicates and all 17 scenarios/18 tests.

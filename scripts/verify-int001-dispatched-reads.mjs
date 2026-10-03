@@ -4,6 +4,24 @@ import pg from 'pg';
 import { assertRuntimePrivilegeCatalog } from '../tests/fixtures/runtime-privilege-contract.mjs';
 import { dispatchedReadCases, dispatchedReadIds as ids, dispatchedReadDigest, dispatchedExpectedAudits } from '../tests/fixtures/dispatched-source-read-fixture.mjs';
 const check = (condition, marker) => assert.ok(condition, `DISPREAD_OBSERVER_${marker}`);
+async function inspectDispatchedQuota(client) {
+  const scopeQuery = "SELECT current_user AS role,current_setting('transaction_read_only') AS read_only,current_setting('transaction_isolation') AS isolation";
+  const initial = (await client.query(scopeQuery)).rows;
+  check(initial.length === 1 && initial[0].role === 'mediq_migrator' &&
+    initial[0].read_only === 'on' && initial[0].isolation === 'repeatable read', 'QUOTA_INITIAL_SCOPE');
+  // Already approved observer-only membership; never a runtime grant.
+  // COMMIT/outer ROLLBACK restores this transaction-local role before release.
+  await client.query('SET LOCAL ROLE mediq_quota_owner');
+  const scoped = (await client.query(scopeQuery)).rows;
+  check(scoped.length === 1 && scoped[0].role === 'mediq_quota_owner' &&
+    scoped[0].read_only === 'on' && scoped[0].isolation === 'repeatable read', 'QUOTA_OWNER_SCOPE');
+  const reservations = (await client.query('SELECT count(*)::int AS n FROM temporary_payload_reservations')).rows;
+  check(reservations.length === 1 && reservations[0].n === 0, 'NO_RESERVATIONS');
+  const packages = (await client.query('SELECT count(*)::int AS n FROM temporary_payload_package_quotas')).rows;
+  check(packages.length === 1 && packages[0].n === 0, 'NO_PACKAGE_QUOTAS');
+  const environment = (await client.query('SELECT reserved_bytes::text AS reserved_bytes FROM temporary_payload_quota_state')).rows;
+  check(environment.length === 1 && environment[0].reserved_bytes === '0', 'NO_ENVIRONMENT_QUOTA');
+}
 check(/^mediq-int001-capture-[0-9a-f]{12}$/.test(process.env.MEDIQ_TEST_PROJECT ?? ''), 'PROJECT');
 check(process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, 'DATABASE');
 const pool = new pg.Pool({ connectionString: process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, max: 1, connectionTimeoutMillis: 5000 });
@@ -77,10 +95,9 @@ try {
     check(sort(counts) === sort(dispatchedExpectedAudits(item)), 'EXACT_AUDIT_PARTITION');
     check(authorityMutations.join(',') === (item.name === 'revoked_between' ? 'GRANT_REVOKED' : item.name === 'withdrawn_between' ? 'CONSENT_WITHDRAWN' : ''), 'EXACT_REVOCATION_COUNT');
   }
-  check((await client.query('SELECT count(*)::int AS n FROM temporary_payload_reservations')).rows[0].n === 0, 'NO_RESERVATIONS');
-  check((await client.query('SELECT count(*)::int AS n FROM temporary_payload_package_quotas')).rows[0].n === 0, 'NO_PACKAGE_QUOTAS');
-  check(Number((await client.query('SELECT reserved_bytes FROM temporary_payload_quota_state')).rows[0].reserved_bytes) === 0, 'NO_ENVIRONMENT_QUOTA');
+  await inspectDispatchedQuota(client);
   await client.query('COMMIT');
+  check((await client.query('SELECT current_user AS role')).rows[0]?.role === 'mediq_migrator', 'QUOTA_ROLE_RESET');
   console.log('dispatched_read_observer=PASS cases=17 exact_claim_audit_provenance=true pending_source_only=true quota=0');
 } catch (error) {
   await client?.query('ROLLBACK').catch(() => undefined);
