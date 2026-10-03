@@ -1,5 +1,41 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 49. User-requested DEC-022-B1 Git checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Save the current 24-file destination-validation/test/document checkpoint on main and push to the user-designated origin; no continued implementation
+Changed: Checkpoint report/evidence/index; preserve DEC-022-B1 actual destination runner, independent observer, fixture/wrapper/configuration and synchronized normative records
+Not changed: Product source, DB/schema/migrations/grants, dependencies, existing deployment, application STOW, terminal evidence writer or completion policy
+Security impact: .env/build/generated DICOM excluded; bounded candidate path/binary/credential-pattern/local-secret-value scan found zero findings, not an exhaustive secret/PHI audit
+Tests executed: Three focused Node script suites 43/43 PASS; whitespace and quiet Compose configuration checks exit0; fetch exit0 with pre-commit divergence0/0. Historical full API1175 and actual95264 results remain evidence section84
+Tests not executed: Full API, DB/Orthanc matrix and E2E were not rerun for this Git-only checkpoint; original terminal writers/full Preflight/application STOW/security/E2E remain unfinished
+Evidence: TEST-EVIDENCE.md section85; scoped actual destination evidence remains section84
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: ACTDEST001–008 scoped PASS is not complete product acceptance; step2/PACS-001/P0 remain PARTIAL. Earlier API timeout causes remain UNKNOWN
+Status: Product PARTIAL; Git success is reported only after native commit/push, remote equality and clean-tree checks
+```
+
+## 48. DEC-022-B1 actual destination runner and independent evidence — opened before edits
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 DEC-022-B/B1 actual internal destination comparison prerequisite, TC-PACS-001-ACTDEST001–008; original full P0 unchanged
+Changed: Separate real signed runtime/B runner16 cases, optional wrapper20 Node checks preserving58+18, read-only observer, exact synthetic helper guards/Compose tmpfs/test-image COPY,25 helper/fixture/profile/wrapper tests, old wiring contracts and normative/status/evidence sync
+Not changed: Product source/repository algorithms, public routes, DB/schema/migrations/grants/forcedRLS, dependencies, existing development stack, application STOW/coordinator/terminal writer, deployment/Git
+Security impact: App runtime-only credentials/253 exact tuples, separate fixture/observer role, real current authority and no own transaction over I/O; no B write or false completion by app; independent source-PENDING/provenance/state/quota checks; bounded privacy scans not exhaustive
+Tests executed: Local API47files1175/build/type/Port, contract21, Node257, PS107/config/syntax/diff PASS. Actual95264 exit0 source58+dispatch18+destination14+2+2+2, observers/privacy/restoration/B EMPTY/automatic cleanup PASS. Independent owned resources0, exact306 hash/development inventory unchanged, four existing services healthy
+Tests not executed: Registered signed HTTP, destination/terminal DB writers/minimum-rights gate, complete Preflight/application one-STOW/full A-to-B/security/E2E, production TLS failures/performance and unattended maintenance
+Evidence: TEST-EVIDENCE.md section84; original95264 and frozen306 SHA256 ea2d3762167e5420c738039acf6b8c13644f3ea2a42ae0c5b7e931242499325a
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Seeded B is not actual application transfer; proof remains ephemeral/nonterminal. Earlier checkpoint two API timeout causes UNKNOWN. Next append-only DESTINATION_VERIFY/narrow terminal provenance writers and independently approved minimum rights/real DB rollback gates, then full original coordinator/Preflight/STOW/security/E2E
+Status: ACTDEST001–008 scoped PASS; complete step2/PACS-001/P0 PARTIAL; no live handle/automatic Git
+```
+
+Current construction: test-only fixed Study/file guards/corrected tmpfs; actual signed16-case destination runner with real SQL/B hash/call counts/revocation/Audit fault/committed acknowledgement loss/no replay/audited physical purge; independent read-only Audit/source/PENDING Provenance/noncompletion/quota observer; optional wrapper retains58+18 then14+2+2+2/B fixture-only seed/purge/privacy/cleanup. New contracts25; existing catalog wiring count updated to3, unchanged253 privileges. Current API47/1175/build/type/Port/contract21/Node257/PS107/syntax/config PASS; failed helper mock/old count/checkpoint timeouts retained. Actual95264 live/frozen306/verdict pending. No product/migration/grant/deployment changes; original terminal/coordinator/STOW/security/E2E PARTIAL.
+
+2026-10-04, MEDIQ-PACS-001/CAPSTONE-P0. Clean2c36455 inspected, previous goal turn progress; no live handle. Complete existing DEC-022-B/ACTDEST001–008 under recommendationB1; initial PARTIAL/NOT RUN. Correct test tmpfs/known synthetic Study binding and finish real signed-runtime SQL/RLS/B matrix, separate observer and optional wrapper, with original58+18 preserved. No migration/grants/product transfer/completion/deployment/Git. Retain checkpoint API1173/2timeouts and diagnose without weakening guards. Evidence§84; original full terminal/coordinator/Preflight/STOW/security/E2E required.
+
 ## 47. User-requested DEC-022-A/B WIP Git checkpoint — 2026-10-04
 
 ```text

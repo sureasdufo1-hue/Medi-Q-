@@ -1790,10 +1790,185 @@ async function runActualDispatchedReadMatrix(t) {
   }
 }
 
+async function runDestinationVerificationCase(scenario, principals, auth, signal) {
+  let root, store, harness;
+  const attempted = [];
+  try {
+    assert.equal(process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL, undefined, 'DESTVERIFY_NO_OWNER_URL');
+    assert.equal(process.env.MEDIQ_MIGRATION_DATABASE_URL, undefined, 'DESTVERIFY_NO_MIGRATOR_URL');
+    root = await mkdtemp(join(tmpdir(), 'mediq-destination-verify-'));
+    const storageRoot = join(root, 'ciphertext');
+    store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot, ciphertextIo: {
+      async write(file, bytes, offset, length, position) {
+        harness.assertOutsideTransaction(); return file.write(bytes,offset,length,position);
+      }, async sync(file) { harness.assertOutsideTransaction(); return file.sync(); },
+    } });
+    const port = {
+      async beginReservedPackage(binding, ref, quota) {
+        harness.assertOutsideTransaction(); attempted.push({ storageRef:ref,binding });
+        return store.beginReservedPackage(binding,ref,quota);
+      },
+      beginInstance: input => store.beginInstance(input), sealPackage: input => store.sealPackage(input),
+      async purgeByReference(input) { harness.assertOutsideTransaction(); await store.purgeByReference(input); },
+      consumeInstance: (...args) => store.consumeInstance(...args),
+    };
+    harness = createHarness({ temporaryImagingStore:port,oidcAuthentication:auth,observeInstanceStreams:true,
+      destinationVerification:true,destinationCommitAckLoss:scenario.name === 'commit_ack_lost',
+      async afterDestinationBytes(count) {
+        if (['revoked_between','withdrawn_between'].includes(scenario.name)) assert.equal(count,1,'DESTVERIFY_REVOKE_FIRST_INSTANCE');
+        if (scenario.name === 'revoked_between') {
+          const result = await new GrantRevocationService(harness.actorContext).revoke({
+            principal:principals.clinician,tenantCandidate:fixture.tenantId,sessionId:scenario.sessionId,
+            grantId:scenario.grantId,correlationId:scenario.revokeCorrelationId,hasUnexpectedInput:false });
+          assert.equal(result.grant.status,'REVOKED','DESTVERIFY_GRANT_COMMITTED');
+        } else if (scenario.name === 'withdrawn_between') {
+          const result = await new ConsentWithdrawalService(harness.actorContext).withdraw({
+            principal:principals.patient,tenantCandidate:fixture.tenantId,sessionId:scenario.sessionId,
+            consentId:scenario.consentId,correlationId:scenario.revokeCorrelationId,hasUnexpectedInput:false });
+          assert.equal(result.consent.status,'WITHDRAWN','DESTVERIFY_CONSENT_COMMITTED');
+        }
+      },
+    });
+    const runtime = await harness.database.connect();
+    try {
+      assert.deepEqual((await runtime.query('SELECT current_user AS role,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0],
+        { role:'mediq_runtime',rolsuper:false,rolbypassrls:false });
+      await assertRuntimePrivilegeCatalog(runtime);
+      for (const table of ['pacs_transfer_operations','provenance_records','study_references','integrity_evidence','audit_events']) {
+        assert.deepEqual((await runtime.query('SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid=$1::regclass',[table])).rows[0],
+          { relrowsecurity:true,relforcerowsecurity:true });
+      }
+      for (const [sql,id] of [['SELECT operation_id FROM pacs_transfer_operations WHERE operation_id=$1',scenario.operationId],
+        ['SELECT study_ref_id FROM study_references WHERE study_ref_id=$1',scenario.studyRefId],
+        ['SELECT provenance_id FROM provenance_records WHERE operation_id=$1',scenario.operationId]]) {
+        assert.equal((await runtime.query(sql,[id])).rowCount,0,'DESTVERIFY_NO_CONTEXT_GRAPH');
+      }
+    } finally { runtime.release(); }
+    await harness.actorContext.run(principals.cross,fixture.otherTenantId,async (_identity,client) => {
+      assert.equal((await client.query('SELECT operation_id FROM pacs_transfer_operations WHERE operation_id=$1',[scenario.operationId])).rowCount,
+        0,'DESTVERIFY_CROSS_TENANT_GRAPH');
+    });
+    const captured = await harness.service.captureForCoordinator({ principal:principals.clinician,tenantCandidate:fixture.tenantId,
+      correlationId:scenario.correlationId,operationId:scenario.operationId,consentId:scenario.consentId,grantId:scenario.grantId,signal });
+    assert.equal(captured.kind,'CAPTURED_FOR_COORDINATOR','DESTVERIFY_ACTUAL_SOURCE_CAPTURE');
+    const handoff = captured.handoff;
+    assert.ok(handoff.temporaryPackage,'DESTVERIFY_ACTUAL_ENCRYPTED_PACKAGE');
+    assert.equal(handoff.sourceEvidence.aggregateDigest,expectedSourceManifestDigest(manifest),'DESTVERIFY_KNOWN_SOURCE_HASH');
+    if (scenario.name !== 'no_provenance') await harness.actorContext.run(principals.clinician,fixture.tenantId,async (_identity,client) => {
+      assert.equal((await new PostgresProvenanceRepository(client).createPendingForPacsImport({operationId:scenario.operationId,now:new Date()})).created,
+        true,'DESTVERIFY_PENDING_PROVENANCE');
+    });
+    // Legal synthetic state fixture only; not a real Preflight or STOW invocation.
+    for (const [state,missing] of [['PREFLIGHT_PASSED','missing_preflight_audit'],['STOW_STARTED','missing_dispatch_audit'],['VERIFYING','missing_verifying_audit']]) {
+      await dispatchTestTransition(harness,principals.clinician,scenario,state,scenario.name === missing);
+    }
+    const request = { principal:principals.clinician,tenantCandidate:fixture.tenantId,correlationId:scenario.correlationId,
+      consentId:scenario.consentId,grantId:scenario.grantId,handoff,signal };
+    if (scenario.name === 'valid') {
+      const proof = await harness.service.verifyDestinationIntegrity(request);
+      assert.deepEqual(proof,{ operationId:scenario.operationId,exchangeSessionId:scenario.sessionId,packageId:scenario.packageId,
+        studyRefId:scenario.studyRefId,sourceEvidenceId:handoff.sourceEvidence.evidenceId,algorithm:'SHA256-MANIFEST-V1',
+        aggregateDigest:expectedSourceManifestDigest(manifest),objectCount:3,totalBytes:manifest.instances.reduce((n,item) => n+item.sizeBytes,0),
+        comparedAt:proof.comparedAt },'DESTVERIFY_EXACT_PROOF');
+      assert.ok(Object.isFrozen(proof) && Number.isFinite(Date.parse(proof.comparedAt)),'DESTVERIFY_FROZEN_PROOF');
+    } else {
+      const selected = scenario.name === 'cross_tenant' ? { ...request,principal:principals.cross,tenantCandidate:fixture.otherTenantId } : request;
+      await assert.rejects(harness.service.verifyDestinationIntegrity(selected),{message:'DESTINATION_INTEGRITY_UNAVAILABLE'});
+    }
+    if (['valid','commit_ack_lost','verify_audit_failure'].includes(scenario.name)) {
+      const before = harness.counters();
+      await assert.rejects(harness.service.verifyDestinationIntegrity(request),{message:'DESTINATION_INTEGRITY_UNAVAILABLE'});
+      const after = harness.counters();
+      assert.equal(after.destinationClaimQueries,before.destinationClaimQueries,'DESTVERIFY_NO_RETRY_QUERY');
+      assert.equal(after.tenantContextRuns,before.tenantContextRuns,'DESTVERIFY_NO_RETRY_AUTHORITY');
+      assert.equal(after.destinationVerificationCalls,before.destinationVerificationCalls,'DESTVERIFY_NO_RETRY_READ');
+    }
+    const counts = harness.counters();
+    assert.equal(counts.destinationVerificationCalls,scenario.identityCalls,'DESTVERIFY_IDENTITY_CALL_COUNT');
+    assert.equal(counts.destinationByteCalls,scenario.byteCalls,'DESTVERIFY_BYTE_CALL_COUNT');
+    const expectedQueries = scenario.name === 'cross_tenant' ? 0 : scenario.name === 'valid' ? 11 : scenario.byteCalls ? 3 : 1;
+    const expectedMatches = ['valid','revoked_between','withdrawn_between','tampered','missing','extra','commit_ack_lost','verify_audit_failure'].includes(scenario.name) ? expectedQueries : 0;
+    assert.equal(counts.destinationClaimQueries,expectedQueries,'DESTVERIFY_ACTUAL_SELECT_COUNT');
+    assert.equal(counts.destinationClaimMatches,expectedMatches,'DESTVERIFY_ACTUAL_SELECT_MATCHES');
+    assert.equal(counts.lostCommitAcknowledgements,scenario.name === 'commit_ack_lost' ? 1 : 0,'DESTVERIFY_REAL_COMMIT_ACK_FAULT');
+    assert.equal(counts.destinationObserved.length,scenario.byteCalls,'DESTVERIFY_ACTUAL_BYTE_OBSERVATIONS');
+    for (const observed of counts.destinationObserved) {
+      const known = manifest.instances.find(item => item.sopInstanceUID === observed.sop);
+      assert.ok(known,'DESTVERIFY_KNOWN_SOP'); assert.equal(observed.bytes,known.sizeBytes,'DESTVERIFY_ORIGINAL_LENGTH');
+      if (scenario.name === 'tampered') assert.notEqual(observed.sha256,known.sha256,'DESTVERIFY_SAME_LENGTH_TAMPER');
+      else assert.equal(observed.sha256,known.sha256,'DESTVERIFY_ORIGINAL_HASH');
+    }
+    assert.equal(counts.instanceCalls,3,'DESTVERIFY_NO_SOURCE_REFETCH');
+    assert.equal(counts.sourceRequests.length,4,'DESTVERIFY_SOURCE_WADO_ONLY');
+    assert.equal(counts.stowCalls + counts.forbiddenEndpointAttempts,0,'DESTVERIFY_NO_B_WRITE');
+    assert.equal(counts.activeTenantTransactions,0,'DESTVERIFY_NO_OPEN_TRANSACTION');
+    const binding = {operationId:scenario.operationId,tenantId:fixture.tenantId,exchangeSessionId:scenario.sessionId,
+      packageId:scenario.packageId,studyRefId:scenario.studyRefId,sourceHospitalId:TEST_HOSPITAL_A_ID};
+    assert.equal((await new TemporaryPayloadPurgeCoordinator(harness.actorContext,port).purge({principal:principals.clinician,
+      tenantCandidate:fixture.tenantId,binding,storageRef:handoff.temporaryPackage.storageRef,correlationId:scenario.correlationId,
+      reason:'EXPLICIT_CLOSE'})).kind,'PURGED','DESTVERIFY_AUDITED_PURGE');
+    assert.deepEqual(await readdir(storageRoot),[],'DESTVERIFY_PHYSICAL_ABSENCE');
+    await harness.actorContext.run(principals.clinician,fixture.tenantId,async (_identity,client) => {
+      const row = (await client.query('SELECT temporary_payload_state,temporary_payload_purged_at FROM study_references WHERE study_ref_id=$1',[scenario.studyRefId])).rows[0];
+      assert.equal(row.temporary_payload_state,'PURGED','DESTVERIFY_METADATA_PURGED');
+      assert.ok(row.temporary_payload_purged_at instanceof Date,'DESTVERIFY_PURGE_EVIDENCE');
+      const op = (await client.query('SELECT state,version,source_object_count,request_digest FROM pacs_transfer_operations WHERE operation_id=$1',[scenario.operationId])).rows[0];
+      assert.equal(op.state,'VERIFYING','DESTVERIFY_NOT_COMPLETED'); assert.equal(op.version,3);
+      assert.equal(op.source_object_count,scenario.count); assert.equal(op.request_digest,dispatchedReadDigest(scenario));
+    });
+  } catch (error) {
+    const safe = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'SUPPRESSED';
+    const assertion = error?.code === 'ERR_ASSERTION' ? /^DESTVERIFY_[A-Z0-9_]{1,100}/.exec(error.message ?? '')?.[0] : undefined;
+    const line = /authorized-source-capture\.orthanc\.integration\.test\.mjs:(\d+):/.exec(error?.stack ?? '')?.[1] ?? '0';
+    const database = (harness?.counters().databaseFailures ?? []).filter(value => /^[A-Z0-9_]{1,100}$/.test(value)).slice(-3);
+    throw new Error(`DESTVERIFY_CASE_${scenario.name.toUpperCase()} DESTVERIFY_ERROR_${safe(error?.code ?? error?.message)} DESTVERIFY_CHECK_${safe(assertion)} DESTVERIFY_ORIGIN_${line} ${database.map(value => `DESTVERIFY_QUERY_${value}`).join(' ')}`);
+  } finally {
+    try { for (const item of attempted) await store?.purgeByReference(item); }
+    finally {
+      try { await harness?.database.onModuleDestroy(); }
+      finally {
+        if (root) {
+          assert.equal(resolve(dirname(root)),resolve(tmpdir()),'DESTVERIFY_OWNED_ROOT');
+          assert.ok(basename(root).startsWith('mediq-destination-verify-'),'DESTVERIFY_OWNED_PREFIX');
+          await rm(root,{recursive:true,force:true}); await assert.rejects(stat(root),error => error.code === 'ENOENT');
+        }
+      }
+    }
+  }
+}
+
+async function runActualDestinationVerificationMatrix(t) {
+  const kind = process.env.MEDIQ_TEST_DESTINATION_FIXTURE_KIND;
+  assert.ok(destinationFixtureKinds.includes(kind),'DESTVERIFY_FIXTURE_KIND');
+  const keys = await generateKeyPair('RS256',{modulusLength:2048});
+  const jwk = {...await exportJWK(keys.publicKey),kid:'TEST-DESTVERIFY',alg:'RS256',use:'sig'};
+  let requests = 0;
+  const server = createServer((request,response) => {
+    if (request.url !== '/jwks') return response.writeHead(404).end();
+    requests++; response.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({keys:[jwk]}));
+  });
+  try {
+    await new Promise((done,fail) => {server.once('error',fail);server.listen(0,'127.0.0.1',done);});
+    const auth = {issuer:fixture.issuer,audience:'TEST-DESTVERIFY',jwksUri:`http://127.0.0.1:${server.address().port}/jwks`};
+    const verifier = new RemoteJwksOidcTokenVerifier(auth);
+    const sign = (subject,claims={},audience=auth.audience) => new SignJWT(claims).setProtectedHeader({alg:'RS256',kid:jwk.kid,typ:'at+jwt'})
+      .setIssuer(auth.issuer).setAudience(audience).setSubject(subject).setNotBefore(Math.floor(Date.now()/1000)-1).setExpirationTime('5m').sign(keys.privateKey);
+    await assert.rejects(verifier.verify(await sign(fixture.subject,{},'TEST-WRONG')),{message:'AUTHENTICATION_TOKEN_INVALID'});
+    const principals = {clinician:await verifier.verify(await sign(fixture.subject)),cross:await verifier.verify(await sign(fixture.otherTenantSubject)),
+      patient:await verifier.verify(await sign('synthetic-int001-patient-actor',{mediq_patient_ref_id:fixture.patientRefId}))};
+    assert.ok(requests > 0,'DESTVERIFY_REAL_JWKS');
+    for (const scenario of destinationVerificationCases.filter(item => item.fixtureKind === kind)) {
+      await t.test(`DESTVERIFY actual ${scenario.name}`,{timeout:30_000},child => runDestinationVerificationCase(scenario,principals,auth,child.signal));
+    }
+  } finally {server.closeAllConnections();await new Promise((done,fail) => server.close(error => error ? fail(error) : done()));}
+}
+
 if (process.argv.includes("--mediq-recovery-child")) {
   await runRecoveryReplica();
 } else if (process.env.MEDIQ_TEST_DISPATCH_READ_MODE === 'true') {
   test('DEC-020 actual committed-read PostgreSQL/RLS/crypto gate (no STOW or complete Preflight)', { timeout: 120_000 }, runActualDispatchedReadMatrix);
+} else if (process.env.MEDIQ_TEST_DESTINATION_VERIFY_MODE === 'true') {
+  test('DEC-022 actual authorized destination PostgreSQL/RLS/HTTPS comparison gate (fixture only, no application STOW)',{timeout:120_000},runActualDestinationVerificationMatrix);
 } else test("authorized source capture uses only A WADO after database-backed authorization and never writes B", async (t) => {
   assert.equal(manifest.fixtureId, "MEDIQ-ENV-007-SYNTHETIC-CT-V1");
   assert.equal(manifest.instanceCount, 3);

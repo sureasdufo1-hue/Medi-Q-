@@ -206,7 +206,7 @@ services:
       - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
     init: true
     read_only: true
-    tmpfs: [/tmp:rw,noexec,nosuid,size=16m]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     pids_limit: 100
@@ -244,7 +244,7 @@ services:
       - ../data/local-tls/test-ca.crt:/run/mediq/test-ca.crt:ro
     init: true
     read_only: true
-    tmpfs: [/tmp:rw,noexec,nosuid,size=16m]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     pids_limit: 100

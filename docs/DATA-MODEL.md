@@ -1,5 +1,9 @@
 # MediQ Data Model
 
+## DEC-022-B1 actual read gate — no schema/right change (2026-10-04)
+
+Original95264 actual16-case destination graph/query/RLS plus independent exact Audit/Provenance/source-PENDING/noncompletion/purge/quota observer PASS; ACTDEST001–008/report§48/evidence§84. Existing253 exact runtime privileges unchanged, no destination integrity INSERT or terminal provenance/state write added, no source row promotion. Synthetic legal VERIFYING transitions are test setup, not a real Preflight/STOW claim. Original separately append-only DESTINATION_VERIFY and narrow immutable-binding terminal provenance writes require an independently documented minimum-rights delta, migration/RLS/denial/rollback/concurrency actual DB gate before implementation acceptance; not fulfilled by the ephemeral comparison result.
+
 ## DEC-022-A read-only verification gate — no schema/grant change
 
 New repository reads the existing Tenant-visible source AVAILABLE/TTL/pending Integrity and exact operation VERIFYING/version3/semantic digest/count/pending Provenance/three transition Audits. It uses existing253 runtime column privilege tuples; no migration, historical source constraint rewrite or destination/provenance column write is added. The ephemeral minimized comparison proof is not a new DB row and must not be serialized as completed evidence. New closed checkpoint/failure Audit vocabulary uses existing12-column INSERT rights. Actual SQL/RLS/exact-catalog acceptance remains required; only model DB query composition is locally tested at this stage. Separate destination/terminal persistence design and actual gates still precede complete P0.

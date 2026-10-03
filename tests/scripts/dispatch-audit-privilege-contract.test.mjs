@@ -82,7 +82,9 @@ test('catalog rejects table-level and PUBLIC rights even with exact approved col
 });
 
 test('source and independent observer use exact shared contract, not old 244 assertions', () => {
-  assert.equal((integration.match(/await assertRuntimePrivilegeCatalog\(runtime\)/g) ?? []).length,2);
+  // Source, dispatched read and the new actual destination path each prove the
+  // same exact catalog; no count-only or alternate privilege set is allowed.
+  assert.equal((integration.match(/await assertRuntimePrivilegeCatalog\(runtime\)/g) ?? []).length,3);
   assert.match(observer,/await assertRuntimePrivilegeCatalog\(client\)/);
   assert.doesNotMatch(integration,/rows\[0\]\.n, 244/);
   assert.match(dockerfile,/COPY tests\/fixtures\/runtime-privilege-contract\.mjs tests\/fixtures\/runtime-privilege-contract\.mjs/);

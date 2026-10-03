@@ -5,17 +5,19 @@ import { readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { destinationFixtureKinds } from '../tests/fixtures/destination-verification-fixture.mjs';
+import { dispatchedReadIds } from '../tests/fixtures/dispatched-source-read-fixture.mjs';
 const check = (condition, code) => assert.ok(condition, `DESTVERIFY_FIXTURE_${code}`);
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const uid = value => typeof value === 'string' && value.length <= 64 && /^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$/.test(value);
+const fixtureFile = value => typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.dcm$/.test(value) && basename(value) === value;
 
 export function destinationFixtureDataset(manifest, originals, kind) {
   check(destinationFixtureKinds.includes(kind), 'KIND');
   check(manifest?.fixtureId === 'MEDIQ-ENV-007-SYNTHETIC-CT-V1' && manifest.instances?.length === 3 &&
-    uid(manifest.studyInstanceUID) && uid(manifest.seriesInstanceUID), 'MANIFEST');
+    manifest.studyInstanceUID === dispatchedReadIds.studyUid && uid(manifest.seriesInstanceUID), 'MANIFEST');
   const seen = new Set();
   let dataset = manifest.instances.map(item => {
-    check(uid(item.sopInstanceUID) && !seen.has(item.sopInstanceUID) && basename(item.file) === item.file, 'IDENTITY');
+    check(uid(item.sopInstanceUID) && !seen.has(item.sopInstanceUID) && fixtureFile(item.file), 'IDENTITY');
     seen.add(item.sopInstanceUID);
     const bytes = originals.get(item.file);
     check(Buffer.isBuffer(bytes) && bytes.length > 132 && bytes.length <= 64*1024*1024 &&
@@ -48,7 +50,7 @@ export async function runDestinationPacsFixture(environment, action, kind = 'exa
   const manifest = JSON.parse(await readFile(environment.MEDIQ_DICOM_TEST_MANIFEST,'utf8'));
   const originals = new Map();
   for (const item of manifest.instances ?? []) {
-    check(typeof item.file === 'string' && basename(item.file) === item.file, 'FILE');
+    check(fixtureFile(item.file), 'FILE');
     originals.set(item.file,await readFile(join(dirname(environment.MEDIQ_DICOM_TEST_MANIFEST),item.file)));
   }
   const dataset = destinationFixtureDataset(manifest,originals,kind);

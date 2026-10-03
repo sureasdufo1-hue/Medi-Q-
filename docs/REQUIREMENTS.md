@@ -1,5 +1,9 @@
 # MediQ Requirements Specification
 
+## DEC-022-B1 actual comparison acceptance — 2026-10-04
+
+REQ-PACS-BYTES-001/002 internal comparison prerequisite now has actual signed-service/PostgreSQL-RLS/HTTPS Test B evidence: original95264 exit0, original58+18 plus destination20 and independent16-case Audit/source-PENDING/provenance/noncompletion/quota/privacy/cleanup observer; unchanged253 runtime rights, frozen306 inputs/development inventory and zero owned resources. ACTDEST001–008 scoped PASS (report§48/evidence§84). B is independently seeded synthetic test setup; no app STOW/full Preflight or product completion is proven. Destination/terminal persistence, original coordinator/one actual transfer/purge/API/security/E2E portions of these requirements remain mandatory and incomplete. Do not rerun unchanged comparison as a substitute for the next terminal writer/real minimum-rights DB gate. Earlier initial-implementation notes below are history.
+
 ## DEC-022-A owned comparison implementation boundary — 2026-10-04
 
 REQ-PACS-BYTES-002 now has an internal implementation in AuthorizedSourceCaptureService: original private handoff only, current fenced PACS_IMPORT authority/mapping/source-AVAILABLE/pending evidence and exact VERIFYING/version3/digest/count/Provenance/three Audits at every compound identity/raw-byte boundary; committed checkpoint Audit before I/O, before/after raw-instance gates, exact identity before/after the full sequential canonical byte pass and one5min budget. Frozen minimized comparison proof is not persisted VERIFIED Integrity, terminal Provenance/Audit/purge or completed Session. Same-handoff concurrent/repeated attempts and lost first-gate acknowledgement cannot refetch; no new public action. AUTHDEST-001~005 local model/engine/crypto/hash prerequisites only; actual signed SQL/RLS/PACS gate AUTHDEST-006 and terminal/coordinator/E2E AUTHDEST-007 remain required. Report§45/evidence§81; no P0 completion claim.

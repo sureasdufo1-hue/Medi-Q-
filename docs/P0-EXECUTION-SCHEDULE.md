@@ -1,5 +1,9 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
+**최신 실제 판정 (2026-10-04):** DEC-022-B1 actual95264 종료0; source58+dispatch18+목적지20·독립16-case 관찰/감사/출처/원본PENDING/quota0·B 전후EMPTY·개인정보/복원/자동 정리 PASS. owned 자원0·306개 입력 hash·기존 개발 자원 불변 및4개 서비스 healthy. 로컬 API1175/계약21/Node257/PS107/타입·Port PASS. 목적지 비교 선행 범위만 PASS, 전체 P0 PARTIAL/실행 중 핸들 없음. 다음은 목적지/terminal 증거 영속화·최소 DB 쓰기 실제 gate, 이어 전체 Preflight/조정기/앱의 단일 STOW/보안E2E다. 이전 API 시간초과 실패는 유지한다. 보고§48/증거§84; 제출 목표 달성 보장은 아니다.
+
+**현재 실행 (2026-10-04, DEC-022-B1):** 실제 목적지 비교16개·독립 관찰기·wrapper 연결 및 tmpfs/시험 파일 경계 수정 완료, 로컬 API1175/계약21/Node257/PS107/타입·Port·구문 PASS. 원본58+18과 신규14+2+2+2 실제 격리 gate95264 진행 중,306개 입력 고정. 실제 SQL/RLS/B·정리 결과 미확정, 전체 P0 PARTIAL. 이 gate 이후 terminal writer/최소 DB 쓰기와 전체 Preflight/조정기/단일 STOW·보안E2E가 남는다. 보고§48/증거§84;10월5일 목표는 완료 보장이 아니다.
+
 **최신 검증 (2026-10-04):** DEC-022-A 로컬 API1175·계약21·Node232·PS107·빌드/타입/Port PASS. 실제 changed-source95503 종료0/source58+dispatch18·RLS·독립 관찰·B 전후 EMPTY·개인정보·복원/정리 PASS, owned 자원0·현재302 실행입력 hash·기존 개발자원 불변. 이는 새 destination SQL/B gate나 실제 전송 완료가 아니다. 다음은 그 새 실제 통합 gate와 terminal writer·전체 조정기·보안E2E이며 P0 PARTIAL; 실행 중 핸들 없음. 보고§45/증거§81.
 
 **최신 진행 (2026-10-04, DEC-022-A):** 원본 handoff 소유 서비스에 목적지 전체 바이트 비교와 현재 권한 재검증/VERIFYING graph·source·출처·감사 gate를 연결했다. 조회 전후 identity와 per-instance/aggregate 비교, 한 번의5분 제한·중복/취소/감사 실패 거부를 포함한다. 모델 DB+실제 engine/crypto/hash 시험은 실제 B·PostgreSQL/RLS 증거가 아니며, 다음은 해당 실제 격리 통합시험 후 terminal writer·전체 조정기·단일 STOW·보안E2E다. 제출 목표일은 유지하되 P0 완료나 제출 가능 상태를 주장하지 않는다. 보고§45/증거§81; 아래 진행 표기는 이력이다.

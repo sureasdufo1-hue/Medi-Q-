@@ -1,5 +1,9 @@
 # MediQ Domain Model
 
+## DEC-022-B1 actual nonterminal proof boundary — 2026-10-04
+
+ACTDEST001–008 actual internal comparison accepted in original95264, report§48/evidence§84. Independent16-case observer confirms original SOURCE_CAPTURE/PENDING is not promoted, Provenance stays PENDING, operation stays VERIFYING/version3, Session ACTIVE/uncompleted and temporary payload is audited PURGED. Source-owner frozen comparison proof remains ephemeral/nonpersistent; seeded B does not confer delivery authority. No new entity, transition, Grant/action, schema or completion invariant in this test-only change. Separate DESTINATION_VERIFY append and trusted terminal evidence/state writes with current authority and physical-purge proof remain next, before original full P0 completion.
+
 ## DEC-022-A internal comparison proof, not terminal evidence
 
 AuthorizedDestinationIntegrityProof is a frozen ephemeral internal result bound to original operation/Session/package/Study/sourceEvidence and canonical digest/count/total/time. Only the source-capture owner's original handoff and fresh current VERIFYING/PACS_IMPORT gates may produce it; clones/client JSON cannot acquire ownership. It adds no persistent entity, source status mutation, Grant/action or Session transition. The independently append-only DESTINATION_VERIFY record, terminal Provenance/Audit and physical purge must still be implemented and committed before COMPLETED. PACS_DESTINATION_VERIFY_AUTHORIZED is STUDY/ALLOW with closed phase reasons; PACS_DESTINATION_VERIFY_FAILED is STUDY/FAILURE with only DESTINATION_VERIFY_FAILED. Neither is delivery/completion. Old capture/dispatch Audit rules stay unchanged. AUTHDEST Acceptance; report§45/evidence§81.

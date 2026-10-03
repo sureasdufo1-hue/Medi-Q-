@@ -69,6 +69,7 @@ FROM build AS authorized-source-capture-test
 
 COPY tests/fixtures/destination-verification-fixture.mjs tests/fixtures/destination-verification-fixture.mjs
 COPY scripts/int001-destination-pacs-fixture.mjs scripts/int001-destination-pacs-fixture.mjs
+COPY scripts/verify-int001-destination-verification.mjs scripts/verify-int001-destination-verification.mjs
 COPY tests/fixtures/runtime-privilege-contract.mjs tests/fixtures/runtime-privilege-contract.mjs
 COPY tests/fixtures/dispatched-source-read-fixture.mjs tests/fixtures/dispatched-source-read-fixture.mjs
 COPY scripts/seed-int001-dispatched-reads.mjs scripts/seed-int001-dispatched-reads.mjs

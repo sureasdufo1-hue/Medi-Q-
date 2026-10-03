@@ -2,6 +2,8 @@
 
 ### DEC-022-B actual owned destination matrix — before code
 
+Current ACTDEST001–008 **scoped PASS**, actual original95264 terminal0 (source58+dispatch18+destination14+2+2+2 and independent16-case observer, exact Audit/source pending/provenance/noncompletion/quota0/privacy/restoration/B EMPTY/cleanup); independent zero owned resources, same306 frozen inputs and development inventory. Local API1175/contract21/Node257/PS107/build/type/Port PASS. Evidence§84/report§48. Actual signed internal service/real SQL/RLS/HTTPS B only; B seed is fixture setup. This does not close AUTHDEST007/DESTBYTES007/full terminal/Preflight/application STOW/coordinator/API/security/E2E or whole P0; those remain NOT RUN/PARTIAL. Historical initial status and failures below are retained, not current verdict.
+
 CAPSTONE-P0/MEDIQ-PACS-001, AUTHDEST-006/DESTBYTES-006; initial NOT RUN. Existing20 dirty paths and original58+18 assertions preserved.
 
 | ID (`TC-PACS-001-ACTDEST-*`) | Required actual evidence |

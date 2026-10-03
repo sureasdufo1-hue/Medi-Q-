@@ -1,5 +1,13 @@
 # MediQ Policy Decision Log
 
+### PACS-001-DEC-022-B1 — complete actual destination gate after WIP checkpoint
+
+Actual95264 terminal0 accepted in ACTDEST001–008 scope:58+18+destination20/independent16-case observer/privacy/B EMPTY/cleanup; independent306 input hash/development inventory unchanged, owned resources0. Local API1175/contract21/Node257/PS107/type/Port PASS. No new runtime right, product transfer/terminal completion or deployment; old29279 timeouts remain UNKNOWN. Next original terminal writers/minimal-rights real DB gate and full coordinator/Preflight/STOW/security/E2E, not unchanged comparison reruns. Report§48/evidence§84; entire P0 PARTIAL/no live process.
+
+2026-10-04 CAPSTONE-P0, AGENTS1.1 standing authority. Previous goal turn made progress by constructing fixtures/profiles/harness; explicit Git checkpoint2c36455 preserved them. No live handle. Adopt DEC-022-B unchanged: complete the real destination runner, independent read-only observer and optional wrapper; correct only the two malformed test tmpfs sequences, bind fixture Study to the fixed approved synthetic UID and prove helper exact-target purge refusal. Keep original58+18 and separate runtime/fixture credentials, actual HTTPS QIDO/WADO, current signed authority, immutable253 rights and all original end-state gates. Alternatives rejected: skip actual comparison, mocked positive SQL/PACS or modifying production rights to pass.
+
+Checkpoint full regression29279 failed two5000ms timeouts; retain failure and diagnose using the same actual cases without timeout increases or weakened assertions. A focused run can distinguish reproducibility, not establish root cause or erase the whole-run failure. No production deployment, DB privilege change, product transfer/completion or automatic Git. Report§48/evidence§84; ACTDEST001–008 remain required before scoped acceptance; whole P0 remains PARTIAL.
+
 ### PACS-001-DEC-022-B — actual isolated destination SQL/RLS/PACS gate
 
 2026-10-04 CAPSTONE-P0, AGENTS1.1 authority; preceding turn is progress (whole owned verifier/local1175 and actual changed-source95503 terminal0),20 dirty paths preserved, no live handle. Adopt before code: add an optional destination-verification matrix to the existing uniquely owned source test wrapper, retaining the original58+18 and independent observers. Disjoint synthetic DB fixtures use only a separate migrator seed/observer process. App receives runtime credentials only, genuine signed synthetic OIDC/JWKS identity, source-owner handoff and real fenced SQL/RLS; B-only verification uses actual HTTPS QIDO/WADO and configured Test Orthanc B credentials in a separate test profile, never expands the existing A-only test profile or production deployment.

@@ -2,10 +2,12 @@
 param(
     [string]$EnvFile = ".env",
     [string]$ComposeFile = "infra/docker-compose.yml",
-    [switch]$IncludeDispatchedReads
+    [switch]$IncludeDispatchedReads,
+    [switch]$IncludeDestinationVerification
 )
 
 $ErrorActionPreference = "Stop"
+$IncludeDispatchedReads = $IncludeDispatchedReads -or $IncludeDestinationVerification
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $resolvedEnvFile = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $EnvFile))
 $resolvedComposeFile = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $ComposeFile))
@@ -158,7 +160,7 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
         $failedTestLocations = @()
         $failedAssertionMarkers = @()
         $failedCaseMarkers = @()
-        if ($FailureCode -in @("INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED", "INT001_DISPATCH_READ_ACCEPTANCE_FAILED")) {
+        if ($FailureCode -in @("INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED", "INT001_DISPATCH_READ_ACCEPTANCE_FAILED", "INT001_DESTINATION_ACCEPTANCE_FAILED")) {
             $failedTestNames = @(
                 [regex]::Matches($joined, '(?m)^\s*not ok \d+ - ([^\r\n]{1,160})$') |
                     ForEach-Object { "SOURCE_CAPTURE_TEST" }
@@ -184,6 +186,13 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
             $dispatchMarkers = @([regex]::Matches($joined, '\bDISPREAD_[A-Z0-9_]{1,160}\b') |
                 ForEach-Object { $_.Value } | Where-Object { $_ -notmatch '^DISPREAD_CASE_' } | Sort-Object -Unique | Select-Object -First 8)
             $failedAssertionMarkers = @($failedAssertionMarkers) + $dispatchMarkers
+        }
+        if ($FailureCode -like 'INT001_DESTINATION*') {
+            $destinationMarkers = @([regex]::Matches($joined, '\bDESTVERIFY_[A-Z0-9_]{1,160}\b') |
+                ForEach-Object { $_.Value } | Where-Object { $_ -notmatch '^DESTVERIFY_CASE_' } | Sort-Object -Unique | Select-Object -First 10)
+            $failedAssertionMarkers = @($failedAssertionMarkers) + $destinationMarkers
+            $failedCaseMarkers = @([regex]::Matches($joined, '\bDESTVERIFY_CASE_[A-Z0-9_]{1,80}\b') |
+                ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 4)
         }
         $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_test_count=$($failedTestNames.Count)" } else { "" }
         $safeLocationSummary = if ($failedTestLocations.Count -gt 0) { "; test_locations=$($failedTestLocations -join ',')" } else { "" }
@@ -457,6 +466,49 @@ COMMIT;
             throw "INT001_DISPATCH_OBSERVER_MARKER_MISSING"
         }
         Write-Output "dispatched_independent_observer=PASS exact_audit_provenance=true quota=0 pending_source_only=true"
+    }
+    if ($IncludeDestinationVerification) {
+        $destinationSeed = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_PROJECT", "--env", "MEDIQ_TEST_DESTINATION_VERIFY_MODE=true", "source-capture-fixture-seed",
+            "node", "scripts/seed-int001-dispatched-reads.mjs")) "INT001_DESTINATION_FIXTURE_SEED_FAILED" $capturePrivacyValues
+        if ([string]::Join("`n", [string[]]$destinationSeed) -notmatch '(?m)^destination_fixture=PASS synthetic_only=true cases=16\r?$') {
+            throw "INT001_DESTINATION_FIXTURE_MARKER_MISSING"
+        }
+        Write-Output "destination_fixture=PASS synthetic_cases=16"
+        foreach ($destinationKind in @('exact', 'tampered', 'missing', 'extra')) {
+            $destinationInstances = switch ($destinationKind) { 'missing' { 2 } 'extra' { 4 } default { 3 } }
+            foreach ($fixtureAction in @('seed', 'test', 'purge')) {
+                if ($fixtureAction -eq 'test') {
+                    $destinationOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+                        "--env", "MEDIQ_TEST_DESTINATION_FIXTURE_KIND=$destinationKind", "api-destination-verification-test")) "INT001_DESTINATION_ACCEPTANCE_FAILED" $capturePrivacyValues
+                    $destinationText = [string]::Join("`n", [string[]]$destinationOutput)
+                    $destinationPass = [regex]::Match($destinationText, '(?m)^# pass (\d+)$').Groups[1].Value
+                    $destinationFail = [regex]::Match($destinationText, '(?m)^# fail (\d+)$').Groups[1].Value
+                    $destinationExpected = if ($destinationKind -eq 'exact') { '14' } else { '2' }
+                    if ($destinationPass -ne $destinationExpected -or $destinationFail -ne '0') {
+                        throw "INT001_DESTINATION_SUMMARY_INVALID:pass=${destinationPass}:fail=${destinationFail}"
+                    }
+                    Write-Output "destination_verification_test=PASS kind=$destinationKind tests=$destinationPass failed=0 actual_runtime_rls_https=true"
+                }
+                else {
+                    $destinationFixture = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+                        "--env", "MEDIQ_TEST_PROJECT", "source-capture-orthanc-b-fixture", "node", "scripts/int001-destination-pacs-fixture.mjs",
+                        $fixtureAction, $destinationKind)) "INT001_DESTINATION_PACS_FIXTURE_FAILED" $capturePrivacyValues
+                    $destinationMarker = "(?m)^destination_pacs_fixture=PASS action=$fixtureAction kind=$destinationKind instances=$destinationInstances exact_identity_bytes=true\r?$"
+                    if ([string]::Join("`n", [string[]]$destinationFixture) -notmatch $destinationMarker) {
+                        throw "INT001_DESTINATION_PACS_MARKER_MISSING"
+                    }
+                    Write-Output "destination_pacs_fixture=PASS action=$fixtureAction kind=$destinationKind exact_identity_bytes=true"
+                }
+            }
+        }
+        $destinationObserver = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_PROJECT", "source-capture-db-observer", "node", "scripts/verify-int001-destination-verification.mjs")) "INT001_DESTINATION_OBSERVER_FAILED" $capturePrivacyValues
+        if ([string]::Join("`n", [string[]]$destinationObserver) -notmatch '(?m)^destination_verification_observer=PASS cases=16 exact_audit_provenance=true pending_source_only=true quota=0\r?$') {
+            throw "INT001_DESTINATION_OBSERVER_MARKER_MISSING"
+        }
+        Write-Output "destination_independent_observer=PASS cases=16 exact_audit_provenance=true quota=0 pending_source_only=true"
+        Write-Output "destination_output_privacy=PASS known_values_and_markers_only=true"
     }
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_AFTER_PROBE_FAILED"
     Write-Output "orthanc_b_after=EMPTY"

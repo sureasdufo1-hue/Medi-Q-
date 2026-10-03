@@ -128,7 +128,7 @@ test('wrapper keeps default 58 and separately validates 18, exact markers, priva
   assert.match(wrapper,/\$dispatchPass -ne "18" -or \$dispatchFail -ne "0"/);
   const start = wrapper.indexOf('    if ($IncludeDispatchedReads)');
   assert.ok(start > wrapper.indexOf('audit_and_evidence_observer=PASS'));
-  const stage = wrapper.slice(start,wrapper.indexOf('INT001_ORTHANC_B_AFTER_PROBE_FAILED',start));
+  const stage = wrapper.slice(start,wrapper.indexOf('    if ($IncludeDestinationVerification)',start));
   assert.ok(stage.indexOf('seed-int001-dispatched-reads.mjs') < stage.indexOf('MEDIQ_TEST_DISPATCH_READ_MODE=true'));
   assert.ok(stage.indexOf('MEDIQ_TEST_DISPATCH_READ_MODE=true') < stage.indexOf('verify-int001-dispatched-reads.mjs'));
   assert.match(stage,/INT001_DISPATCH_FIXTURE_MARKER_MISSING/);
