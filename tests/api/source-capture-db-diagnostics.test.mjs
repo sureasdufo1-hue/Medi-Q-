@@ -7,6 +7,16 @@ import {
 describe("safe source-capture database diagnostics", () => {
   it("retains only a well-formed PostgreSQL SQLSTATE", () => {
     expect(safeDatabaseErrorClass({ code: "08006", message: "dsn=do-not-record" })).toBe("SQLSTATE_08006");
+    expect(safeDatabaseErrorClass({ code: "42P08", message: "could not determine data type of parameter $10" }))
+      .toBe("SQLSTATE_42P08_PARAMETER_10");
+    expect(safeDatabaseErrorClass({ code: "42P08", message: "could not determine data type of parameter $99" }))
+      .toBe("SQLSTATE_42P08");
+    expect(safeDatabaseErrorClass({ code: "42P08", message: "could not determine type for patient TEST-001" }))
+      .toBe("SQLSTATE_42P08");
+    expect(safeDatabaseErrorClass({ code: "23514", constraint: "integrity_evidence_destination_verify_guard" }))
+      .toBe("SQLSTATE_23514_DESTINATION_EVIDENCE_GUARD");
+    expect(safeDatabaseErrorClass({ code: "23514", constraint: "patient_private_do_not_record" }))
+      .toBe("SQLSTATE_23514");
     expect(safeDatabaseErrorClass({ code: "db-secret-123", name: "Error" })).toBe("ERROR_ERROR");
     expect(safeDatabaseErrorClass({ code: "db-secret-123", name: "UntrustedType" })).toBe("UNCLASSIFIED");
   });

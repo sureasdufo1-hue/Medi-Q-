@@ -81,6 +81,26 @@ export const integrityEvidence = pgTable(
         AND verified_at IS NULL
       )`,
     ),
+    check(
+      "integrity_evidence_destination_verify_binding_check",
+      sql`verification_stage <> 'DESTINATION_VERIFY' OR (
+        operation_id IS NOT NULL
+        AND study_ref_id IS NOT NULL
+        AND algorithm = 'SHA256-MANIFEST-V1'
+        AND source_digest IS NOT NULL
+        AND source_digest ~ '^sha256:[0-9a-f]{64}$'
+        AND destination_digest IS NOT NULL
+        AND destination_digest ~ '^sha256:[0-9a-f]{64}$'
+        AND destination_digest = source_digest
+        AND source_object_count IS NOT NULL
+        AND source_object_count > 0
+        AND destination_object_count IS NOT NULL
+        AND destination_object_count = source_object_count
+        AND status = 'VERIFIED'
+        AND verified_at IS NOT NULL
+        AND created_at >= verified_at
+      )`,
+    ),
     index("integrity_evidence_exchange_session_id_idx").on(
       table.exchangeSessionId,
     ),

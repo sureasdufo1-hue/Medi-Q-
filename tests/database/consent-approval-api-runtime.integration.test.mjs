@@ -256,10 +256,10 @@ test("CON-004 signed synthetic patient claim approves Consent atomically and fai
        WHERE grantee=current_user AND table_schema='public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 253, "CON004_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 258, "CON004_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     assert.deepEqual(
       catalog.rows.filter((row) => row.privilege_type === "UPDATE").map((row) => `${row.table_name}.${row.column_name}`).sort(),
-      ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"],
+      ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "provenance_records.integrity_id", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"],
     );
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM information_schema.table_privileges WHERE grantee=current_user AND table_schema='public'")).rows[0].n, 0);
     for (const tableName of ["consents", "exchange_sessions", "audit_events"]) {
@@ -448,10 +448,10 @@ test("CON-005 signed synthetic patient claim withdraws Consent atomically and fa
        WHERE grantee=current_user AND table_schema='public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 253, "CON005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 258, "CON005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     assert.deepEqual(
       catalog.rows.filter((row) => row.privilege_type === "UPDATE").map((row) => `${row.table_name}.${row.column_name}`).sort(),
-      ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"],
+      ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "provenance_records.integrity_id", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"],
     );
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM information_schema.table_privileges WHERE grantee=current_user AND table_schema='public'")).rows[0].n, 0);
     for (const tableName of ["consents", "exchange_sessions", "audit_events"]) {

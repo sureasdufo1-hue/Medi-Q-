@@ -27,9 +27,25 @@ const SAFE_DATABASE_MESSAGE_CLASSES = new Map([
   ["socket hang up", "SOCKET_HANG_UP"],
 ]);
 
+const SAFE_DATABASE_CONSTRAINT_CLASSES = new Map([
+  ["integrity_evidence_destination_verify_binding_check", "DESTINATION_EVIDENCE_CHECK"],
+  ["integrity_evidence_destination_verify_guard", "DESTINATION_EVIDENCE_GUARD"],
+  ["provenance_records_destination_integrity_link_guard", "PROVENANCE_INTEGRITY_LINK_GUARD"],
+]);
+
 /** Return only static/allowlisted diagnostic categories; never return raw error data. */
 export function safeDatabaseErrorClass(error) {
   if (typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)) {
+    if (error.code === "42P08" && typeof error.message === "string") {
+      const parameter = /^could not determine data type of parameter \$(\d+)$/i.exec(error.message.trim())?.[1];
+      if (parameter && Number(parameter) >= 1 && Number(parameter) <= 32) {
+        return `SQLSTATE_42P08_PARAMETER_${parameter}`;
+      }
+    }
+    if (error.code === "23514" && typeof error.constraint === "string") {
+      const constraintClass = SAFE_DATABASE_CONSTRAINT_CLASSES.get(error.constraint);
+      if (constraintClass) return `SQLSTATE_23514_${constraintClass}`;
+    }
     return `SQLSTATE_${error.code}`;
   }
   if (typeof error?.code === "string" && SAFE_NODE_DATABASE_CODES.has(error.code)) {

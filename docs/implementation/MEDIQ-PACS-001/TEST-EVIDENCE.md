@@ -1,5 +1,46 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 87. DEC-023 implementation and final actual acceptance — 2026-10-04
+
+DEC-023 recommendation and TERM-001~010 preceded implementation (§86 / policy log). The implementation persists one private service-owned destination comparison proof as a separate `DESTINATION_VERIFY/VERIFIED` row, links only the existing Provenance `integrity_id`, and atomically records Audit. It deliberately leaves source evidence `SOURCE_CAPTURE/PENDING`, Provenance `PENDING`, operation `VERIFYING/version=3`, and Session active. Runtime rights are exactly 253 historical column tuples + five approved column tuples = 258; no table-level/PUBLIC/DEFINER privilege was added.
+
+### Final commands and terminal results
+
+```text
+npm run build:api                                      exit 0
+npm run test:api                                       exit 0 — 47 files, 1,181 tests PASS
+npm run db:migrations:check                            exit 0 — Everything's fine
+npm run test:db-migrations                             exit 0 — 6/6 PASS
+node --test tests/scripts/dispatch-audit-privilege-contract.test.mjs tests/database/migration-runner.test.mjs tests/scripts/int001-destination-verification.test.mjs
+                                                     exit 0 — 41/41 PASS
+./scripts/test-int001-source-capture.ps1 -IncludeDestinationVerification
+                                                     exit 0 — scoped actual integration gate PASS
+```
+
+The final actual runner used a disposable PostgreSQL and Test Orthanc A/B environment, synthetic-only data, a signed runtime identity and exact runtime privileges/RLS. Terminal output verified: B EMPTY before setup; A synthetic Study with 3 instances; authorized source-capture 58/58; dispatched-read 18/18 under actual runtime RLS; independent dispatch observer; exact destination 14/14; tampered, missing and extra destination variants 2/2 each; actual HTTPS identity/byte comparison; independent 16-case read-only observer with exact Audit/Provenance, source still pending, destination evidence only for `valid`, quota 0; B EMPTY after fixture purge; privacy checks, mutation-fixture restoration and `temporary_project_cleanup=PASS existing_mediq_stack=UNCHANGED`. The runner's final scoped marker was `TC-INT-001-CAP-001/002/003/004/005/006/009/010/012/014=PASS`. No product STOW was called: Test Orthanc B is independently seeded by the test fixture and its bytes are compared/purged. This is durable comparison evidence, not application transfer completion.
+
+### Diagnosed attempts retained
+
+- First full scratch-schema run stopped at PROV-001 because the test's `array_agg(name)` result was parsed as a PostgreSQL `name[]` instead of the expected text array. The test query now casts the aggregated catalog column to `text`.
+- Second scratch run passed all printed schema/role/exact-258/RLS and PROV-001/INT-001 runtime markers, then reported `db008_clean_up=PASS`, reset, and reset PostgreSQL bootstrap. Its second reset/reapply phase produced no further progress. It was interrupted after waiting; the uniquely named `mediq-db008-c4e0e62e83a1` scratch Compose resources were explicitly removed and checked. The overall DB-008 clean/reset/reapply wrapper therefore remains **NOT PASS / incomplete**, despite its earlier runtime markers.
+- First actual destination persistence attempt produced PostgreSQL SQLSTATE `42P08` at evidence INSERT. Explicit schema casts were added for algorithm, digest and object-count parameters, advancing the actual gate to the DB binding guard.
+- Next actual attempt produced `23514` at the destination INSERT guard. Inspection found the trigger incorrectly equated the new destination row's `integrity_id` with the distinct source row ID. Migration 0027 now binds the source by operation/session/package/study and explicitly requires a distinct evidence ID. No guard was weakened.
+- With that fix, destination actual cases passed, but the wrapper exited 1 because it still expected a stale independent-observer success string. The wrapper and static contract now require the observer's current `source_pending=true destination_persisted=valid_only` marker. The final full actual runner above then exited 0.
+
+`safeDatabaseErrorClass` emits only bounded SQLSTATE/parameter or allowlisted constraint categories; no SQL text, DICOM bytes, secrets or synthetic patient identifiers were retained in evidence. The workspace's existing MediQ development stack was not redeployed or modified by the disposable integration wrapper.
+
+### Not executed / remaining
+
+- Full DB-008 wrapper completion after the reset/reapply stage; persistent DB-002~007 regressions.
+- Product Mandatory Preflight, one actual application STOW-RS into B, application-originated destination import, terminal Provenance/Integrity/Audit completion, operation/Session completion, lost-result reconciliation and original full A→MediQ→B security/E2E acceptance.
+- Production PACS, patient data, operational credentials, performance/SLO and production PKI.
+
+**Scoped status:** DEC-023 evidence INSERT/link/Audit and actual synthetic destination comparison gate passed, with 258 exact runtime privileges. Overall MEDIQ-PACS-001 and CAPSTONE-P0 remain **PARTIAL**. The B fixture is not product STOW and no completed transfer is claimed.
+
+## 86. DEC-023 recommendation and TERM Acceptance — before code
+
+Before any product/schema/grant edit, recorded `PACS-001-DEC-023` and `TC-PACS-001-TERM-001~010`. Chosen state is a separate immutable `DESTINATION_VERIFY/VERIFIED` row, one-time link through existing Provenance `integrity_id`, with Provenance left `PENDING`, source `SOURCE_CAPTURE/PENDING` unchanged, operation `VERIFYING`, and Session active. Exact current privilege baseline253 plus five column tuples =258. Requires private original proof, fresh signed/Tenant-fenced authorization and graph, committed physical-purge evidence, atomic Audit, rollback and lost-ack no-retry, actual forced-RLS/exact-delta/migration DB gates, and changed synthetic A/B observer/cleanup. Rejected source promotion, caller proof, premature `COMPLETED`, broad rights and I/O under transaction. Scope remains comparison evidence only; B fixture setup is not app STOW. No implementation or test result is claimed in this pre-code record. [Policy](../../POLICY-DECISION-LOG.md#pacs-001-dec-023-persist-verified-destination-evidence-without-claiming-transfer-completion)
+
 ## 85. User-requested current-state Git checkpoint — 2026-10-04
 
 Explicit user authority: commit and push the current state. Inspected AGENTS, main/origin, 24 changed/new paths and DEC-022-B1 implementation/evidence. `git fetch origin` exited0 and `git rev-list --left-right --count HEAD...origin/main` returned0/0. No continued implementation, migration, deployment or PACS mutation.

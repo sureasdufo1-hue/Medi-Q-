@@ -62,6 +62,7 @@ import {
 import { PostgresTemporaryPayloadQuotaRepository } from "../../imaging-storage/persistence/postgres-temporary-payload-quota.repository.js";
 import { TemporaryPayloadPurgeCoordinator } from "../../imaging-storage/application/temporary-payload-purge.coordinator.js";
 import { PostgresDestinationVerificationGateRepository } from "../persistence/postgres-destination-verification-gate.repository.js";
+import { PostgresDestinationIntegrityEvidenceRepository } from "../persistence/postgres-destination-integrity-evidence.repository.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -118,6 +119,13 @@ export interface AuthorizedDestinationIntegrityProof {
   readonly objectCount: number;
   readonly totalBytes: number;
   readonly comparedAt: string;
+}
+
+export class AuthorizedDestinationIntegrityPersistenceUnavailableError extends Error {
+  constructor() {
+    super("DESTINATION_INTEGRITY_PERSISTENCE_UNAVAILABLE");
+    this.name = "AuthorizedDestinationIntegrityPersistenceUnavailableError";
+  }
 }
 
 export type AuthorizedSourceCaptureResult =
@@ -598,6 +606,7 @@ function createAudit(input: {
     | "PACS_TEMPORARY_READ_AUTHORIZED"
     | "PACS_DESTINATION_VERIFY_AUTHORIZED"
     | "PACS_DESTINATION_VERIFY_FAILED"
+    | "PACS_DESTINATION_INTEGRITY_RECORDED"
     | "PACS_TEMPORARY_READ_FAILED";
   readonly result: "ALLOW" | "SUCCESS" | "DENY" | "FAILURE";
   readonly reasonCode: string | null;
@@ -641,6 +650,7 @@ export class AuthorizedSourceCaptureService {
   }>();
   readonly #verificationAttempts = new WeakSet<AuthorizedSourceCaptureCoordinatorHandoff>();
   readonly #verifiedDestinations = new WeakMap<AuthorizedSourceCaptureCoordinatorHandoff, AuthorizedDestinationIntegrityProof>();
+  readonly #destinationPersistenceAttempts = new WeakSet<AuthorizedSourceCaptureCoordinatorHandoff>();
 
   constructor(
     private readonly operationExecutor: Pick<
@@ -818,6 +828,109 @@ export class AuthorizedSourceCaptureService {
       throw new Error("DESTINATION_INTEGRITY_UNAVAILABLE");
     } finally {
       deadline?.dispose();
+    }
+  }
+
+  /** Persists only this service's fresh, private comparison proof; never completes the transfer. */
+  async persistVerifiedDestinationIntegrity(input: unknown): Promise<Readonly<{ kind: "RECORDED" }>> {
+    try {
+      const data = (value: unknown, required: readonly string[], optional: readonly string[] = []) => {
+        if (!value || typeof value !== "object" || types.isProxy(value) || Array.isArray(value) ||
+          ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error("INVALID_PERSIST_INPUT");
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (required.some(key => !Object.hasOwn(descriptors, key)) ||
+          Reflect.ownKeys(descriptors).some(key => typeof key !== "string" ||
+            (!required.includes(key) && !optional.includes(key)) || !descriptors[key]!.enumerable ||
+            !Object.hasOwn(descriptors[key]!, "value"))) throw new Error("INVALID_PERSIST_INPUT");
+        return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
+      };
+      const fields = data(input, ["principal", "tenantCandidate", "correlationId", "consentId", "grantId", "handoff"], ["signal"]);
+      const principalFields = data(fields.principal, ["issuer", "subject"], ["patientRefId"]);
+      if (Object.hasOwn(principalFields, "patientRefId") && !validUuid(principalFields.patientRefId)) throw new Error("INVALID_PERSIST_PRINCIPAL");
+      const signal = Object.hasOwn(fields, "signal") ? fields.signal as AbortSignal : undefined;
+      if (signal !== undefined) {
+        if (!signal || typeof signal !== "object" || types.isProxy(signal) ||
+          !(signal instanceof AbortSignal) || Object.getPrototypeOf(signal) !== AbortSignal.prototype ||
+          ["aborted", "reason", "throwIfAborted", "addEventListener", "removeEventListener", "dispatchEvent", "onabort"]
+            .some(key => Object.hasOwn(signal, key))) throw new Error("INVALID_PERSIST_SIGNAL");
+        Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!.call(signal);
+      }
+      const handoff = fields.handoff as AuthorizedSourceCaptureCoordinatorHandoff;
+      const binding = this.#captureBindings.get(handoff);
+      const proof = this.#verifiedDestinations.get(handoff);
+      const temporary = handoff?.temporaryPackage;
+      if (!binding || !proof || !temporary || this.#destinationPersistenceAttempts.has(handoff)) throw new Error("UNKNOWN_PERSIST_PROOF");
+      const command = exactCommand({ principal: principalFields, tenantCandidate: fields.tenantCandidate,
+        correlationId: fields.correlationId, consentId: fields.consentId, grantId: fields.grantId,
+        operationId: binding.scope.operationId, ...(signal ? { signal } : {}) });
+      const proofTime = new Date(proof.comparedAt);
+      const expiresAt = new Date(temporary.expiresAt);
+      const totalBytes = handoff.expectedInstances.reduce((sum, item) => sum + item.byteLength, 0);
+      const assertLive = () => {
+        if (signal && Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!.call(signal)) {
+          throw new Error("PERSIST_ABORTED");
+        }
+        const now = this.clock();
+        if (!(now instanceof Date) || !Number.isFinite(now.getTime()) || !(proofTime instanceof Date) ||
+          !Number.isFinite(proofTime.getTime()) || proof.comparedAt !== proofTime.toISOString() ||
+          now.getTime() < proofTime.getTime() || now.getTime() - proofTime.getTime() > 5 * 60 * 1000 ||
+          !Number.isFinite(expiresAt.getTime()) || proofTime >= expiresAt || now >= expiresAt) {
+          throw new Error("PERSIST_PROOF_EXPIRED");
+        }
+      };
+      if (proof.operationId !== handoff.operationId || proof.exchangeSessionId !== handoff.exchangeSessionId ||
+        proof.packageId !== handoff.packageId || proof.studyRefId !== handoff.studyRefId ||
+        proof.sourceEvidenceId !== handoff.sourceEvidence.evidenceId || proof.algorithm !== handoff.sourceEvidence.algorithm ||
+        proof.aggregateDigest !== handoff.sourceEvidence.aggregateDigest || proof.objectCount !== handoff.sourceEvidence.objectCount ||
+        proof.totalBytes !== totalBytes || handoff.sourceEvidence.status !== "PENDING") throw new Error("PERSIST_PROOF_BINDING_INVALID");
+      assertLive();
+      // Reserve before opening the persistence transaction. COMMIT acknowledgement
+      // loss is deliberately non-retryable for this in-memory handoff.
+      this.#destinationPersistenceAttempts.add(handoff);
+
+      const result = await this.operationExecutor.executeWithResolvedSessionFence(
+        command.principal,
+        command.tenantCandidate,
+        async (identity, transaction) => {
+          assertLive();
+          const scope = await this.resolveScope(transaction, command.operationId, identity.tenantId);
+          if (!sameCaptureIdentity(identity, binding.identity) || !this.isTestBinding(identity, scope) ||
+            scope.operationState !== "VERIFYING" || !sameSourceCaptureBinding(binding.scope, scope)) {
+            throw new AuthorizationDeniedError();
+          }
+          return AuthorizationContext.create({ identity, exchangeSessionId: scope.exchangeSessionId,
+            resource: { kind: "STUDY", id: scope.studyRefId }, action: "PACS_IMPORT",
+            consentId: command.consentId, grantId: command.grantId });
+        },
+        async (identity, transaction) => {
+          assertLive();
+          const scope = await this.resolveScope(transaction, command.operationId, identity.tenantId);
+          if (!sameSourceCaptureBinding(binding.scope, scope) || scope.operationState !== "VERIFYING" ||
+            !IMPORTABLE_SESSION_STATES.has(scope.sessionState)) throw new AuthorizationDeniedError();
+          const mapping = await mappingBinding(scope, transaction);
+          if (!mapping || mapping.mappingId !== binding.mapping.mappingId ||
+            mapping.localPatientId !== binding.mapping.localPatientId) throw new AuthorizationDeniedError();
+          const now = this.clock();
+          assertLive();
+          const persisted = await new PostgresDestinationIntegrityEvidenceRepository(transaction, this.createId)
+            .appendVerifiedAndLinkPendingProvenance({
+              operationId: scope.operationId, tenantId: identity.tenantId, actorId: identity.actorId,
+              exchangeSessionId: scope.exchangeSessionId, packageId: scope.packageId, studyRefId: scope.studyRefId,
+              sourceEvidenceId: proof.sourceEvidenceId, algorithm: proof.algorithm,
+              aggregateDigest: proof.aggregateDigest, objectCount: proof.objectCount,
+              comparedAt: proofTime, now,
+            });
+          assertLive();
+          await recordAudit(transaction, { actorId: identity.actorId, tenantId: identity.tenantId, scope,
+            correlationId: command.correlationId, action: "PACS_DESTINATION_INTEGRITY_RECORDED",
+            result: "SUCCESS", reasonCode: "DESTINATION_MATCH", now: this.clock(), createId: this.createId });
+          if (!persisted.integrityId || !persisted.provenanceId) throw new Error("PERSIST_RECEIPT_INVALID");
+          return Object.freeze({ kind: "RECORDED" as const });
+        },
+      );
+      return result;
+    } catch {
+      throw new AuthorizedDestinationIntegrityPersistenceUnavailableError();
     }
   }
 

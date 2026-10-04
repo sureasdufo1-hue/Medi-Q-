@@ -17,7 +17,7 @@ $approvedProductTables = @(
     "integrity_evidence", "provenance_records", "audit_events", "pacs_transfer_operations",
     "temporary_payload_package_quotas", "temporary_payload_quota_state", "temporary_payload_reservations"
 )
-$expectedCatalogCounts = "21|55|17|48"
+$expectedCatalogCounts = "21|55|17|49"
 
 function Read-LocalEnv([string]$Path) {
     $settings = @{}
@@ -216,7 +216,7 @@ COMMIT;
 function Assert-R3AuditReadResult {
     param([int]$ExitCode, [string[]]$Output)
     $summary = [string]::Join("`n", [string[]]@($Output))
-    $marker = "dispatch_audit_metadata=PASS exact_privileges=253 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true"
+    $marker = "dispatch_audit_metadata=PASS exact_privileges=258 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true"
     $complete = $ExitCode -eq 0
     foreach ($required in @('tests 1', 'pass 1', 'fail 0', 'cancelled 0', 'skipped 0', 'todo 0')) {
         $matches = [regex]::Matches($summary, '(?m)^# ' + [regex]::Escape($required) + '\r?$')
@@ -256,7 +256,7 @@ SELECT
 "@
     $inventory = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $inventorySql -Label "DB-009 privilege/RLS catalog inventory"
     $inventoryValue = [string]::Join("", [string[]]@($inventory)).Trim()
-    if (@($inventory).Count -ne 1 -or $inventoryValue -ne "20|17|20|0|253|0") {
+    if (@($inventory).Count -ne 1 -or $inventoryValue -ne "20|17|20|0|258|0") {
         $actualInventory = [string]::Join(",", [string[]]@($inventory))
         throw "DB-009 privilege/RLS catalog inventory mismatch; observed_count=$($inventory.Count) observed=$actualInventory."
     }
@@ -275,7 +275,7 @@ SELECT (
 )::text
 FROM pg_roles r WHERE r.rolname='mediq_runtime';
 SELECT (
-  count(*)=253
+  count(*)=258
   AND count(*) FILTER (WHERE table_name='patient_refs' AND privilege_type='SELECT')=5
   AND count(*) FILTER (WHERE table_name='patient_refs' AND privilege_type='INSERT')=5
   AND count(*) FILTER (WHERE table_name IN ('actors','tenants','hospitals') AND privilege_type='SELECT')=11
@@ -285,10 +285,10 @@ SELECT (
   AND count(*) FILTER (WHERE table_name='study_references' AND privilege_type='UPDATE')=4
   AND count(*) FILTER (WHERE table_name='study_references' AND privilege_type='UPDATE' AND column_name NOT IN ('temporary_storage_ref','temporary_payload_state','temporary_payload_expires_at','temporary_payload_purged_at'))=0
   AND count(*) FILTER (WHERE table_name='study_references' AND privilege_type IN ('INSERT','DELETE'))=0
-  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='SELECT')=12
-  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='INSERT')=12
+  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='SELECT')=14
+  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='INSERT')=14
   AND count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type IN ('UPDATE','DELETE'))=0
-  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND column_name NOT IN ('integrity_id','operation_id','exchange_session_id','package_id','study_ref_id','verification_stage','algorithm','source_digest','source_object_count','status','verified_at','created_at'))=0
+  AND count(*) FILTER (WHERE table_name='integrity_evidence' AND column_name NOT IN ('integrity_id','operation_id','exchange_session_id','package_id','study_ref_id','verification_stage','algorithm','source_digest','destination_digest','source_object_count','destination_object_count','status','verified_at','created_at'))=0
   AND count(*) FILTER (WHERE table_name='transfer_grants' AND privilege_type='SELECT')=13
   AND count(*) FILTER (WHERE table_name='transfer_grants' AND privilege_type='INSERT')=13
   AND count(*) FILTER (WHERE table_name='transfer_grants' AND privilege_type='UPDATE')=2
@@ -306,7 +306,9 @@ SELECT (
   AND count(*) FILTER (WHERE table_name='pacs_transfer_operations' AND privilege_type='UPDATE' AND column_name NOT IN ('state','version','reason_code','source_object_count','destination_object_count','updated_at','stow_started_at'))=0
   AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='SELECT')=13
   AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='INSERT')=13
-  AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type IN ('UPDATE','DELETE'))=0
+  AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='UPDATE')=1
+  AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='UPDATE' AND column_name NOT IN ('integrity_id'))=0
+  AND count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='DELETE')=0
   AND count(*) FILTER (WHERE table_name='patient_mappings' AND privilege_type='SELECT')=8
   AND count(*) FILTER (WHERE table_name='exchange_sessions' AND privilege_type='UPDATE')=2
   AND count(*) FILTER (WHERE table_name='exchange_sessions' AND privilege_type='UPDATE' AND column_name NOT IN ('state','updated_at'))=0
@@ -874,13 +876,13 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
         $safeFailureSummary = if ($safeDatabaseCode) { "$safeFailureCode/$safeDatabaseCode" } else { $safeFailureCode }
         throw "DB-009 PAT-001/IAM-002/AUT-005/PAT-002 runtime integration failed (exit=$integrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, privilege_mismatch=$privilegeSummary, safe_error=$safeFailureSummary); raw output suppressed."
     }
-    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=253 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_insert_9_select consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_12_select_12_insert study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=20 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
+    Write-Output "db009_access_boundary=PASS runtime_role=non_owner_non_superuser_nobypassrls ddl=deny column_privileges=258 patient_ref=exact_column_select_insert patient_mapping=exact_8_column_select_read_only exchange_session=exact_12_column_select_insert_plus_2_update audit_event=exact_12_insert_9_select consent=exact_13_column_select_insert_plus_4_update consent_action=exact_3_column_select_insert grant=exact_13_column_insert_plus_2_select_plus_2_update(status,revoked_at) grant_scopes=exact_3_column_insert pacs_operation=15_select_15_insert_7_update integrity_evidence=exact_14_select_14_insert provenance=13_select_13_insert_1_update(integrity_id) study_references=exact_10_select_4_update auth_evidence=60_select_columns rls_enable_force=20 cross_tenant=PASS third_tenant=DENY commit_rollback_context_reset=PASS pat001_repository=PASS iam002_context=PASS aut005_study_policy=PASS pat002_mapping_read=PASS mutable_guc_residual=recorded"
 
     $auditReadArgs = $integrationArgs + @("node", "--test", "--test-reporter=tap", "tests/database/dispatch-audit-metadata-runtime.integration.test.mjs")
     $auditReadOutput = @(& docker @auditReadArgs 2>&1 | ForEach-Object { $_.ToString() })
     $auditReadExitCode = $LASTEXITCODE
     Assert-R3AuditReadResult -ExitCode $auditReadExitCode -Output $auditReadOutput
-    Write-Output "r3_audit_metadata=PASS exact_privileges=253 select=9 insert=12 forced_rls=PASS no_context_cross_tenant=DENY excluded_columns_full_projection=DENY update_delete=DENY rollback_both_tenants=PASS"
+    Write-Output "r3_audit_metadata=PASS exact_privileges=258 select=9 insert=12 forced_rls=PASS no_context_cross_tenant=DENY excluded_columns_full_projection=DENY update_delete=DENY rollback_both_tenants=PASS"
 
     $excFixture = [ordered]@{
         subjectA = $subjectA; actorA = $actorA; tenantA = $tenantA; hospitalA = $hospitalA
@@ -897,7 +899,7 @@ DROP FUNCTION IF EXISTS public.pacs007_audit_failure_probe();
     } | ConvertTo-Json -Compress
     $exchangePrivilegeSql = @"
 SELECT (
-  (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public')=253
+  (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public')=258
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='exchange_sessions' AND privilege_type='SELECT')=12
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='exchange_sessions' AND privilege_type='INSERT')=12
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='audit_events' AND privilege_type='INSERT')=12
@@ -908,7 +910,7 @@ SELECT (
     $exchangeGrantCheck = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $exchangePrivilegeSql -Label "EXC-003 exact persistent scratch privilege inventory"
     $exchangeGrantCheckValues = @($exchangeGrantCheck)
     $exchangeGrantCheckValue = [string]::Join("", [string[]]$exchangeGrantCheckValues).Trim()
-    if ($exchangeGrantCheckValues.Count -ne 1 -or $exchangeGrantCheckValue -ne "true|253") {
+    if ($exchangeGrantCheckValues.Count -ne 1 -or $exchangeGrantCheckValue -ne "true|258") {
         throw "EXC-003 exact runtime privilege inventory mismatch; observed=$exchangeGrantCheckValue."
     }
 
@@ -932,7 +934,7 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "EXC-002 PostgreSQL repository Acceptance failed (exit=$exchangeExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "exc002_repository=PASS create_read=PASS bilateral_rls=PASS unrelated_tenant=DENY no_context=DENY rollback=PASS persistent_column_privileges=253"
+    Write-Output "exc002_repository=PASS create_read=PASS bilateral_rls=PASS unrelated_tenant=DENY no_context=DENY rollback=PASS persistent_column_privileges=258"
 
     $exchangeCreationArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -961,7 +963,7 @@ SELECT (
 
     $consentPrivilegeSql = @"
 SELECT (
-  (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public')=253
+  (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public')=258
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='consents' AND privilege_type='SELECT')=13
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='consents' AND privilege_type='INSERT')=13
   AND (SELECT count(*) FROM information_schema.column_privileges WHERE grantee='mediq_runtime' AND table_schema='public' AND table_name='consent_actions' AND privilege_type='SELECT')=3
@@ -979,7 +981,7 @@ SELECT (
     $consentGrantCheck = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $consentPrivilegeSql -Label "CON-002 regression under current exact runtime grants"
     $consentGrantCheckValues = @($consentGrantCheck)
     $consentGrantCheckValue = [string]::Join("", [string[]]$consentGrantCheckValues).Trim()
-    if ($consentGrantCheckValues.Count -ne 1 -or $consentGrantCheckValue -ne "true|253") {
+    if ($consentGrantCheckValues.Count -ne 1 -or $consentGrantCheckValue -ne "true|258") {
         throw "CON-002 runtime privilege baseline mismatch; observed=$consentGrantCheckValue."
     }
     $consentIntegrationArgs = $ComposeArgs + @(
@@ -1000,7 +1002,7 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "CON-002 PostgreSQL persistence Acceptance failed (exit=$consentIntegrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "con002_persistence=PASS pending_only=PASS atomic_version=PASS concurrent=PASS rls=PASS current_exact_privileges=253"
+    Write-Output "con002_persistence=PASS pending_only=PASS atomic_version=PASS concurrent=PASS rls=PASS current_exact_privileges=258"
 
     $consentRequestArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1023,7 +1025,7 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "CON-003 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$consentRequestExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "con003_request_api=PASS signed_oidc=PASS http_postgresql=PASS tenant_rls=PASS semantic_replay=PASS rollback=PASS exact_privileges=253"
+    Write-Output "con003_request_api=PASS signed_oidc=PASS http_postgresql=PASS tenant_rls=PASS semantic_replay=PASS rollback=PASS exact_privileges=258"
 
     $consentApprovalArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1046,8 +1048,8 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "CON-004/005 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$consentApprovalExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "con004_approval_api=PASS signed_oidc=PASS tenant_rls=PASS atomic_transition=PASS replay_concurrency=PASS rollback=PASS exact_privileges=253"
-    Write-Output "con005_withdrawal_api=PASS signed_oidc=PASS tenant_rls=PASS expiry_independent=PASS atomic_audit=PASS replay_concurrency=PASS rollback=PASS exact_privileges=253"
+    Write-Output "con004_approval_api=PASS signed_oidc=PASS tenant_rls=PASS atomic_transition=PASS replay_concurrency=PASS rollback=PASS exact_privileges=258"
+    Write-Output "con005_withdrawal_api=PASS signed_oidc=PASS tenant_rls=PASS expiry_independent=PASS atomic_audit=PASS replay_concurrency=PASS rollback=PASS exact_privileges=258"
 
     $grantIntegrationArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1065,9 +1067,9 @@ SELECT (
         $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
         $safeFailureCode = [regex]::Match($grantSummary, '\b(TRANSFER_GRANT_[A-Z_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "GRT-002 synthetic PostgreSQL/RLS regression failed (exit=$grantIntegrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); current persistent inventory=253."
+        throw "GRT-002 synthetic PostgreSQL/RLS regression failed (exit=$grantIntegrationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); current persistent inventory=258."
     }
-    Write-Output "grt002_persistence_regression=PASS insert_read=PASS savepoint_rollback=PASS tenant_rls=PASS no_context=DENY current_persistent_privileges=253"
+    Write-Output "grt002_persistence_regression=PASS insert_read=PASS savepoint_rollback=PASS tenant_rls=PASS no_context=DENY current_persistent_privileges=258"
 
     $grantIssueArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1098,7 +1100,7 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "GRT-003/004 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$grantIssueExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode, diagnostic=$safeTestDiagnostic, preflight=$safePreflightFacts, database=$safeDatabaseMarkers, rollback=$safeRollbackMarkers); raw output suppressed."
     }
-    Write-Output "grt003_issue_api=PASS signed_oidc=PASS consent_binding=PASS actor_tenant_binding=PASS semantic_idempotency=PASS concurrency=PASS audit_atomicity=PASS cumulative_exact_privileges=253"
+    Write-Output "grt003_issue_api=PASS signed_oidc=PASS consent_binding=PASS actor_tenant_binding=PASS semantic_idempotency=PASS concurrency=PASS audit_atomicity=PASS cumulative_exact_privileges=258"
     Write-Output "grt004_revoke_api=PASS signed_oidc=PASS exact_recipient=PASS expiry_independent=PASS replay=PASS concurrency=PASS atomic_audit_rollback=PASS denial=PASS offline_and_inflight_nonrecall_boundary=DOCUMENTED exact_grant_update_columns=status,revoked_at"
 
     $pacsFenceArgs = $ComposeArgs + @(
@@ -1139,7 +1141,7 @@ SELECT (
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
         throw "PROV-001 PostgreSQL/RLS Acceptance failed (exit=$provenanceExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
-    Write-Output "prov001_runtime=PASS operation_binding=PASS pending_only=PASS replay=PASS rollback=PASS no_context=DENY cross_tenant=DENY late_first_write=DENY exact_253_privileges=PASS update_delete=DENY"
+    Write-Output "prov001_runtime=PASS operation_binding=PASS pending_only=PASS replay=PASS rollback=PASS no_context=DENY cross_tenant=DENY late_first_write=DENY exact_258_privileges=PASS update_delete=DENY"
 
     $integrityArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1172,10 +1174,10 @@ SELECT
 "@
     $integrityPrivilegeRestore = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $integrityPrivilegeRestoreSql -Label "INT-001 persistent runtime privilege restoration"
     $integrityPrivilegeRestoreText = [string]::Join("", [string[]]@($integrityPrivilegeRestore))
-    if ($integrityPrivilegeRestore.Count -ne 1 -or $integrityPrivilegeRestoreText -ne "253|12|12|10|4|0") {
-        throw "INT-001 permanent runtime privilege inventory mismatch; actual=$integrityPrivilegeRestoreText expected=253|12|12|10|4|0."
+    if ($integrityPrivilegeRestore.Count -ne 1 -or $integrityPrivilegeRestoreText -ne "258|14|14|10|4|0") {
+        throw "INT-001 permanent runtime privilege inventory mismatch; actual=$integrityPrivilegeRestoreText expected=258|14|14|10|4|0."
     }
-    Write-Output "int001_runtime=PASS operation_binding=PASS pending_only=PASS exact_replay=PASS conflict=DENY rollback=PASS no_context=DENY cross_tenant=DENY late_first_write=DENY exact_evidence_12_select_12_insert=PASS exact_study_scope_10_select_4_update=PASS persistent_253=PASS update_delete=DENY"
+    Write-Output "int001_runtime=PASS operation_binding=PASS pending_only=PASS exact_replay=PASS conflict=DENY rollback=PASS no_context=DENY cross_tenant=DENY late_first_write=DENY exact_evidence_14_select_14_insert=PASS exact_study_scope_10_select_4_update=PASS persistent_258=PASS update_delete=DENY"
 }
 
 function Assert-ScratchSchema {
@@ -1204,7 +1206,7 @@ SELECT
 
     $ledger = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql "SELECT count(*)::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='__drizzle_migrations') FROM public.__drizzle_migrations;" -Label "DB-008 scratch migration ledger"
     $ledgerText = [string]::Join("", [string[]]@($ledger))
-    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^27\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
+    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^28\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
 
     $runtimeProbe = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_RUNTIME_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_RUNTIME_PASSWORD"] -Sql "SELECT 1;" -Label "DB-008 scratch runtime role probe"
     $runtimeText = [string]::Join("", [string[]]@($runtimeProbe))
@@ -1314,7 +1316,7 @@ try {
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs
-    Write-Output "db008_clean_up=PASS product_tables=21 ledger=27 catalog=$expectedCatalogCounts"
+    Write-Output "db008_clean_up=PASS product_tables=21 ledger=28 catalog=$expectedCatalogCounts"
 
     Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
     Write-Output "db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true"
@@ -1323,7 +1325,7 @@ try {
     Write-Output "db008_reset_postgres=PASS role_bootstrap=PASS"
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
-    Write-Output "db008_reset_reapply=PASS product_tables=21 ledger=27"
+    Write-Output "db008_reset_reapply=PASS product_tables=21 ledger=28"
 
     if ($ScratchOnly) {
         Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"

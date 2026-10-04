@@ -15,6 +15,7 @@ import { ResolvedObjectAuthorizationPolicy } from "../../services/api/dist/autho
 import { PostgresAuthorizationEvidenceReader } from "../../services/api/dist/authorization/persistence/postgres-authorization-evidence.reader.js";
 import { AuthorizedSourceCaptureService } from "../../services/api/dist/integrity/application/authorized-source-capture.service.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
+import { TemporaryPayloadPurgeCoordinator } from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
 import { ActorTenantContextDeniedError, ActorTenantContextUnavailableError } from "../../services/api/dist/identity/identity-context.types.js";
 import { PacsImportModule } from "../../services/api/dist/pacs/pacs-import.module.js";
 import { pacsTransferOperationDigest } from "../../services/api/dist/pacs/domain/pacs-transfer-operation-digest.js";
@@ -209,6 +210,8 @@ function makeHarness(options = {}) {
   const observedPrincipals = [];
   const reservationExpiries = [];
   let committedPayload = options.existingPayload ? { ...options.existingPayload } : null;
+  let committedProvenance = { provenance_id: "0c000000-0000-4000-8000-000000000001", integrity_id: null,
+    transfer_type: "PACS_IMPORT", transfer_status: "PENDING", ingested_at: null, transferred_at: null };
   let committedQuota = 0;
   const dicomCalls = {
     metadata: 0,
@@ -232,12 +235,14 @@ function makeHarness(options = {}) {
       const txAudits = [];
       const txEvidence = [];
       let txPayload = committedPayload ? { ...committedPayload } : null;
+      let txProvenance = { ...committedProvenance };
       let txQuota = committedQuota;
       let didReserve = false;
       let didComplete = false;
       let committed = false;
       let readPhase = 0;
       let verificationPhase = 0;
+      let didDestinationEvidence = false;
       const client = {
         query: async (statement, values = []) => {
           const sql = String(statement);
@@ -316,6 +321,7 @@ function makeHarness(options = {}) {
             if (sql.includes("SET temporary_payload_state = 'PURGED'")) {
               if (txPayload.state !== "PURGE_PENDING") return { rowCount: 0, rows: [] };
               txPayload.state = "PURGED";
+              txPayload.purgedAt = new Date(values[4]);
               lifecycleEvents.push("metadata:purged");
               return { rowCount: 1, rows: [{ study_ref_id: ids.studyRef }] };
             }
@@ -343,7 +349,7 @@ function makeHarness(options = {}) {
             lifecycleEvents.push("quota:release");
             return { rowCount: 1, rows: [] };
           }
-          if (sql.includes("FROM pacs_transfer_operations AS op")) {
+          if (sql.includes("FROM pacs_transfer_operations AS op") && !sql.includes("INSERT INTO integrity_evidence")) {
             return { rowCount: 1, rows: [{ ...currentScope }] };
           }
           if (sql.includes("JOIN consents AS c")) {
@@ -377,6 +383,30 @@ function makeHarness(options = {}) {
             if (options.failEvidenceInsert === true) {
               throw new Error("synthetic evidence sink failure");
             }
+            if (sql.includes("'DESTINATION_VERIFY'")) {
+              if (options.failDestinationEvidenceInsert === true) throw new Error("synthetic destination evidence failure");
+              const [integrityId, operationId, tenantId, actorId, sessionId, packageId, studyRefId,
+                sourceEvidenceId, algorithm, digest, count, verifiedAt, createdAt] = values;
+              const source = committedEvidence.find(item => item.integrity_id === sourceEvidenceId &&
+                item.verification_stage === "SOURCE_CAPTURE" && item.status === "PENDING");
+              const finalAudit = committedAudits.some(event => event[7] === "PACS_DESTINATION_VERIFY_AUTHORIZED" &&
+                event[8] === "ALLOW" && event[9] === "FINAL");
+              const purgeAudit = committedAudits.some(event => event[7] === "PACS_TEMPORARY_OBJECT_PURGED" && event[8] === "SUCCESS");
+              if (!source || !txPayload || txPayload.state !== "PURGED" || !txPayload.purgedAt ||
+                !finalAudit || !purgeAudit || operationId !== ids.operation || tenantId !== ids.tenant ||
+                actorId !== ids.actor || sessionId !== ids.session || packageId !== ids.package || studyRefId !== ids.studyRef ||
+                algorithm !== source.algorithm || digest !== source.source_digest || count !== source.source_object_count ||
+                !(verifiedAt instanceof Date) || !(createdAt instanceof Date) || verifiedAt > createdAt ||
+                createdAt.getTime() - verifiedAt.getTime() > 300_000) return { rowCount: 0, rows: [] };
+              const row = { integrity_id: integrityId, operation_id: operationId, exchange_session_id: sessionId,
+                package_id: packageId, study_ref_id: studyRefId, verification_stage: "DESTINATION_VERIFY",
+                algorithm, source_digest: source.source_digest, destination_digest: digest,
+                source_object_count: source.source_object_count, destination_object_count: count,
+                status: "VERIFIED", verified_at: verifiedAt, created_at: createdAt };
+              txEvidence.push(row); didDestinationEvidence = true;
+              lifecycleEvents.push("evidence:destination-append");
+              return { rowCount: 1, rows: [row] };
+            }
             const row = {
               integrity_id: values[0],
               operation_id: values[5],
@@ -395,6 +425,19 @@ function makeHarness(options = {}) {
             lifecycleEvents.push("evidence:insert");
             return { rowCount: 1, rows: [row] };
           }
+          if (sql.includes("UPDATE provenance_records AS pr")) {
+            if (options.failProvenanceLink === true) throw new Error("synthetic provenance link failure");
+            const [integrityId, operationId, sessionId, packageId, studyRefId, tenantId] = values;
+            const destination = txEvidence.find(item => item.integrity_id === integrityId && item.verification_stage === "DESTINATION_VERIFY");
+            if (!destination || operationId !== ids.operation || sessionId !== ids.session || packageId !== ids.package ||
+              studyRefId !== ids.studyRef || tenantId !== ids.tenant || txProvenance.integrity_id !== null ||
+              txProvenance.transfer_status !== "PENDING" || txProvenance.ingested_at !== null || txProvenance.transferred_at !== null) {
+              return { rowCount: 0, rows: [] };
+            }
+            txProvenance = { ...txProvenance, integrity_id: integrityId };
+            lifecycleEvents.push("provenance:integrity-link");
+            return { rowCount: 1, rows: [{ provenance_id: txProvenance.provenance_id }] };
+          }
           if (sql.includes("SELECT integrity_id, operation_id")) {
             return { rowCount: 0, rows: [] };
           }
@@ -407,6 +450,7 @@ function makeHarness(options = {}) {
           ? { ...identity, actorId: "02000000-0000-4000-8000-000000000099" } : currentIdentity;
         const result = await work(workIdentity, client);
         if (verificationPhase && options.failVerifyCommit === verificationPhase) throw new ActorTenantContextUnavailableError();
+        if (didDestinationEvidence && options.failPersistCommit) throw new ActorTenantContextUnavailableError();
         if (readPhase && options.failReadCommit === readPhase) throw new ActorTenantContextUnavailableError();
         if (didReserve && options.failReservationCommit) throw new Error("TEST_RESERVATION_COMMIT_FAILURE");
         if (
@@ -417,11 +461,14 @@ function makeHarness(options = {}) {
         }
         committedAudits.push(...txAudits);
         committedEvidence.push(...txEvidence);
+        committedProvenance = txProvenance;
         committedPayload = txPayload;
         committedQuota = txQuota;
         committed = true;
         lifecycleEvents.push("transaction:commit");
         if (verificationPhase && options.loseVerifyCommitAck === verificationPhase) throw new ActorTenantContextUnavailableError();
+        if (didDestinationEvidence && options.losePersistCommitAck) throw new ActorTenantContextUnavailableError();
+        if (didDestinationEvidence) options.afterPersistCommit?.();
         if (verificationPhase) options.afterVerifyCommit?.(verificationPhase);
         if (readPhase && options.loseReadCommitAck === readPhase) throw new ActorTenantContextUnavailableError();
         if (readPhase) options.afterReadCommit?.(readPhase);
@@ -574,6 +621,7 @@ function makeHarness(options = {}) {
     gateway,
     committedAudits,
     committedEvidence,
+    get provenanceState() { return { ...committedProvenance }; },
     rollbackReasons,
     lifecycleEvents,
     observedPrincipals,
@@ -754,6 +802,20 @@ function destinationCommand(handoff, overrides = {}) {
     consentId: ids.consent, grantId: ids.grant, handoff, ...overrides };
 }
 
+async function purgeVerifiedHandoff(harness, store, handoff) {
+  const purge = new TemporaryPayloadPurgeCoordinator(harness.actorTenantContext, store, () => new Date(now));
+  return purge.purge({
+    principal,
+    tenantCandidate: ids.tenant,
+    binding: { operationId: handoff.operationId, tenantId: handoff.tenantId,
+      exchangeSessionId: handoff.exchangeSessionId, packageId: handoff.packageId,
+      studyRefId: handoff.studyRefId, sourceHospitalId: TEST_HOSPITAL_A_ID },
+    storageRef: handoff.temporaryPackage.storageRef,
+    correlationId: ids.correlation,
+    reason: "TRANSFER_TERMINAL",
+  });
+}
+
 describe("DEC-022-A owned whole destination verifier (model DB, real engine/crypto/hash)", () => {
   it("compares all exact bytes sequentially, identity before/after and11 committed fresh authority checkpoints", async () => {
     await withLifecycle({}, async h => {
@@ -781,6 +843,63 @@ describe("DEC-022-A owned whole destination verifier (model DB, real engine/cryp
       expect(h.dicomCalls.destinationIdentity).toBe(2);
     });
   });
+
+  it("persists a fresh verified comparison and links only pending PACS_IMPORT Provenance", async () => {
+    await withLifecycle({}, async (h, store, root) => {
+      const { handoff } = await h.service.captureForCoordinator(command());
+      h.simulateCommittedVerification();
+      await h.service.verifyDestinationIntegrity(destinationCommand(handoff));
+      await purgeVerifiedHandoff(h, store, handoff);
+
+      const result = await h.service.persistVerifiedDestinationIntegrity(destinationCommand(handoff));
+      expect(result).toEqual({ kind: "RECORDED" });
+      expect(Object.isFrozen(result)).toBe(true);
+      expect(h.committedEvidence).toHaveLength(2);
+      expect(h.committedEvidence[0]).toMatchObject({ verification_stage: "SOURCE_CAPTURE", status: "PENDING", verified_at: null });
+      expect(h.committedEvidence[1]).toMatchObject({ verification_stage: "DESTINATION_VERIFY", status: "VERIFIED",
+        source_digest: h.committedEvidence[0].source_digest, destination_digest: h.committedEvidence[0].source_digest,
+        source_object_count: 3, destination_object_count: 3 });
+      expect(h.provenanceState).toMatchObject({ integrity_id: h.committedEvidence[1].integrity_id,
+        transfer_type: "PACS_IMPORT", transfer_status: "PENDING", ingested_at: null, transferred_at: null });
+      expect(h.operationState).toBe("VERIFYING");
+      expect(h.payloadState.state).toBe("PURGED");
+      expect(auditActions(h).at(-1)).toEqual({ action: "PACS_DESTINATION_INTEGRITY_RECORDED", result: "SUCCESS", reason: "DESTINATION_MATCH" });
+      await expect(h.service.persistVerifiedDestinationIntegrity(destinationCommand(handoff)))
+        .rejects.toThrow("DESTINATION_INTEGRITY_PERSISTENCE_UNAVAILABLE");
+      expect(h.committedEvidence).toHaveLength(2);
+      expect(h.dicomCalls.destinationWrites).toBe(0);
+      expect(await readdir(root)).toEqual([]);
+    });
+  });
+
+  it.each(["destination insert", "provenance link", "audit", "commit rollback", "lost commit acknowledgement"])
+    ("fails closed without retry after %s", async fault => {
+      const options = fault === "destination insert" ? { failDestinationEvidenceInsert: true }
+        : fault === "provenance link" ? { failProvenanceLink: true }
+          : fault === "audit" ? { failAuditAction: "PACS_DESTINATION_INTEGRITY_RECORDED" }
+            : fault === "commit rollback" ? { failPersistCommit: true }
+              : { losePersistCommitAck: true };
+      await withLifecycle(options, async (h, store) => {
+        const { handoff } = await h.service.captureForCoordinator(command());
+        h.simulateCommittedVerification();
+        await h.service.verifyDestinationIntegrity(destinationCommand(handoff));
+        await purgeVerifiedHandoff(h, store, handoff);
+        await expect(h.service.persistVerifiedDestinationIntegrity(destinationCommand(handoff)))
+          .rejects.toThrow("DESTINATION_INTEGRITY_PERSISTENCE_UNAVAILABLE");
+        await expect(h.service.persistVerifiedDestinationIntegrity(destinationCommand(handoff)))
+          .rejects.toThrow("DESTINATION_INTEGRITY_PERSISTENCE_UNAVAILABLE");
+        expect(h.dicomCalls.destinationWrites).toBe(0);
+        if (fault === "lost commit acknowledgement") {
+          expect(h.committedEvidence).toHaveLength(2);
+          expect(h.provenanceState.integrity_id).toBe(h.committedEvidence[1].integrity_id);
+          expect(auditActions(h).some(item => item.action === "PACS_DESTINATION_INTEGRITY_RECORDED")).toBe(true);
+        } else {
+          expect(h.committedEvidence).toHaveLength(1);
+          expect(h.provenanceState.integrity_id).toBeNull();
+          expect(auditActions(h).some(item => item.action === "PACS_DESTINATION_INTEGRITY_RECORDED")).toBe(false);
+        }
+      });
+    });
 
   it.each([
     ["clone", handoff => ({ handoff: { ...handoff } })],

@@ -184,6 +184,13 @@ const EVENT_RULES: Readonly<Record<string, EventRule>> = Object.freeze({
     resourceRequired: true,
     reasonCodes: ["DESTINATION_VERIFY_FAILED"],
   },
+  PACS_DESTINATION_INTEGRITY_RECORDED: {
+    resourceType: "STUDY",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: ["DESTINATION_MATCH"],
+  },
 });
 
 const ALLOWED_KEYS = new Set([

@@ -146,7 +146,8 @@ test('wrapper retains58+18 and invokes actual seed/test/purge/observer with exac
   assert.match(part,/'exact', 'tampered', 'missing', 'extra'/);assert.match(part,/'seed', 'test', 'purge'/);
   assert.match(part,/\{ '14' \} else \{ '2' \}/);assert.match(part,/verify-int001-destination-verification\.mjs/);
   assert.doesNotMatch(part,/MEDIQ_(?:MIGRATION|TEST_FIXTURE)_DATABASE_URL/);
-  assert.match(part,/destination_verification_observer=PASS cases=16/);assert.match(part,/\$capturePrivacyValues/);
+  assert.match(part,/destination_verification_observer=PASS cases=16 exact_audit_provenance=true source_pending=true destination_persisted=valid_only quota=0/);
+  assert.match(part,/\$capturePrivacyValues/);
 });
 test('independent observer is read-only/exact Audit/source/provenance/quota and copied into test image',async () => {
   const source=await readFile(new URL('../../scripts/verify-int001-destination-verification.mjs',import.meta.url),'utf8');

@@ -122,7 +122,7 @@ test("AUT-005 resolves exact Study evidence under runtime grants, verified Tenan
       }
       assert.deepEqual(actual, expected, "AUT005_RUNTIME_PRIVILEGE_SET_MISMATCH");
       console.error("AUT005_STAGE=CATALOG_PRIVILEGES_OK");
-      assert.equal(actual.length, 253, "AUT005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+      assert.equal(actual.length, 258, "AUT005_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
       const broad = await catalogClient.query(`
         SELECT
           (SELECT count(*) FROM information_schema.table_privileges

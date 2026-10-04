@@ -504,10 +504,10 @@ COMMIT;
         }
         $destinationObserver = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
             "--env", "MEDIQ_TEST_PROJECT", "source-capture-db-observer", "node", "scripts/verify-int001-destination-verification.mjs")) "INT001_DESTINATION_OBSERVER_FAILED" $capturePrivacyValues
-        if ([string]::Join("`n", [string[]]$destinationObserver) -notmatch '(?m)^destination_verification_observer=PASS cases=16 exact_audit_provenance=true pending_source_only=true quota=0\r?$') {
+        if ([string]::Join("`n", [string[]]$destinationObserver) -notmatch '(?m)^destination_verification_observer=PASS cases=16 exact_audit_provenance=true source_pending=true destination_persisted=valid_only quota=0\r?$') {
             throw "INT001_DESTINATION_OBSERVER_MARKER_MISSING"
         }
-        Write-Output "destination_independent_observer=PASS cases=16 exact_audit_provenance=true quota=0 pending_source_only=true"
+        Write-Output "destination_independent_observer=PASS cases=16 exact_audit_provenance=true source_pending=true destination_persisted=valid_only quota=0"
         Write-Output "destination_output_privacy=PASS known_values_and_markers_only=true"
     }
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_AFTER_PROBE_FAILED"

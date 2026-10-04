@@ -1,5 +1,9 @@
 # MediQ Domain Model
 
+## PACS-001-DEC-023 persisted comparison evidence — 2026-10-04
+
+No aggregate or operation transition is added. The existing source-capture owner may persist one `DESTINATION_VERIFY/VERIFIED` record only from the same in-memory original handoff for which it holds the private comparison proof. Fresh current authorization and exact operation/Session/source/Provenance bindings are revalidated after the read phase; the temporary payload must have committed physical-purge evidence. The source evidence remains `SOURCE_CAPTURE/PENDING`. Provenance may receive only the one-time integrity-record link and remains `PENDING`; transfer timestamps stay null. Operation remains `VERIFYING` and Session active. The audit row, destination evidence and link are atomic. A future transfer coordinator must still perform the actual app STOW and own the terminal completion transition.
+
 ## DEC-022-B1 actual nonterminal proof boundary — 2026-10-04
 
 ACTDEST001–008 actual internal comparison accepted in original95264, report§48/evidence§84. Independent16-case observer confirms original SOURCE_CAPTURE/PENDING is not promoted, Provenance stays PENDING, operation stays VERIFYING/version3, Session ACTIVE/uncompleted and temporary payload is audited PURGED. Source-owner frozen comparison proof remains ephemeral/nonpersistent; seeded B does not confer delivery authority. No new entity, transition, Grant/action, schema or completion invariant in this test-only change. Separate DESTINATION_VERIFY append and trusted terminal evidence/state writes with current authority and physical-purge proof remain next, before original full P0 completion.

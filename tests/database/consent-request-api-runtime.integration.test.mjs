@@ -273,13 +273,13 @@ test("CON-003 signed OIDC HTTP request atomically creates/replays Consent under 
        WHERE grantee=current_user AND table_schema='public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 253, "CON003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 258, "CON003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     const consentGrants = catalog.rows.filter((r) => ["consents", "consent_actions"].includes(r.table_name));
     assert.equal(consentGrants.filter((r) => r.privilege_type === "SELECT" && r.table_name === "consents").length, 13);
     assert.equal(consentGrants.filter((r) => r.privilege_type === "INSERT" && r.table_name === "consents").length, 13);
     assert.equal(consentGrants.filter((r) => r.privilege_type === "SELECT" && r.table_name === "consent_actions").length, 3);
     assert.equal(consentGrants.filter((r) => r.privilege_type === "INSERT" && r.table_name === "consent_actions").length, 3);
-    assert.deepEqual(catalog.rows.filter((r) => r.privilege_type === "UPDATE").map((r) => `${r.table_name}.${r.column_name}`).sort(), ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"]);
+    assert.deepEqual(catalog.rows.filter((r) => r.privilege_type === "UPDATE").map((r) => `${r.table_name}.${r.column_name}`).sort(), ["consents.issued_at", "consents.status", "consents.updated_at", "consents.withdrawn_at", "exchange_sessions.state", "exchange_sessions.updated_at", "pacs_transfer_operations.destination_object_count", "pacs_transfer_operations.reason_code", "pacs_transfer_operations.source_object_count", "pacs_transfer_operations.state", "pacs_transfer_operations.stow_started_at", "pacs_transfer_operations.updated_at", "pacs_transfer_operations.version", "provenance_records.integrity_id", "study_references.temporary_payload_expires_at", "study_references.temporary_payload_purged_at", "study_references.temporary_payload_state", "study_references.temporary_storage_ref", "transfer_grants.revoked_at", "transfer_grants.status"]);
 
     console.error("CON003_STAGE=SIGNED_HTTP_SUCCESS_AND_REPLAY");
     app = await createApi(pool, oidc);

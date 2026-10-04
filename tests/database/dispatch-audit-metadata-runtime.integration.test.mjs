@@ -65,7 +65,7 @@ test('R3 exact Audit metadata SELECT and immutable writes obey forced Tenant RLS
       assert.equal((await client.query('SELECT resource_id FROM audit_events WHERE resource_id=ANY($1::uuid[])',[markers])).rowCount,0,'R3_NO_PERSISTED_TEST_EVENTS');
     }
     await client.query('ROLLBACK');
-    console.log('dispatch_audit_metadata=PASS exact_privileges=253 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true');
+    console.log('dispatch_audit_metadata=PASS exact_privileges=258 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true');
   } catch (error) {
     const code = ['ERR_ASSERTION','42501','23503','23514','25P02'].includes(error?.code) ? error.code : 'SUPPRESSED';
     throw new Error(`R3_AUDIT_METADATA_FAILED_${code}`);

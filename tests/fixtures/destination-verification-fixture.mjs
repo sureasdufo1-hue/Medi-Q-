@@ -28,6 +28,7 @@ export function destinationExpectedAudits(item) {
       counts[`PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|${state}`] = 1;
   }
   if (item.name === 'valid') {
+    counts['PACS_DESTINATION_INTEGRITY_RECORDED|SUCCESS|DESTINATION_MATCH'] = 1;
     for (const [phase,n] of Object.entries({ BEFORE_IDENTITY:2,AFTER_IDENTITY:2,BEFORE_BYTES:3,AFTER_BYTES:3,FINAL:1 }))
       counts[`PACS_DESTINATION_VERIFY_AUTHORIZED|ALLOW|${phase}`] = n;
   } else {

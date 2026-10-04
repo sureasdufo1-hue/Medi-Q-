@@ -190,6 +190,13 @@
       "when": 1791039600000,
       "tag": "0026_dispatch_audit_metadata_select",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791066791084,
+      "tag": "0027_destination_verify_evidence",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,9 @@
 # MediQ Entity Relationship Diagram
 
+## PACS-001-DEC-023 destination evidence relation — 2026-10-04
+
+No entity, FK or cardinality is added. The existing unique `(operation_id, verification_stage)` permits one append-only `DESTINATION_VERIFY` child alongside the immutable `SOURCE_CAPTURE` child. The destination row retains the exact existing operation/Session/package/Study references and canonical source/destination digest/count. The existing `provenance_records.integrity_id` FK is linked once to that destination row under a database-checked invariant. Provenance remains `PENDING`; operation and Session remain nonterminal. No completed-status projection follows from this link. The full coordinator later owns terminal Provenance and operation/Session updates after actual STOW and complete verification.
+
 **Project:** MediQ
 **Product:** Patient-Controlled Medical Imaging Mobility SaaS
 **Document:** `ERD.md`

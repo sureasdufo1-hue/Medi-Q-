@@ -58,13 +58,25 @@ export function legacyRuntimePrivileges() {
   return privileges.sort();
 }
 export function expectedRuntimePrivileges() {
+  return [...dispatchAuditRuntimePrivileges(), ...destinationEvidencePrivilegeDelta()].sort();
+}
+export function dispatchAuditRuntimePrivileges() {
   return [...legacyRuntimePrivileges(), ...auditDispatchSelectColumns.map(column => `audit_events.${column}:SELECT`)].sort();
+}
+export function destinationEvidencePrivilegeDelta() {
+  return [
+    'integrity_evidence.destination_digest:SELECT',
+    'integrity_evidence.destination_digest:INSERT',
+    'integrity_evidence.destination_object_count:SELECT',
+    'integrity_evidence.destination_object_count:INSERT',
+    'provenance_records.integrity_id:UPDATE',
+  ];
 }
 export async function assertRuntimePrivilegeCatalog(client) {
   const result = await client.query(`SELECT table_name,column_name,privilege_type FROM information_schema.column_privileges
     WHERE grantee='mediq_runtime' AND table_schema='public'`);
   const actual = result.rows.map(row => `${row.table_name}.${row.column_name}:${row.privilege_type}`).sort();
-  assert.ok(JSON.stringify(actual) === JSON.stringify(expectedRuntimePrivileges()), 'DISPATCH_AUDIT_EXACT_253_PRIVILEGES');
+  assert.ok(JSON.stringify(actual) === JSON.stringify(expectedRuntimePrivileges()), 'DESTINATION_EVIDENCE_EXACT_258_PRIVILEGES');
   const forbidden = await client.query(`SELECT
     (SELECT count(*)::int FROM information_schema.table_privileges WHERE grantee IN ('PUBLIC','mediq_runtime') AND table_schema='public') AS tables,
     (SELECT count(*)::int FROM information_schema.column_privileges WHERE grantee='PUBLIC' AND table_schema='public') AS public_columns`);

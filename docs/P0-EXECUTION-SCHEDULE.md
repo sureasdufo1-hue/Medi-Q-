@@ -1,8 +1,8 @@
 # MediQ 프로젝트 점검 및 10월 5일 제출 실행 계획표
 
-**최신 실제 판정 (2026-10-04):** DEC-022-B1 actual95264 종료0; source58+dispatch18+목적지20·독립16-case 관찰/감사/출처/원본PENDING/quota0·B 전후EMPTY·개인정보/복원/자동 정리 PASS. owned 자원0·306개 입력 hash·기존 개발 자원 불변 및4개 서비스 healthy. 로컬 API1175/계약21/Node257/PS107/타입·Port PASS. 목적지 비교 선행 범위만 PASS, 전체 P0 PARTIAL/실행 중 핸들 없음. 다음은 목적지/terminal 증거 영속화·최소 DB 쓰기 실제 gate, 이어 전체 Preflight/조정기/앱의 단일 STOW/보안E2E다. 이전 API 시간초과 실패는 유지한다. 보고§48/증거§84; 제출 목표 달성 보장은 아니다.
+**최신 실제 판정 (2026-10-04, DEC-023):** append-only destination-evidence persistence implemented; final isolated actual Orthanc A/B runner exited0. Source58 + dispatched-read18 + destination14+2+2+2; independent16-case observer verifies exact Audit/Provenance, source remains PENDING, destination evidence valid-only, quota0. Runtime privileges exactly258 (253+5); B EMPTY before/after, privacy/restoration/automatic cleanup PASS; existing development stack unchanged. API47 files/1,181, build, migration consistency, migration runner6/6 and target static contracts41/41 PASS. Full DB-008 second reset/reapply did not complete and persistent DB-002~007 was not run. This is durable comparison evidence from a seeded Test B fixture, not product STOW or completed transfer. MEDIQ-PACS-001 and full P0 remain PARTIAL. [Report §51](implementation/MEDIQ-PACS-001/IMPLEMENTATION-REPORT.md#51-dec-023-durable-destination-evidence-implementation--2026-10-04) · [Evidence §87](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#87-dec-023-implementation-and-final-actual-acceptance--2026-10-04).
 
-**현재 실행 (2026-10-04, DEC-022-B1):** 실제 목적지 비교16개·독립 관찰기·wrapper 연결 및 tmpfs/시험 파일 경계 수정 완료, 로컬 API1175/계약21/Node257/PS107/타입·Port·구문 PASS. 원본58+18과 신규14+2+2+2 실제 격리 gate95264 진행 중,306개 입력 고정. 실제 SQL/RLS/B·정리 결과 미확정, 전체 P0 PARTIAL. 이 gate 이후 terminal writer/최소 DB 쓰기와 전체 Preflight/조정기/단일 STOW·보안E2E가 남는다. 보고§48/증거§84;10월5일 목표는 완료 보장이 아니다.
+**다음 우선 작업:** 원래 승인 범위를 유지한 채 full PACS coordinator + Mandatory Preflight + 1회 실제 Study STOW + RESULT_UNKNOWN/no-retry/reconciliation + 정확한 B destination/Integrity/Provenance/Audit/terminal purge·completion + security/E2E를 구현하고 시험한다. No product STOW/terminal completion is claimed by DEC-023. Full DB-008 clean/reset/reapply 및 persistent regression도 별도 완료해야 한다. 10월 5일 제출 목표는 일정 표기이며 완료/제출 성공 보장이 아니다.
 
 **최신 검증 (2026-10-04):** DEC-022-A 로컬 API1175·계약21·Node232·PS107·빌드/타입/Port PASS. 실제 changed-source95503 종료0/source58+dispatch18·RLS·독립 관찰·B 전후 EMPTY·개인정보·복원/정리 PASS, owned 자원0·현재302 실행입력 hash·기존 개발자원 불변. 이는 새 destination SQL/B gate나 실제 전송 완료가 아니다. 다음은 그 새 실제 통합 gate와 terminal writer·전체 조정기·보안E2E이며 P0 PARTIAL; 실행 중 핸들 없음. 보고§45/증거§81.
 
@@ -336,3 +336,4 @@ Implementation record: 문서·점검 작업 예외 적용; 코드 착수부터 
 Remaining risks: 팀 가용 시간 미확정, 계약·ID 정리 필요, 7일 내 전체 P0 일정 위험 매우 높음
 Status: PASS — 요청된 점검·계획 문서 범위 / 제품 P0 Readiness: BLOCKED
 ```
+**이력상 DEC-023 implementation-open 시점 (2026-10-04; superseded):** DEC-023 recommendation and TERM-001~010 preceded implementation. Current scoped implementation and final actual A/B evidence are in the authoritative status at the document top and report§51/evidence§87. Full P0 remains PARTIAL.

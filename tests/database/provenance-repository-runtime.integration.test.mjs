@@ -74,14 +74,16 @@ test("PROV-001 operation-bound pending Provenance PostgreSQL/RLS Acceptance", {
         count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='SELECT')::int AS provenance_select,
         count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='INSERT')::int AS provenance_insert,
         count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='UPDATE')::int AS provenance_update,
+        array_agg(column_name::text ORDER BY column_name::text) FILTER (WHERE table_name='provenance_records' AND privilege_type='UPDATE') AS provenance_update_columns,
         count(*) FILTER (WHERE table_name='provenance_records' AND privilege_type='DELETE')::int AS provenance_delete
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 253,
+      total: 258,
       provenance_select: 13,
       provenance_insert: 13,
-      provenance_update: 0,
+      provenance_update: 1,
+      provenance_update_columns: ["integrity_id"],
       provenance_delete: 0,
     });
     const tablePrivileges = await client.query(`

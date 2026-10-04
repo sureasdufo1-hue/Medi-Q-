@@ -468,14 +468,16 @@ function createHarness({
                 ? "ACTOR_LOOKUP"
                 : statement.includes("pg_advisory_xact_lock")
                   ? "SESSION_FENCE"
-                  : statement.includes("JOIN consents AS c")
-                    ? "AUTHORIZATION_READ"
-                    : statement.includes("FROM pacs_transfer_operations AS op")
-                      ? "SOURCE_SCOPE"
-                      : statement.includes("INSERT INTO audit_events")
-                        ? "AUDIT_INSERT"
-                        : statement.includes("INSERT INTO integrity_evidence")
-                          ? "EVIDENCE_INSERT"
+                    : statement.includes("JOIN consents AS c")
+                      ? "AUTHORIZATION_READ"
+                      : statement.includes("INSERT INTO integrity_evidence")
+                        ? "EVIDENCE_INSERT"
+                        : statement.startsWith("UPDATE provenance_records AS pr")
+                          ? "PROVENANCE_LINK"
+                          : statement.includes("INSERT INTO audit_events")
+                            ? "AUDIT_INSERT"
+                            : statement.includes("FROM pacs_transfer_operations AS op")
+                              ? "SOURCE_SCOPE"
                         : statement.startsWith("RESET ")
                         ? "TENANT_RESET"
                           : statement === "BEGIN"
@@ -1908,6 +1910,11 @@ async function runDestinationVerificationCase(scenario, principals, auth, signal
       tenantCandidate:fixture.tenantId,binding,storageRef:handoff.temporaryPackage.storageRef,correlationId:scenario.correlationId,
       reason:'EXPLICIT_CLOSE'})).kind,'PURGED','DESTVERIFY_AUDITED_PURGE');
     assert.deepEqual(await readdir(storageRoot),[],'DESTVERIFY_PHYSICAL_ABSENCE');
+    if (scenario.name === 'valid') {
+      assert.deepEqual(await harness.service.persistVerifiedDestinationIntegrity(request),{kind:'RECORDED'},'DESTVERIFY_PERSISTED_PROOF');
+      await assert.rejects(harness.service.persistVerifiedDestinationIntegrity(request),
+        {message:'DESTINATION_INTEGRITY_PERSISTENCE_UNAVAILABLE'},'DESTVERIFY_PERSIST_NO_REPLAY');
+    }
     await harness.actorContext.run(principals.clinician,fixture.tenantId,async (_identity,client) => {
       const row = (await client.query('SELECT temporary_payload_state,temporary_payload_purged_at FROM study_references WHERE study_ref_id=$1',[scenario.studyRefId])).rows[0];
       assert.equal(row.temporary_payload_state,'PURGED','DESTVERIFY_METADATA_PURGED');
@@ -1915,6 +1922,30 @@ async function runDestinationVerificationCase(scenario, principals, auth, signal
       const op = (await client.query('SELECT state,version,source_object_count,request_digest FROM pacs_transfer_operations WHERE operation_id=$1',[scenario.operationId])).rows[0];
       assert.equal(op.state,'VERIFYING','DESTVERIFY_NOT_COMPLETED'); assert.equal(op.version,3);
       assert.equal(op.source_object_count,scenario.count); assert.equal(op.request_digest,dispatchedReadDigest(scenario));
+      const evidence = (await client.query('SELECT integrity_id,verification_stage,status,source_digest,destination_digest,source_object_count,destination_object_count,verified_at FROM integrity_evidence WHERE operation_id=$1 ORDER BY verification_stage',[scenario.operationId])).rows;
+      assert.equal(evidence.length,scenario.name === 'valid' ? 2 : 1,'DESTVERIFY_EVIDENCE_COUNT');
+      const source = evidence.find(row => row.verification_stage === 'SOURCE_CAPTURE');
+      assert.ok(source,'DESTVERIFY_SOURCE_EVIDENCE_EXISTS');
+      assert.equal(source.status,'PENDING','DESTVERIFY_SOURCE_REMAINS_PENDING');
+      assert.equal(source.verified_at,null,'DESTVERIFY_SOURCE_NOT_PROMOTED');
+      const destination = evidence.find(row => row.verification_stage === 'DESTINATION_VERIFY');
+      if (scenario.name === 'valid') {
+        assert.ok(destination,'DESTVERIFY_DESTINATION_EVIDENCE_EXISTS');
+        assert.equal(destination.status,'VERIFIED');
+        assert.equal(destination.source_digest,expectedSourceManifestDigest(manifest));
+        assert.equal(destination.destination_digest,expectedSourceManifestDigest(manifest));
+        assert.equal(destination.source_object_count,3);
+        assert.equal(destination.destination_object_count,3);
+        assert.ok(destination.verified_at instanceof Date);
+      } else assert.equal(destination,undefined,'DESTVERIFY_NO_FALSE_DESTINATION_EVIDENCE');
+      const provenance = (await client.query('SELECT integrity_id,transfer_status,ingested_at,transferred_at FROM provenance_records WHERE operation_id=$1',[scenario.operationId])).rows;
+      if (scenario.name === 'valid') {
+        assert.equal(provenance.length,1);
+        assert.equal(provenance[0].integrity_id,destination.integrity_id);
+        assert.equal(provenance[0].transfer_status,'PENDING');
+        assert.equal(provenance[0].ingested_at,null);
+        assert.equal(provenance[0].transferred_at,null);
+      } else if (provenance.length) assert.equal(provenance[0].integrity_id,null,'DESTVERIFY_NO_PREMATURE_PROVENANCE_LINK');
     });
   } catch (error) {
     const safe = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'SUPPRESSED';

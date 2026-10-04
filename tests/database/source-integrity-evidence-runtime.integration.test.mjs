@@ -90,6 +90,10 @@ test("INT-001 operation-bound pending source Integrity PostgreSQL/RLS Acceptance
       SELECT count(*)::int AS total,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='SELECT')::int AS evidence_select,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='INSERT')::int AS evidence_insert,
+        count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='SELECT'
+          AND column_name IN ('destination_digest','destination_object_count'))::int AS destination_select,
+        count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='INSERT'
+          AND column_name IN ('destination_digest','destination_object_count'))::int AS destination_insert,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='UPDATE')::int AS evidence_update,
         count(*) FILTER (WHERE table_name='integrity_evidence' AND privilege_type='DELETE')::int AS evidence_delete,
         count(*) FILTER (WHERE table_name='study_references' AND privilege_type='SELECT')::int AS study_select,
@@ -103,9 +107,11 @@ test("INT-001 operation-bound pending source Integrity PostgreSQL/RLS Acceptance
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 253,
-      evidence_select: 12,
-      evidence_insert: 12,
+      total: 258,
+      evidence_select: 14,
+      evidence_insert: 14,
+      destination_select: 2,
+      destination_insert: 2,
       evidence_update: 0,
       evidence_delete: 0,
       study_select: 10,

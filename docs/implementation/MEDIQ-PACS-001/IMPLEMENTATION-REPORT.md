@@ -1,5 +1,41 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 51. DEC-023 durable destination evidence implementation — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 TERM-001~010; persist a source-owned verified destination byte comparison without claiming application STOW or terminal transfer completion
+Changed: Added migration 0027 and schema snapshot for DESTINATION_VERIFY binding/checks and exact five-column runtime privilege delta (253→258); added PostgreSQL append-only evidence repository; privately persist the service-owned verified proof after physical temporary-payload purge; atomically link only Provenance.integrity_id and append PACS_DESTINATION_INTEGRITY_RECORDED; preserve SOURCE_CAPTURE/PENDING, PACS_IMPORT Provenance/PENDING, operation VERIFYING/version=3, and active Session. Synchronized migration/runtime privilege tests, safe DB diagnostics, actual signed A/B test harness, independent observer, normative/project status and this Ticket record
+Recommendation: PACS-001-DEC-023, accepted under standing user instruction; see POLICY-DECISION-LOG.md. TERM-001~010 were recorded before product/schema changes
+Alternatives rejected: Promote/overwrite source evidence; caller-supplied proof; broad table rights; SECURITY DEFINER; completion before real product STOW; transaction across PACS/filesystem I/O
+Security impact: Default-deny and existing signed identity/Tenant RLS/Session fence/Consent/Authorization/Grant/PatientMapping checks retained. Exact five column rights only. Database guard now finds the source row by immutable Operation/Session/Package/Study binding and verifies a distinct integrity ID; source proof cannot be confused with the appended destination row. Lost commit acknowledgement is not retried on the same handoff
+Tests executed: API build; API 47 files/1,181 tests; migration consistency and runner 6/6; targeted DEC-023/INT-001/DB script contracts 41/41; actual isolated `test-int001-source-capture.ps1 -IncludeDestinationVerification` exit 0: source58, dispatched-read18, exact destination14, tampered/missing/extra2 each; independent16-case read-only Audit/Provenance/source-PENDING/destination-valid-only/quota0 observer; B EMPTY before/after, output privacy, fixture restoration and cleanup. See TEST-EVIDENCE.md §87
+Tests not executed: Full DB-008 clean/reset/reapply wrapper completion (the post-clean reset/reapply phase was interrupted after an unexplained stall; earlier runtime acceptance markers passed); persistent DB-002~007 regression; product Mandatory Preflight/one application STOW/terminal completion/RESULT_UNKNOWN reconciliation/full A→B security E2E
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §87; failed diagnostic attempts and corrected causes retained there
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Test B is independently seeded; this proves persistence of an authorized comparison, not that MediQ performed STOW. No operation/session completion or terminal Provenance. Trusted application code remains responsible for the byte comparison. Full DB scratch lifecycle and original PACS-001/P0 end-to-end acceptance remain open
+Status: PARTIAL — DEC-023 destination-evidence persistence sub-gate passed its actual A/B matrix, but full TERM clean/reset/reapply and original PACS-001/P0 completion are not established
+```
+
+## 50. DEC-023 append-only destination proof persistence — opened before implementation
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0 TERM-001~010; persist the original privately owned matching destination proof after committed physical purge, without claiming application transfer completion
+Recommendation: PACS-001-DEC-023; separate DESTINATION_VERIFY/VERIFIED row, one Provenance integrity_id link while Provenance remains PENDING; source row unchanged; operation VERIFYING and Session active; add exactly five runtime column privileges to258
+Alternatives considered: Promote/overwrite SOURCE_CAPTURE, accept caller proof, mark Provenance/operation/session COMPLETED before real application STOW, broad CRUD/table/definer rights — rejected
+Acceptance: Record TERM-001~010 before code: original handoff/proof, fresh authority/fence/current graph, purge evidence, append-only binding, pending-only Provenance, atomic Audit/failure rollback/ack-loss no retry, exact258 catalog, real PostgreSQL migration/RLS/denial/concurrency, changed actual signed A/B fixture/independent observer/cleanup
+Changed: Documentation recommendation and Acceptance only; implementation not yet changed
+Not changed: Production source, schema/migration/grants/runtime, STOW/coordinator/public routes/deployment
+Security impact: Proposed DB append and one-field association only. All current source, Consent/Authorization/Grant/mapping/Tenant/Session-fence and default-deny conditions remain. Bounded trusted-code residual explicitly recorded
+Tests executed: None for this decision record; this stage is documentation-first
+Tests not executed: All TERM actual code/unit/API/scratch DB/Orthanc gates; original full Mandatory Preflight/application STOW/terminal completion/security/E2E
+Evidence: TEST-EVIDENCE.md section86 (recommendation/Acceptance before implementation)
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: DEC-022-B1 seeded B is not app delivery. Database cannot cryptographically attest the internal comparator. No false completion may be projected
+Status: Recommendation/Acceptance recorded; implementation and all TERM tests NOT RUN; PACS-001/P0 PARTIAL
+```
+
 ## 49. User-requested DEC-022-B1 Git checkpoint — 2026-10-04
 
 ```text

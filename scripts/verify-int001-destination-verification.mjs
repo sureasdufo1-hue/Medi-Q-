@@ -42,17 +42,28 @@ try {
     check(row.grant_status === (item.name === 'revoked_between' ? 'REVOKED' : 'ACTIVE') &&
       row.consent_status === (item.name === 'withdrawn_between' ? 'WITHDRAWN' : 'ACTIVE'),'CURRENT_AUTHORITY');
     const evidence = (await client.query('SELECT * FROM integrity_evidence WHERE operation_id=$1',[item.operationId])).rows;
-    check(evidence.length === 1,'SOURCE_EVIDENCE_COUNT'); const source = evidence[0];
+    check(evidence.length === (item.name === 'valid' ? 2 : 1),'EVIDENCE_COUNT');
+    const source = evidence.find(row => row.verification_stage === 'SOURCE_CAPTURE');
+    check(Boolean(source),'SOURCE_EVIDENCE_COUNT');
     check(source.exchange_session_id === item.sessionId && source.package_id === item.packageId && source.study_ref_id === item.studyRefId &&
       source.verification_stage === 'SOURCE_CAPTURE' && source.status === 'PENDING' && source.source_digest === baseline[0].source_digest &&
       source.source_object_count === 3 && source.destination_digest === null && source.destination_object_count === null && source.verified_at === null,'PENDING_SOURCE_ONLY');
+    const destination = evidence.find(row => row.verification_stage === 'DESTINATION_VERIFY');
+    if (item.name === 'valid') check(destination && destination.status === 'VERIFIED' &&
+      destination.exchange_session_id === item.sessionId && destination.package_id === item.packageId && destination.study_ref_id === item.studyRefId &&
+      destination.algorithm === source.algorithm && destination.source_digest === source.source_digest &&
+      destination.destination_digest === source.source_digest && destination.source_object_count === 3 &&
+      destination.destination_object_count === 3 && destination.verified_at instanceof Date && destination.created_at >= destination.verified_at,
+      'DESTINATION_EVIDENCE');
+    else check(!destination,'NO_DESTINATION_EVIDENCE');
     const provenance = (await client.query('SELECT * FROM provenance_records WHERE operation_id=$1',[item.operationId])).rows;
     check(provenance.length === (item.name === 'no_provenance' ? 0 : 1),'PROVENANCE_COUNT');
     if (provenance.length) {
       const pr = provenance[0];
       check(pr.exchange_session_id === item.sessionId && pr.package_id === item.packageId && pr.study_ref_id === item.studyRefId &&
         pr.source_hospital_id === ids.source && pr.destination_hospital_id === ids.destination && pr.transfer_type === 'PACS_IMPORT' &&
-        pr.transfer_status === 'PENDING' && pr.integrity_id === null && pr.ingested_at === null && pr.transferred_at === null &&
+        pr.transfer_status === 'PENDING' && pr.integrity_id === (item.name === 'valid' ? destination.integrity_id : null) &&
+        pr.ingested_at === null && pr.transferred_at === null &&
         pr.created_at <= row.stow_started_at,'PENDING_PROVENANCE_BINDING');
     }
     const audits = (await client.query(`SELECT actor_id,tenant_id,exchange_session_id,resource_type,resource_id,
@@ -74,6 +85,8 @@ try {
       if (state && ae.reason_code === 'VERIFYING') check(ae.occurred_at.getTime() === row.updated_at.getTime(),'VERIFYING_AUDIT_TIMESTAMP');
       const key = `${ae.action}|${ae.result}|${ae.reason_code ?? ''}`; counts[key] = (counts[key] ?? 0)+1;
     }
+    check((counts['PACS_DESTINATION_INTEGRITY_RECORDED|SUCCESS|DESTINATION_MATCH'] ?? 0) === (item.name === 'valid' ? 1 : 0),
+      'DESTINATION_PERSISTENCE_AUDIT');
     const sorted = value => JSON.stringify(Object.entries(value).sort(([a],[b]) => a.localeCompare(b)));
     check(sorted(counts) === sorted(destinationExpectedAudits(item)),'EXACT_AUDIT_PARTITION');
     check(mutations.join(',') === (item.name === 'revoked_between' ? 'GRANT_REVOKED' : item.name === 'withdrawn_between' ? 'CONSENT_WITHDRAWN' : ''),'EXACT_REVOCATION_COUNT');
@@ -87,7 +100,7 @@ try {
   check(environment.length === 1 && environment[0].bytes === '0','NO_ENVIRONMENT_QUOTA');
   await client.query('COMMIT');
   check((await client.query('SELECT current_user AS role')).rows[0].role === 'mediq_migrator','ROLE_RESET');
-  console.log('destination_verification_observer=PASS cases=16 exact_audit_provenance=true pending_source_only=true quota=0');
+  console.log('destination_verification_observer=PASS cases=16 exact_audit_provenance=true source_pending=true destination_persisted=valid_only quota=0');
 } catch (error) {
   await client?.query('ROLLBACK').catch(() => {});
   const code = /^[A-Z0-9_]{1,100}$/.test(error?.message ?? '') ? error.message : /^[0-9A-Z]{5}$/.test(error?.code ?? '') ? error.code : 'SUPPRESSED';

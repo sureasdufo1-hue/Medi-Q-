@@ -1,5 +1,13 @@
 # MediQ Data Model
 
+## PACS-001-DEC-023 destination evidence persistence — 2026-10-04
+
+The actual ACTDEST gate has a scoped PASS, but the byte proof was ephemeral. DEC-023 appends a separate immutable `integrity_evidence` row at `verification_stage=DESTINATION_VERIFY`, `status=VERIFIED`, carrying the source-bound canonical digest and exact object count. It never updates or promotes the original `SOURCE_CAPTURE/PENDING` row. In the same fenced Tenant transaction, `provenance_records.integrity_id` is linked once to the exact destination row; the Provenance stays `PENDING` with null transfer timestamps. `pacs_transfer_operations` remains `VERIFYING`, and its ExchangeSession stays active. This is persisted verification evidence, not transfer completion.
+
+The write requires the source service's private original handoff/proof, a fresh Consent/Authorization/scoped Grant/mapping check, unchanged operation/source/provenance/Audit graph, and committed metadata plus success Audit proving physical purge. It performs no I/O in the transaction. Database CHECKs/triggers enforce valid append shape and allow only the one bound Provenance integrity link. The exact runtime grant delta is five column privileges (253 to 258): destination_digest SELECT/INSERT, destination_object_count SELECT/INSERT, and provenance_records.integrity_id UPDATE. Forced Tenant RLS, no table/PUBLIC/DELETE/definer grants, and all existing SOURCE_CAPTURE constraints remain.
+
+The future coordinator alone may set Provenance `COMPLETED` and the operation/Session terminal state after a real application STOW and every original completion invariant passes. This slice cannot complete that transition.
+
 ## DEC-022-B1 actual read gate — no schema/right change (2026-10-04)
 
 Original95264 actual16-case destination graph/query/RLS plus independent exact Audit/Provenance/source-PENDING/noncompletion/purge/quota observer PASS; ACTDEST001–008/report§48/evidence§84. Existing253 exact runtime privileges unchanged, no destination integrity INSERT or terminal provenance/state write added, no source row promotion. Synthetic legal VERIFYING transitions are test setup, not a real Preflight/STOW claim. Original separately append-only DESTINATION_VERIFY and narrow immutable-binding terminal provenance writes require an independently documented minimum-rights delta, migration/RLS/denial/rollback/concurrency actual DB gate before implementation acceptance; not fulfilled by the ephemeral comparison result.
@@ -1351,7 +1359,7 @@ Integrity = FAILED
 → PACS Transfer must not become COMPLETED
 ```
 
-The runtime role has no persistent privilege on `integrity_evidence` at this checkpoint. A future authorized capture path must obtain exact column grants only after authorization, mapping, reauthorization and atomic Audit integration are acceptance-tested. The INT-001 persistence sub-gate temporarily grants the exact columns in a disposable DB and restores the pre-run runtime inventory (209) before cleanup.
+At the original schema checkpoint the runtime role had no persistent `integrity_evidence` privilege. Subsequent source-capture acceptance added its exact SELECT/INSERT columns; DEC-022-B1 verifies the resulting 253-tuple catalog without destination-field writes. DEC-023 adds only the four destination digest/count SELECT/INSERT tuples described above; it does not widen historical source evidence privileges or alter the source-row constraint.
 
 ---
 
