@@ -1180,9 +1180,13 @@ SELECT (
         $failCount = [regex]::Match($terminalizationSummary, '(?m)^(?:#|ℹ) fail (\d+)$').Groups[1].Value
         $failedTests = @([regex]::Matches($terminalizationSummary, '(?m)^\s*(?:not ok \d+ - |✖ )([^\r\n]{1,120})') | ForEach-Object { $_.Groups[1].Value.Trim() })
         $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
-        $safeFailureCode = [regex]::Match($terminalizationSummary, '\b(TERM020_[A-Z_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|PROVENANCE_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23514|23505|AssertionError)\b').Groups[1].Value
+        $stageMarkers = @([regex]::Matches($terminalizationSummary, '\bTERM020_STAGE=([A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
+        $failedStage = if ($stageMarkers.Count -gt 0) { $stageMarkers[-1] } else { "unavailable" }
+        $guardMarkers = @([regex]::Matches($terminalizationSummary, '\bTERM020_GUARD=([A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
+        $guardResult = if ($guardMarkers.Count -gt 0) { $guardMarkers[-1] } else { "unavailable" }
+        $safeFailureCode = [regex]::Match($terminalizationSummary, '\b(TERM020_(?!STAGE|GUARD)[A-Z_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|PROVENANCE_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ENOENT|ERR_INVALID_ARG_TYPE|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23514|23505|AssertionError|TypeError|ReferenceError)\b').Groups[1].Value
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "DEC-024/025 terminalization denial PostgreSQL/RLS Acceptance failed (exit=$terminalizationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
+        throw "DEC-024/025 terminalization denial PostgreSQL/RLS Acceptance failed (exit=$terminalizationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stage=$failedStage, probe=$guardResult, safe_error=$safeFailureCode); raw output suppressed."
     }
     Write-Output "term020_runtime=PASS no_context=DENY cross_tenant=DENY provenance=DENY operation=DENY session=DENY rollback_observer=PASS exact_privileges=262"
 
@@ -1269,7 +1273,7 @@ SELECT
 
     $ledger = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql "SELECT count(*)::text || '|' || (SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='__drizzle_migrations') FROM public.__drizzle_migrations;" -Label "DB-008 scratch migration ledger"
     $ledgerText = [string]::Join("", [string[]]@($ledger))
-    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^29\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
+    if ($ledger.Count -ne 1 -or $ledgerText -notmatch '^30\|mediq_migrator$') { throw "P0 scratch migration ledger mismatch; actual=$ledgerText." }
 
     $runtimeProbe = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_RUNTIME_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_RUNTIME_PASSWORD"] -Sql "SELECT 1;" -Label "DB-008 scratch runtime role probe"
     $runtimeText = [string]::Join("", [string[]]@($runtimeProbe))
@@ -1379,7 +1383,7 @@ try {
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs
-    Write-Output "db008_clean_up=PASS product_tables=$($approvedProductTables.Count) ledger=29 catalog=$expectedCatalogCounts"
+    Write-Output "db008_clean_up=PASS product_tables=$($approvedProductTables.Count) ledger=30 catalog=$expectedCatalogCounts"
 
     Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
     Write-Output "db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true"
@@ -1388,7 +1392,7 @@ try {
     Write-Output "db008_reset_postgres=PASS role_bootstrap=PASS"
     Invoke-Migrations $composeArgs
     Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
-    Write-Output "db008_reset_reapply=PASS product_tables=$($approvedProductTables.Count) ledger=29"
+    Write-Output "db008_reset_reapply=PASS product_tables=$($approvedProductTables.Count) ledger=30"
 
     if ($ScratchOnly) {
         Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"

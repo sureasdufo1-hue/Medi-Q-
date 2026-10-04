@@ -164,6 +164,7 @@ export class PostgresPacsTransferTerminalizationRepository {
     ) {
       throw new PacsTransferTerminalizationDeniedError();
     }
+    const terminalCorrelationId = correlationId.toLowerCase();
 
     let savepointCreated = false;
     try {
@@ -298,7 +299,7 @@ export class PostgresPacsTransferTerminalizationRepository {
         tenantId: operation.tenant_id,
         exchangeSessionId: operation.exchange_session_id,
         studyRefId: operation.study_ref_id,
-        correlationId: correlationId.toLowerCase(),
+        correlationId: terminalCorrelationId,
         occurredAt: completedAt,
       };
       const transferAuditId = this.createId();
@@ -310,6 +311,10 @@ export class PostgresPacsTransferTerminalizationRepository {
         throw new PacsTransferTerminalizationUnavailableError();
       }
 
+      await this.transaction.query(
+        "SELECT set_config('mediq.terminal_correlation_id', $1, true)",
+        [terminalCorrelationId],
+      );
       await this.auditWriter.record(terminalAudit({
         ...common,
         auditEventId: transferAuditId,
@@ -332,7 +337,7 @@ export class PostgresPacsTransferTerminalizationRepository {
           action: "SESSION_COMPLETED",
           result: "SUCCESS",
           reasonCode: null,
-          correlationId: correlationId.toLowerCase(),
+          correlationId: terminalCorrelationId,
           createdAt: completedAt,
         }));
       }
@@ -344,7 +349,7 @@ export class PostgresPacsTransferTerminalizationRepository {
          VALUES ($1, $2, $3, $4, $5, 'PACS_TRANSFER_OPERATION', $6,
                  'PACS_TRANSFER_OPERATION_STATE_CHANGED', 'SUCCESS', 'COMPLETED', $7, $2)`,
         [operationAuditId, completedAt, operation.actor_id, operation.tenant_id,
-          operation.exchange_session_id, operation.operation_id, correlationId.toLowerCase()],
+          operation.exchange_session_id, operation.operation_id, terminalCorrelationId],
       );
       if (operationAudit.rowCount !== 1) throw new Error("TERMINAL_OPERATION_AUDIT_ROW_COUNT_INVALID");
 

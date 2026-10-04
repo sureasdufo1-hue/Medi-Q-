@@ -58,6 +58,7 @@ COPY tests/database/consent-approval-api-runtime.integration.test.mjs tests/data
 COPY tests/database/grant-issue-api-runtime.integration.test.mjs tests/database/grant-issue-api-runtime.integration.test.mjs
 COPY tests/database/provenance-repository-runtime.integration.test.mjs tests/database/provenance-repository-runtime.integration.test.mjs
 COPY tests/database/source-integrity-evidence-runtime.integration.test.mjs tests/database/source-integrity-evidence-runtime.integration.test.mjs
+COPY tests/database/pacs-transfer-terminalization-runtime.integration.test.mjs tests/database/pacs-transfer-terminalization-runtime.integration.test.mjs
 CMD ["node", "--test", "tests/database/patient-reference-runtime.integration.test.mjs", "tests/database/actor-tenant-context-runtime.integration.test.mjs", "tests/database/postgres-authorization-evidence-runtime.integration.test.mjs", "tests/database/patient-mapping-read-runtime.integration.test.mjs"]
 
 FROM build AS dicom-adapter-test

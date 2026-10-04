@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import { AuthorizationContext } from "../../services/api/dist/authorization/domain/authorization-context.js";
 import {
   PacsTransferTerminalizationDeniedError,
@@ -41,6 +42,39 @@ function repository() {
 }
 
 describe("PostgresPacsTransferTerminalizationRepository", () => {
+  it("binds one normalized transaction-local correlation before terminal Audit writes", async () => {
+    const source = await readFile(
+      new URL("../../services/api/src/pacs/persistence/pacs-transfer-terminalization.repository.ts", import.meta.url),
+      "utf8",
+    );
+    const savepointAt = source.indexOf('SAVEPOINT mediq_pacs_terminalization');
+    const bindingAt = source.indexOf("SELECT set_config('mediq.terminal_correlation_id', $1, true)");
+    const auditWriterAt = source.indexOf("this.auditWriter.record(terminalAudit");
+    const operationAuditAt = source.indexOf("INSERT INTO audit_events");
+
+    expect(source.match(/set_config\('mediq\.terminal_correlation_id'/g)).toHaveLength(1);
+    expect(source).toMatch(/const terminalCorrelationId = correlationId\.toLowerCase\(\)/);
+    expect(savepointAt).toBeGreaterThanOrEqual(0);
+    expect(bindingAt).toBeGreaterThan(savepointAt);
+    expect(auditWriterAt).toBeGreaterThan(bindingAt);
+    expect(operationAuditAt).toBeGreaterThan(bindingAt);
+    expect(source).toMatch(/correlationId: terminalCorrelationId/);
+    expect(source).toMatch(/operation\.operation_id, terminalCorrelationId\]/);
+  });
+
+  it("keeps terminal SQL away from the excluded Audit correlation SELECT column", async () => {
+    const migration = await readFile(
+      new URL("../../services/api/src/database/migrations/0029_terminal_audit_correlation_context.sql", import.meta.url),
+      "utf8",
+    );
+
+    expect(migration).toContain("audit_events_terminal_correlation_guard");
+    expect(migration).toContain("NEW.correlation_id::text IS DISTINCT FROM lower(expected_correlation_setting)");
+    expect(migration).toContain("current_setting('mediq.terminal_correlation_id', true)");
+    expect(migration).not.toMatch(/(?:transfer_audit|integrity_audit|operation_audit|session_audit|a)\.correlation_id/);
+    expect(migration).toContain("p_correlation_id::text = lower(NULLIF(current_setting('mediq.terminal_correlation_id', true), ''))");
+  });
+
   it("rejects caller-built JSON instead of an issued AuthorizationContext before SQL", async () => {
     const { repo, query } = repository();
     await expect(repo.finalize({

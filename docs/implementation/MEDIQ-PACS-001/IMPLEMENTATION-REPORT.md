@@ -1,5 +1,135 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 64. DEC-027 bounded ScratchOnly acceptance — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; implement exact262-preserving terminal Audit correlation binding and run the disposable DB-008 clean/repeat/reset/reapply gate
+Changed: Added append-only migration 0029, transaction-local normalized correlation binding before terminal Audit inserts, action-scoped invoker Audit guard, runtime denial/match/reset integration probes, the missing test-image COPY and safe fixed-stage diagnostics; corrected DB-008 ledger count30 and the stale PROV-001 expected guard outcome; synchronized policy, requirements, threat, Acceptance, plan, README, report and evidence.
+Not changed: Historical migration 0028; runtime grant count (262); tenant RLS; persistent MediQ DB; deployed services; Orthanc data; product STOW; route/coordinator; positive terminal finalization behavior.
+Security impact: No privilege expansion or caller-authentication claim. GUC is transaction-local correlation-consistency metadata only; the documented shared-runtime same-principal residual remains.
+Tests executed: Migration check PASS; migration runner6/6; focused terminalization API test7/7; API build/regression48 files and1,191 tests PASS; API typecheck PASS; JS syntax and diff check PASS. `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` emitted final `db008_reset_reapply=PASS`, `db008_ephemeral_cleanup=PASS`, `db008_schema_validation=PASS`, with exact262, forced RLS/Tenant probes, TERM-020 incomplete terminal denial, TERM-024~028 four-action correlation denial/match/reset, PROV-001 and INT-001 and included regression gates passing. Independent Docker inventory showed no active `mediq-db008-*` scratch resource; existing MediQ API/PostgreSQL/Orthanc A/B were healthy.
+Tests not executed: Valid terminalizer commit; injected failure atomicity and concurrency/replay; one-/multi-Study completion; remaining TERM-020~023 coherent same-principal probe; persistent DB-002~007 suite; application STOW, route/coordinator, or full A→MediQ→B E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §100. The ScratchOnly process returned the final success markers; no separate exit-code field was retained in the shell transcript.
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: This closes a bounded database correlation/denial sub-gate only. A valid terminal success path is not proven and no actual product transfer is wired. Overall Ticket/P0 remains PARTIAL.
+Status: PARTIAL — bounded ScratchOnly gates passed; full MEDIQ-PACS-001/P0 acceptance is not met
+```
+
+## 63. PROV-001 guard expectation reconciliation — before test correction
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; keep the new DEC-027 trigger under regression by aligning the older PROV-001 denial assertion with accepted DEC-024 exact262 updates
+Recommendation: Preserve the restricted four Provenance UPDATE columns accepted under DEC-023/024. Change only the stale test expectation for an incomplete granted-column terminal UPDATE from privilege error 42501 to the existing trigger's exact SQLSTATE 23514 and constraint provenance_records_terminalization_guard. Keep DELETE privilege denial at 42501 and do not change product grant/migration semantics.
+Alternatives: Add a privilege revocation or skip the failing regression (would contradict exact262/DEC-024 or hide a required gate); accept any error without exact code/constraint (would weaken the test).
+Rationale: Scratch session 91872 passed migration0029 apply, the corrected30-row ledger, role/catalog/forced-RLS/Tenant checks, and the dedicated TERM-020 child, then PROV-001 failed an AssertionError. Its no_update_probe updates transfer_status, which the approved exact262 catalog intentionally grants for terminalization. Migration0029 now removes the old correlation-column SELECT failure; absent terminal context must therefore be denied by the existing Provenance trigger with 23514. DEC-024 and TERM-013/016/020 require this trigger path. The current child wrapper suppresses raw output, so the precise assertion predicate is statically identified, not dynamically reported.
+Acceptance: Update TC-PROV-001-010 to name the four exact Provenance UPDATE columns; exercise incomplete status UPDATE with exact 23514 plus the exact named guard; preserve no DELETE/table/PUBLIC/DDL; rerun the whole synthetic ScratchOnly clean/repeat/reset/reapply and independent cleanup/stack/input checks.
+Changed before code: Acceptance wording reconciles the historical no-UPDATE assertion with accepted DEC-023/024. No test source changed at this checkpoint.
+Not changed: Product SQL, migration 0028/0029, grants, security guards, persistent DB, PACS or deployment.
+Security impact: None; this is a test expectation correction to an already accepted trigger denial. No broadened range and no guard relaxation.
+Tests executed: Scratch session91872 migration/catalog/RLS and terminal denial child passed; PROV-001 parent reported exit1, pass0/fail1, safe_error=AssertionError. Automatic scratch cleanup PASS; independent inventories show zero owned containers/volumes/networks and existing API/PostgreSQL/Orthanc A/B healthy.
+Tests not executed: Corrected PROV-001 child; full reset/reapply; remaining DB gates; persistent regressions; positive terminalization and product A→B STOW/E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §99
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: The expected 23514/constraint outcome is based on the approved grant set and guard definition; it must be confirmed by the next actual runtime test. Session91872 is not a complete DB-008 pass.
+Status: Acceptance reconciled before test correction; MEDIQ-PACS-001/P0 PARTIAL
+```
+
+## 62. DEC-027 DB-008 migration-ledger baseline correction and first actual apply
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; first actual disposable PostgreSQL application of migration0029 and full DB-008 child sequence
+Recommendation: Correct the DB-008 wrapper's hard-coded migration ledger expectation from29 to30 because append-only migration0029 adds the thirtieth journal entry; do not remove or bypass ledger verification.
+Changed: Updated only the wrapper's exact ledger assertion and its clean/reset success markers from29 to30.
+Tests executed: First ScratchOnly session66262 applied migration0029, validated product table inventory and constraint catalog, observed ledger `30|mediq_migrator`, then failed because the unchanged wrapper still expected29. Its owned scratch cleanup reported PASS; independent container/volume/network inventories were empty; the four existing MediQ services remained healthy.
+Tests not executed: Runtime terminalization child and later regressions on this first attempt; fresh reset/reapply completion; persistent database; product STOW/E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §98
+Remaining risks: The ledger mismatch is a harness regression, not migration failure. The corrected wrapper still needs a fresh full scratch acceptance.
+Status: First run FAILED on stale count assertion; migration application/static table and constraint checks passed, cleanup verified; Ticket/P0 PARTIAL
+```
+
+## 61. DEC-027 terminal Audit correlation binding — recommendation before code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; resolve terminal guard SQLSTATE 42501 without exceeding the accepted exact262 privilege boundary
+Recommendation: Preserve exact262 and append migration 0029 with a transaction-local terminal-correlation check on only the terminal Audit INSERT action set. Replace migration 0028 invoker predicates that SELECT the excluded audit_events.correlation_id with checks against mediq.terminal_correlation_id plus the INSERT guard's comparison of NEW.correlation_id. The application finalizer sets the normalized UUID once with transaction-local set_config(..., true), inside its existing savepoint and before terminal Audit writes.
+Alternatives: Grant correlation_id SELECT and move to263 (conflicts with DEC-024/DEC-020-R3); remove DB correlation consistency and rely only on app assertions (weaker); broaden rights/DEFINER/new role (outside scope).
+Rationale: The 85707 test proves SQLSTATE 42501, while static review shows the correlation column read as the likely permission mismatch. DEC-024 explicitly requires exact262 and DEC-020-R3 excludes correlation_id. Terminal Audit correlation agreement is a record-consistency invariant, not an authorization predicate; a narrowly scoped trigger can retain DB-side consistency without adding SELECT.
+Acceptance: TERM-024~029 in ACCEPTANCE-TESTS.md: immutable prior migrations, exact262, no terminal SELECT of correlation_id, all four terminal action forms reject absent/malformed/mismatched context using exact 23514/constraint, matching value accepted, finalizer call order/normalization, setting rollback/commit/pool reset, original guard and all non-correlation relational predicates intact, scratch full lifecycle and cleanup.
+Changed: Pre-code DEC-027 recommendation and Acceptance only; DEC-026 exact263 proposal marked superseded. Updated implementation plan and index to the current recommendation.
+Not changed: No migration, application code, trigger, permission, table/schema, route, STOW, persistent DB, deployed service, or external environment.
+Security impact: No new privilege or authorization from GUC. The value is transaction-local consistency metadata only. Shared-principal coherent SQL/GUC spoofing remains the accepted DEC-025 residual; no database caller-attestation claim.
+Tests executed: Read-only source/migration/policy comparison; identified explicit exact262 + excluded-correlation SELECT Acceptance and confirmed finalizer already uses one normalized correlationId for the terminal Audit writes. No new behavior test or SQL execution.
+Tests not executed: DEC-027 implementation tests; corrected DB-008 child; full clean/repeat/reset/reapply; valid finalizer/atomicity/concurrency/one-vs-multi; persistent DB regressions; product STOW/full A→B E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §97
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Current SQLSTATE 42501 remains unresolved in code until append-only migration/application changes are implemented and verified. Existing 85707 result remains FAIL; no terminalization PASS.
+Status: DEC-027 ACCEPTED BEFORE IMPLEMENTATION; PACS-001/P0 PARTIAL
+```
+
+## 60. Missing terminal-Audit column privilege — recommendation before scope change
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; diagnose the terminalization test's runtime SQLSTATE 42501 and resolve the conflict with DEC-024 exact262
+Recommendation: PROPOSED — grant only SELECT(correlation_id) on audit_events to mediq_runtime under existing forced RLS; revise exact runtime privilege baseline 262→263 and synchronize policy, Acceptance, migration/catalog/security/threat evidence if the user authorizes this boundary amendment
+Alternatives considered: Remove SQL-level correlation-ID equality and rely on application-only revalidation (weaker database Audit integrity); table-level Audit SELECT or SECURITY DEFINER (overbroad/prohibited); leave valid finalization unusable (fails accepted positive scope)
+Rationale: Session 85707 reached the actual Provenance terminal guard and received 42501. Static comparison shows migration 0028's invoker terminal-facts function reads audit_events.correlation_id while migration 0026 grants only nine audit metadata columns and omits correlation_id. This is the likely cause; current fixed diagnostic identifies insufficient privilege but does not directly report relation/column
+Acceptance: Preserve correlation equality and exact 23514 expected-constraint behavior; after authorized change prove exact263 tuple inventory, existing forced RLS/no table rights, cross-Tenant/no-context denial, scratch migration and reset/reapply, bounded negative guard test, cleanup/stack preservation. Positive finalization/atomicity still separate
+Changed: Draft DEC-026 recommendation and its scope/impact/alternatives in POLICY-DECISION-LOG.md; no grant or policy amendment applied
+Not changed: Migration/schema/runtime grants, app code, triggers, exact262 accepted invariant, persistent DB, Orthanc/STOW
+Security impact: Proposed one additional read-only opaque Audit correlation UUID, with existing Tenant RLS, but it changes an explicit accepted privilege baseline; hold pending user choice
+Tests executed: Session 85707 ScratchOnly reached actual child test, 0 pass/1 fail at Provenance terminal probe, classified SQLSTATE 42501; read-only review matched 0028 invoker query to 0026's nine-column Audit grant list. Automatic scratch cleanup passed; independent inventories found no mediq-db008-* container/volume/network; existing API/PostgreSQL/Orthanc A/B healthy
+Tests not executed: Confirmed relation/column in the PostgreSQL error diagnostic; corrected guard PASS; complete clean/reset/reapply after successful test; persistent DB-002~007; full terminalization/P0 transfer
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §96
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Exact263 expansion is not yet authorized. Do not change the current security boundary or remove correlation checks until user selects an option
+Status: DEC-026 PROPOSED; awaiting user choice before out-of-baseline privilege change; PACS-001/P0 PARTIAL
+```
+
+## 59. First runtime guard failure diagnostics — before test-only change
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; diagnose the first actual terminalization PostgreSQL guard probe after fixing test-image packaging
+Recommendation: Preserve the exact SQLSTATE 23514 plus exact expected-constraint assertion, but replace generic assert.rejects handling with savepoint-safe fixed diagnostic categories for expected guard, other constraint, other SQLSTATE, and unexpectedly accepted update. Make wrapper exclude stage-marker names from safe_error classification and report only the last fixed probe result
+Alternatives considered: Do not accept any 23514 from an unrelated trigger as success; do not expose raw PostgreSQL messages, SQL, IDs, or stack; do not weaken the trigger or broaden grants
+Rationale: Corrected scratch run session 78243 discovered the test (TAP 0 pass/1 fail) and reached `PROVENANCE_TERMINAL_GUARD_PROBE`; the wrapper's broad `TERM020_*` regex misclassified its own stage marker as the failure code. The actual SQLSTATE/constraint match remains unknown
+Acceptance: Every failed probe rolls back/releases its savepoint before classifying; only exact `23514` and exact expected trigger constraint passes. A focused actual scratch execution must report fixed probe category and then pass the dedicated test; full clean/reset/reapply/cleanup and existing-stack preservation remain required. No broader TERM-020~023 claim
+Changed: No code at this pre-diagnostic checkpoint; record the execution evidence and recommendation before editing the test helper/wrapper
+Not changed: Product/schema/grants/triggers/coordinator, accepted Acceptance scope, persistent DB or Orthanc/STOW
+Security impact: Strict denial assertion remains unchanged; only fixed enum/SQLSTATE diagnostics are emitted and raw output remains suppressed
+Tests executed: Corrected `-ScratchOnly` session 78243 completed setup/regressions through PACS session fence and entered the terminalization test; Docker wrapper observed TAP exit 1, 0 pass/1 fail and fixed stage `PROVENANCE_TERMINAL_GUARD_PROBE`; automatic scratch cleanup reported PASS
+Tests not executed: Successful denial test, reset/reapply completion after this gate, underlying SQLSTATE/constraint diagnosis, persistent DB-002~007 or product transfer
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §95
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Actual trigger behavior is not yet characterized by this failed test; do not infer product defect or acceptance from the wrapper stage alone
+Status: DIAGNOSTIC PLAN RECORDED BEFORE TEST-ONLY EDIT; DEC-024/025 and PACS-001/P0 remain PARTIAL
+```
+
+## 58. Terminalization child-test packaging diagnosis — before correction
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; diagnose the session 44921 scratch-only test-wrapper exit without changing terminalization Acceptance or product behavior
+Recommendation: Add the missing explicit COPY for the new database integration test to the Dockerfile integration-test target; emit only fixed stage markers from the test and include safe Node module/file-load categories plus the last fixed stage in wrapper summaries
+Alternatives considered: Do not expose raw container/test output, skip the database gate, or weaken/replace terminal guards. Re-running the full wrapper without improving packaging/diagnostics would repeat an expensive opaque failure
+Rationale: Dockerfile inspection confirms integration-test files are copied individually and the new test is absent. This is a concrete packaging defect consistent with exit 1 and unavailable TAP counts; the complete isolated rerun will establish whether correcting it restores test execution
+Acceptance: Built integration-test target can discover the named test; on failure wrapper emits only a fixed stage and allowlisted error category, never raw exception/SQL/fixture identifiers. Then actual synthetic ScratchOnly terminalization denial test, complete clean/reset/reapply gate, cleanup inventory zero and existing-stack health are required; a passing denial test closes only its bounded sub-gate
+Changed: No code at this pre-correction checkpoint; diagnosis/recommendation recorded before editing the test image or harness
+Not changed: Product, migration/schema/grants, routes/coordinator, accepted TERM-011~023 scope, persistent DB, Orthanc/STOW or external environment
+Security impact: Preserves deny-by-default, RLS, exact262 and output-minimization boundaries; diagnostics are fixed enums only
+Tests executed: Read-only inspection of the actual integration-test Dockerfile COPY list, wrapper child invocation/error allowlist, current failure evidence and accepted DEC-024/025/TERM scope
+Tests not executed: Corrected target build, terminalization child test, full scratch wrapper/reset/reapply
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §94
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Missing COPY is a confirmed packaging omission and the likely cause, but successful test discovery/acceptance is not established until rerun
+Status: DIAGNOSIS RECORDED BEFORE CORRECTION; DEC-024/025 and PACS-001/P0 remain PARTIAL
+```
+
 ## 57. User-requested current-state commit/push — DEC-024/025 terminalization WIP
 
 ```text

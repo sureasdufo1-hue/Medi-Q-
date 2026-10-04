@@ -272,7 +272,9 @@ test("PROV-001 operation-bound pending Provenance PostgreSQL/RLS Acceptance", {
         "UPDATE provenance_records SET transfer_status='COMPLETED' WHERE operation_id=$1",
         [operation.snapshot.operationId],
       ),
-      (error) => error?.code === "42501",
+      (error) => error?.code === "23514" &&
+        error?.constraint === "provenance_records_terminalization_guard",
+      "incomplete granted-column terminal update must fail at the named database guard",
     );
     await client.query("ROLLBACK TO SAVEPOINT no_update_probe");
     await client.query("RELEASE SAVEPOINT no_update_probe");
