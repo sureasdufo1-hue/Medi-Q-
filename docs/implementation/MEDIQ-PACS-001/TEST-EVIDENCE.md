@@ -1,5 +1,15 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 101. DEC-028 one-Study real-repository persistence probe — before test code
+
+Read-only inspection confirmed `PostgresPacsTransferTerminalizationRepository.finalize()` currently has no product call site; the database integration test invokes lower-level operation/source/provenance writers and only probes incomplete terminal denials plus DEC-027 correlation behavior. The accepted DEC-024/TERM-012/017 nevertheless requires an actual valid internal terminal commit observed independently.
+
+**Recommendation recorded before test code:** extend only the disposable ScratchOnly PostgreSQL/RLS integration to call the actual compiled repository under `mediq_runtime` with a genuinely branded `AuthorizationContext` object and live synthetic active Consent/Grant/Session facts. Use one StudyReference so the accepted conditional Session-close rule is exercised; verify committed state and exact Audit cardinalities through a separate read-only inspector.
+
+**Scope boundary:** source/destination evidence, transition Audits and `PURGED` metadata in this persistence-only fixture are synthetic prior facts. They do not prove application STOW, destination byte comparison, physical payload deletion or a trusted coordinator handoff, and cannot satisfy TERM-011/full product acceptance. No route, grants, schema or persistent system change is authorized.
+
+Criteria TC-PACS-001-TERM-030~031 were added before test code. No DEC-028 implementation/test has been executed yet. DEC-027 prior bounded evidence is §100; positive terminal rollback/failure matrix, concurrency/replay, multi-Study, remaining TERM-020~023 and full A→MediQ→B remain open.
+
 ## 100. DEC-027 ScratchOnly full lifecycle and DB regressions — 2026-10-04
 
 `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` applied migration0029 to disposable PostgreSQL, checked the exact30-entry migration ledger, approved 21 product tables/catalog, runtime role and exact262 privileges, forced RLS/Tenant boundaries, then ran the included synthetic DB regression sequence. The run emitted `term020_runtime=PASS` with no-context and cross-Tenant denial, incomplete Provenance/operation/Session terminal denials, rollback observer and exact262. All four terminal Audit actions rejected missing/malformed/mismatched transaction-local correlation with SQLSTATE23514 and the exact `audit_events_terminal_correlation_guard`; exact matching values were accepted; transaction rollback/commit/pool recheckout showed no setting leakage. The older PROV-001 assertion passed after reconciliation to the granted exact262 terminal update's intended `23514` named guard. INT-001, Consent/Grant/Session-fence and the listed DB regressions also passed.

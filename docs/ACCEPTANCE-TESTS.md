@@ -1,5 +1,16 @@
 # MediQ Acceptance Test Specification
 
+### DEC-028 one-Study repository terminalizer persistence sub-gate — before test code
+
+CAPSTONE-P0 / MEDIQ-PACS-001. `PACS-001-DEC-028` decomposes the already approved DEC-024 persistence Acceptance; it does not change product scope or weaken the DEC-024 trusted-coordinator prerequisites.
+
+| ID (`TC-PACS-001-TERM-*`) | Required evidence |
+|---|---|
+| 030 | In disposable PostgreSQL under `mediq_runtime` and forced Tenant RLS, invoke the actual compiled `PostgresPacsTransferTerminalizationRepository.finalize()` with an issued `AuthorizationContext`, active current Consent/Grant/Session and one legal VERIFYING/version3 Study operation. Set up source Integrity/Provenance, transition Audits, destination evidence link, destination-verification Audit and PURGED metadata/purge Audit only as clearly labeled synthetic test preconditions. The test does not claim actual STOW, destination-byte comparison, or physical deletion. |
+| 031 | Commit the caller's outer Tenant transaction and use an independent read-only observer to prove exactly the bound `PACS_IMPORT` Provenance becomes COMPLETED with equal non-null `ingested_at`/`transferred_at`; operation becomes COMPLETED/version4 with equal positive source/destination count; exactly one `PACS_TRANSFER_COMPLETED`, `INTEGRITY_VERIFIED`, operation COMPLETED Audit and one `SESSION_COMPLETED` Audit share the expected correlation; the sole-Study Session becomes COMPLETED with matching timestamp; no unrelated Tenant/Study rows change; exact262, forced RLS and the terminal-correlation guard remain. Classify this as repository persistence acceptance only; it does not satisfy TERM-011 or full TERM-012/017 product prerequisites. |
+
+Initial status: recommendation and these bounded criteria recorded before test changes; implementation and runtime proof NOT RUN. This sub-gate excludes failure injection, replay/concurrency, multiple-Study Session behavior, the remaining TERM-014 negative matrix, persistent DB regressions, application STOW and product A→MediQ→B E2E; each remains required by its parent Acceptance.
+
 ### DEC-027 terminal Audit correlation binding — before code
 
 CAPSTONE-P0 / MEDIQ-PACS-001. `PACS-001-DEC-027` is accepted under the standing recommendation-first instruction and recorded before migration/application/test edits. Preserve exact262 runtime column grants, forced Tenant RLS, and DEC-020-R3's explicit exclusion of `audit_events.correlation_id` from runtime SELECT.

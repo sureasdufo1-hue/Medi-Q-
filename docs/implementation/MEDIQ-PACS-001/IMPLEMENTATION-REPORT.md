@@ -1,5 +1,25 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 65. DEC-028 one-Study real-repository persistence probe — recommendation before test code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; refine the already approved DEC-024 TERM-012/017 persistence acceptance into the next actual runtime sub-gate
+Recommendation: In disposable PostgreSQL with the real mediq_runtime role and forced Tenant RLS, invoke the compiled PostgresPacsTransferTerminalizationRepository.finalize() for one synthetic Study with an issued AuthorizationContext and current active DB Consent/Grant facts. Prepare only the minimum prior source/provenance/transition, destination-link and PURGED metadata/Audit prerequisites. Commit the outer transaction and independently observe exact terminal rows/Audits.
+Alternatives: Coherent SQL alone (does not exercise repository transaction/savepoint); mocked PoolClient (does not prove actual PostgreSQL/RLS); wiring the whole PACS coordinator now (combines independent missing transport/Preflight gates and is out of sequence).
+Rationale: Repository is currently unreferenced by a product caller; existing runtime test only exercises DB denials/correlation. A real method call is required to verify the persistence code itself. Accepted DEC-024 already provides the policy and one-Study completion rule, so this is a bounded test refinement, not a new product feature.
+Acceptance: TC-PACS-001-TERM-030~031 invoke the actual repository as runtime, then commit and independently prove exact Provenance COMPLETED/equal timestamps; operation COMPLETED/version4/equal positive counts; exactly one transfer, Integrity, operation-state and one-Study Session Audit with one correlation; Session COMPLETED; no unrelated effects; exact262/RLS retained.
+Changed before test code: Recommendation, criteria and explicit test boundary recorded in PACS-001-DEC-028, ACCEPTANCE-TESTS.md and this report. No product/runtime implementation or test code changed at this checkpoint.
+Not changed: Migration/grants/route/coordinator/API/persistent DB/Orthanc; no actual STOW/byte proof/payload physical purge.
+Security impact: Only synthetic scratch data. Authorization is re-read from current database evidence. A fixture-provided destination digest and PURGED metadata are not trusted transfer capabilities and cannot be claimed as actual product proof.
+Tests executed: Read-only inspection of the compiled finalizer, AuthorizationEvidenceReader, DEC-024/025/027, TERM-011~031 criteria and existing ScratchOnly fixture/wrapper. The prior DEC-027 bounded ScratchOnly and API evidence remains §64/§100; no DEC-028 test was run.
+Tests not executed: TERM-030~031; failure atomicity, concurrency/replay, multi-Study, remaining TERM-020~023 coherent-SQL probe, persistent DB regressions, coordinator, STOW and full A→MediQ→B.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §101
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: This sub-gate does not satisfy TERM-011 and does not prove STOW, actual destination bytes, or physical deletion; broader DEC-024/P0 remains PARTIAL.
+Status: DEC-028 accepted under standing recommendation instruction; pre-code criteria recorded, test NOT RUN
+```
+
 ## 64. DEC-027 bounded ScratchOnly acceptance — 2026-10-04
 
 ```text
