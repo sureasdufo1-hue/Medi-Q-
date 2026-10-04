@@ -1,5 +1,24 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 52. DEC-024 terminal persistence recommendation and Acceptance — before code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; define the terminal database writer needed after the DEC-023 durable destination-proof slice
+Changed: Recommendation PACS-001-DEC-024 and pre-code Acceptance TC-PACS-001-TERM-011~019; implementation plan now puts this exact-262 privilege/RLS gate before effect-capable coordinator composition
+Not changed: Product code, schema/migration/grants, runtime wiring, routes, PACS calls, data or deployment
+Recommendation: Complete one Study operation only after the trusted coordinator reports a complete exact STOW result, original byte/identity verification is durable, and physical temporary-payload purge plus its Audit committed. In one verified-Tenant/Session-fenced DB transaction update the exact bound Provenance, operation and required Audits atomically. Close the ExchangeSession only when the persisted Session has exactly that one StudyReference; a multi-Study Session remains ACTIVE because no durable selected-Study set or explicit closure contract exists
+Alternatives rejected: STOW status alone as completion; per-Study closure of an unresolved multi-Study Session; infer a full requested set; resend after uncertain outcome; broad table rights or SECURITY DEFINER
+Security impact: proposed exact262 runtime column tuples (258 + three Provenance terminal fields + Session completed_at); existing forced RLS, operation fields, Session state/updated_at rights and source-row immutability retained. No effect-capable route in this slice
+Acceptance: TC-PACS-001-TERM-011~019 recorded before implementation; see ACCEPTANCE-TESTS.md and POLICY-DECISION-LOG.md
+Tests executed: None for terminal behavior; code is not started. Documentation whitespace check only after synchronization
+Tests not executed: All DEC-024 writer/API/runtime/scratch PostgreSQL/RLS/migration/actual A/B/E2E tests, full Mandatory Preflight and product STOW
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §88 records the pre-code boundary and NOT RUN state
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: multi-Study Session closure remains undefined; this gate is not transfer proof. Full coordinator, actual one-Study application STOW, destination observer, recovery and original P0 security/E2E remain mandatory
+Status: PARTIAL — recommendation and Acceptance are ready; terminal code and all related validation NOT STARTED
+```
+
 ## 51. DEC-023 durable destination evidence implementation — 2026-10-04
 
 ```text

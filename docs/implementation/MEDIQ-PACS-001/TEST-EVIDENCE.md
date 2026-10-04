@@ -1,5 +1,13 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 88. DEC-024 terminal persistence Acceptance — before code
+
+On 2026-10-04, recorded `PACS-001-DEC-024` and `TC-PACS-001-TERM-011~019` before any terminal writer, schema, grant, or coordinator implementation. The recommendation is to finalize only an exact one-Study STOW and byte-verified/purged operation in one fenced transaction; operation/Provenance/audits are atomic. ExchangeSession closes only if the persisted Session has exactly one StudyReference; otherwise it remains ACTIVE. This conservative rule avoids claiming a multi-Study Session is complete when its requested set is not durably represented.
+
+**Commands and results:** documentation patch only; `git diff --check` exited0 after synchronization. No product code, migration, role privilege, route, PACS call, DB fixture, or runtime state was changed. No DEC-024 behavior test has run; all TERM-011~019 implementation and actual PostgreSQL/RLS acceptance remain NOT RUN.
+
+The acceptance requires exactly four new runtime column tuples (three `provenance_records` UPDATE columns and `exchange_sessions.completed_at` UPDATE), exact catalog262, legal terminal state and immutable destination/source evidence binding, transaction rollback on every persisted write/Audit failure, no retry after unknown result, and explicit one-vs-multi-Study Session assertions. This is a design checkpoint, not a scoped PASS for code or transfer behavior. Full Preflight, application STOW, actual A→B proof, full DB lifecycle, recovery/security/E2E remain incomplete.
+
 ## 87. DEC-023 implementation and final actual acceptance — 2026-10-04
 
 DEC-023 recommendation and TERM-001~010 preceded implementation (§86 / policy log). The implementation persists one private service-owned destination comparison proof as a separate `DESTINATION_VERIFY/VERIFIED` row, links only the existing Provenance `integrity_id`, and atomically records Audit. It deliberately leaves source evidence `SOURCE_CAPTURE/PENDING`, Provenance `PENDING`, operation `VERIFYING/version=3`, and Session active. Runtime rights are exactly 253 historical column tuples + five approved column tuples = 258; no table-level/PUBLIC/DEFINER privilege was added.
