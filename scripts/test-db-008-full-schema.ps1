@@ -50,9 +50,14 @@ function ConvertTo-SqlLiteral([string]$Value) {
 
 function Invoke-DockerQuiet {
     param([string]$Label, [string[]]$DockerArgs)
-    $null = @(& docker @DockerArgs 2>&1)
+    [Console]::WriteLine("$Label=START")
+    & docker @DockerArgs *> $null
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "$Label failed (exit=$exitCode); raw output suppressed." }
+    if ($exitCode -ne 0) {
+        [Console]::WriteLine("$Label=FAIL exit=$exitCode")
+        throw "$Label failed (exit=$exitCode); raw output suppressed."
+    }
+    [Console]::WriteLine("$Label=PASS")
 }
 
 function Invoke-ScratchPsqlRaw {
@@ -87,8 +92,13 @@ function Invoke-ScratchPsql {
         [string]$Sql,
         [string]$Label
     )
+    [Console]::WriteLine("$Label=START")
     $result = Invoke-ScratchPsqlRaw -Network $Network -User $User -Database $Database -Password $Password -Sql $Sql
-    if ($result.ExitCode -ne 0) { throw "$Label failed (exit=$($result.ExitCode), sqlstate=$($result.SqlState)); database output suppressed." }
+    if ($result.ExitCode -ne 0) {
+        [Console]::WriteLine("$Label=FAIL exit=$($result.ExitCode) sqlstate=$($result.SqlState)")
+        throw "$Label failed (exit=$($result.ExitCode), sqlstate=$($result.SqlState)); database output suppressed."
+    }
+    [Console]::WriteLine("$Label=PASS")
     return @($result.Output)
 }
 

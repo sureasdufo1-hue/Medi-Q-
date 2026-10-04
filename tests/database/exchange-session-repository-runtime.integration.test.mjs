@@ -104,6 +104,7 @@ test("EXC-002 persists synthetic ExchangeSessions under verified Tenant RLS and 
       ...exchangeSessionColumns.map((column) => `SELECT:${column}`),
       "UPDATE:state",
       "UPDATE:updated_at",
+      "UPDATE:completed_at",
     ].sort();
     assert.deepEqual(actualPrivileges, expectedPrivileges, "EXC002_EXACT_RUNTIME_PRIVILEGES_MISMATCH");
     const rlsResult = await pool.query(`

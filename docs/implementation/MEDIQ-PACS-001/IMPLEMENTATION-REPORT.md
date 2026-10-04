@@ -1,5 +1,21 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 55. DEC-024/025 scratch DB-008 verification — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; disposable PostgreSQL migration 0028, exact runtime catalog/RLS and DB-008 regression gate
+Changed: Corrected DB-008 ledger/progress/result checks for the 21-table/29-migration schema and exact 262 column privileges; aligned runtime integration assertions for ExchangeSession.completed_at and the four Provenance terminal UPDATE columns; synchronized implementation evidence, report, index and plan
+Not changed: Persistent MediQ DB, existing containers/deployment, application runtime grants, route/coordinator, PACS, DICOM payloads, production credentials; no product STOW or actual transfer completion
+Security impact: No privilege expansion beyond the approved exact four terminalization column tuples; scratch run confirms non-owner/non-superuser/NOBYPASSRLS role, DDL denial, forced RLS and Tenant-isolation checks. DEC-025 same-principal coherent-SQL limitation remains explicit
+Tests executed: `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` session 29101 exit 0; migration 0028 apply and fresh reset/reapply, 21 product tables, 29 ledger entries, exact262 privileges, 20 forced-RLS tables, synthetic Tenant/RLS and integrated EXC/Consent/Grant/PACS/Provenance/INT regressions PASS; scratch cleanup and independent zero container/volume/network inventory PASS; existing MediQ API/PostgreSQL/Orthanc A/B healthy. Earlier API 48 files/1,189, migration/contract and focused checks remain recorded in evidence §90
+Tests not executed: Persistent DB-002~007 regression (explicitly skipped by ScratchOnly); dedicated DEC-024 terminal trigger positive/negative and atomic rollback tests, one-/multi-Study finalizer behavior; coordinator, product STOW, destination transfer, full A→B security/E2E
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §91; earlier stalled attempt remains historical in §90
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Migration application/catalog and existing DB regressions now have disposable scratch evidence, but TERM-011~023 are not fully accepted. The finalizer remains unwired and does not consume a non-forgeable successful-STOW/destination/purge proof; coherent same-principal SQL residual remains. No full transfer/P0 PASS claim
+Status: DB-008 scratch schema/runtime regression scoped PASS; DEC-024/025 and MEDIQ-PACS-001/P0 PARTIAL
+```
+
 ## 54. DEC-024/025 terminal-writer WIP checkpoint — 2026-10-04
 
 ```text

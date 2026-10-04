@@ -1,5 +1,17 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 91. DEC-024/025 scratch migration and DB-008 reset/reapply verification — 2026-10-04
+
+**Command:** `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` — session **29101**, isolated Compose project `mediq-db008-9160de86ec71`, terminal exit **0**. This rerun followed the earlier stalled attempt in §90; that historical outcome remains UNKNOWN and is not overwritten.
+
+The wrapper applied migration 0028 to disposable PostgreSQL, ran the integrated DB-008/DB-009 and existing runtime regression stages, removed the owned scratch resources, bootstrapped a fresh scratch PostgreSQL, applied the migration again, and repeated the schema/catalog and regression gates. Terminal markers included `db008_reset_reapply=PASS product_tables=21 ledger=29`, `db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only`, and `persistent_mediq_database=NOT_ACCESSED`.
+
+**Observed database gates:** migration apply and fresh reset/reapply PASS; 21 product tables and 29 migration ledger entries; exact **262** runtime column privileges; **20** forced-RLS tables; runtime role is non-owner/non-superuser/NOBYPASSRLS with DDL denied; synthetic Tenant A/B/C fail-closed, cross-Tenant, rollback/context-reset and restricted PatientReference/PatientMapping probes PASS. DEC-009/R3 audit metadata, EXC-002/003, CON-002~005, GRT-002~004, PACS-001 session fence/expiry/temporary payload, Provenance, INT-001, and the pre-existing DB-008 regression markers all passed in the completed scratch run. The exact terminalization repository's positive/negative trigger cases, savepoint rollback matrix, and one-/multi-Study terminal behavior were **not** exercised by a dedicated test in this run; TERM-011~023 are therefore not accepted by this evidence alone. Persistent DB-002~007 compatibility regressions were explicitly skipped by `-ScratchOnly`.
+
+**Cleanup and isolation:** wrapper reported `db008_ephemeral_cleanup=PASS`. Independent Docker queries (each exit 0) found **0** containers, volumes, and networks labeled with the scratch project. The existing `mediq-api-1`, `mediq-postgres-1`, `mediq-orthanc-a-1`, and `mediq-orthanc-b-1` remained healthy. No persistent MediQ database, PACS endpoint, DICOM payload, production credential, or deployment was accessed or changed.
+
+**Result boundary:** DB-008 disposable migration/schema/catalog/RLS regression gate is **PASS**. DEC-024/025 terminal-writer behavior remains WIP/PARTIAL until its dedicated PostgreSQL acceptance is connected and proves complete/denied/atomic terminal writes, same-principal residual disclosure, and one-/multi-Study semantics. The repository is still unwired and has no non-forgeable successful-STOW/destination/purge proof input. Overall MEDIQ-PACS-001/P0 remains **PARTIAL**.
+
 ## 90. DEC-024/025 terminal-writer WIP checkpoint — 2026-10-04
 
 Fresh verification before the requested Git checkpoint, after updating active privilege expectations and the DB-008 scratch ledger for migration 0028:
