@@ -66,6 +66,9 @@ describe("AuditEvent", () => {
       ...["BEFORE_IDENTITY", "AFTER_IDENTITY", "BEFORE_BYTES", "AFTER_BYTES", "FINAL"]
         .map(phase => ["PACS_DESTINATION_VERIFY_AUTHORIZED", "STUDY", "ALLOW", phase]),
       ["PACS_DESTINATION_VERIFY_FAILED", "STUDY", "FAILURE", "DESTINATION_VERIFY_FAILED"],
+      ["PACS_TRANSFER_COMPLETED", "STUDY", "SUCCESS", null],
+      ["INTEGRITY_VERIFIED", "STUDY", "SUCCESS", null],
+      ["SESSION_COMPLETED", "EXCHANGE_SESSION", "SUCCESS", null],
     ];
 
     for (const [action, resourceType, result, reasonCode] of allowed) {
@@ -83,6 +86,9 @@ describe("AuditEvent", () => {
     ["destination failed reason excludes upstream details", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "PRIVATE_PACS_RESPONSE" }],
     ["destination failure cannot be success", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "DESTINATION_VERIFY_FAILED" }],
     ["destination failure requires bound Session", { action: "PACS_DESTINATION_VERIFY_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "DESTINATION_VERIFY_FAILED", exchangeSessionId: null }],
+    ["transfer completion cannot report failure", { action: "PACS_TRANSFER_COMPLETED", resourceType: "STUDY", result: "FAILURE", reasonCode: null }],
+    ["integrity verification cannot report failure", { action: "INTEGRITY_VERIFIED", resourceType: "STUDY", result: "FAILURE", reasonCode: null }],
+    ["session completion requires Session resource binding", { action: "SESSION_COMPLETED", resourceType: "EXCHANGE_SESSION", result: "SUCCESS", reasonCode: null, resourceId: ids.resource }],
     ["read admission is not delivery", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "SUCCESS", reasonCode: "BEFORE_DELIVERY" }],
     ["read reason cannot contain identifiers", { action: "PACS_TEMPORARY_READ_FAILED", resourceType: "STUDY", result: "FAILURE", reasonCode: "TEST-PRIVATE-PATIENT" }],
     ["read admission requires phase", { action: "PACS_TEMPORARY_READ_AUTHORIZED", resourceType: "STUDY", result: "ALLOW", reasonCode: null }],

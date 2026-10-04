@@ -78,7 +78,7 @@ test("EXC-003 creates a destination-bound idempotent Session and atomic Audit un
        WHERE grantee = current_user AND table_schema = 'public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 258, "EXC003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 262, "EXC003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     const sessionInsertColumns = catalog.rows.filter(
       (row) => row.table_name === "exchange_sessions" && row.privilege_type === "INSERT",
     );

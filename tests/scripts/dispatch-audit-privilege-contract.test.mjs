@@ -4,11 +4,12 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { auditDispatchSelectColumns, legacyRuntimePrivileges, dispatchAuditRuntimePrivileges,
-  destinationEvidencePrivilegeDelta, expectedRuntimePrivileges,
+  destinationEvidencePrivilegeDelta, postDestinationRuntimePrivileges,
+  terminalizationPrivilegeDelta, expectedRuntimePrivileges,
   assertRuntimePrivilegeCatalog } from '../fixtures/runtime-privilege-contract.mjs';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
-const [migration,journalText,wrapper,integration,observer,dockerfile,runtimeTest,destinationMigration] = await Promise.all([
+const [migration,journalText,wrapper,integration,observer,dockerfile,runtimeTest,destinationMigration,terminalizationMigration] = await Promise.all([
   read('../../services/api/src/database/migrations/0026_dispatch_audit_metadata_select.sql'),
   read('../../services/api/src/database/migrations/meta/_journal.json'),
   read('../../scripts/test-db-008-full-schema.ps1'),
@@ -17,6 +18,7 @@ const [migration,journalText,wrapper,integration,observer,dockerfile,runtimeTest
   read('../../services/api/Dockerfile'),
   read('../database/dispatch-audit-metadata-runtime.integration.test.mjs'),
   read('../../services/api/src/database/migrations/0027_destination_verify_evidence.sql'),
+  read('../../services/api/src/database/migrations/0028_pacs_terminalization.sql'),
 ]);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -32,7 +34,7 @@ test('R3 preserves all previous 244 entries and adds only exact nine Audit SELEC
 });
 
 test('DEC-023 adds only the exact five destination evidence column privileges', () => {
-  const previous = dispatchAuditRuntimePrivileges(), current = expectedRuntimePrivileges();
+  const previous = dispatchAuditRuntimePrivileges(), current = postDestinationRuntimePrivileges();
   assert.equal(previous.length,253);
   assert.equal(current.length,258);
   assert.deepEqual(current.filter(value => !previous.includes(value)),destinationEvidencePrivilegeDelta().sort());
@@ -43,6 +45,18 @@ test('DEC-023 adds only the exact five destination evidence column privileges', 
     'integrity_evidence.destination_object_count:SELECT',
     'provenance_records.integrity_id:UPDATE',
   ]);
+});
+
+test('DEC-024 adds only the exact four terminalization UPDATE tuples', () => {
+  const previous = postDestinationRuntimePrivileges(), current = expectedRuntimePrivileges();
+  const sql = terminalizationMigration.replace(/^--.*$/gm,'');
+  assert.equal(previous.length,258);
+  assert.equal(current.length,262);
+  assert.deepEqual(current.filter(value => !previous.includes(value)),terminalizationPrivilegeDelta().sort());
+  assert.match(sql,/GRANT UPDATE \(transfer_status, ingested_at, transferred_at\)\s+ON TABLE provenance_records TO mediq_runtime;/);
+  assert.match(sql,/GRANT UPDATE \(completed_at\)\s+ON TABLE exchange_sessions TO mediq_runtime;/);
+  assert.doesNotMatch(sql,/SECURITY\s+DEFINER/i);
+  assert.equal((sql.match(/CREATE TRIGGER/g) ?? []).length,3);
 });
 
 test('new migration consists only of the approved column SELECT grant', () => {
@@ -67,9 +81,9 @@ test('DEC-023 migration adds exact rights and invoker guards only', () => {
   assert.doesNotMatch(sql,/src\.integrity_id = NEW\.integrity_id/);
 });
 
-test('journal preserves 27 historical entries and appends ordered migration 0027', () => {
+test('journal preserves prior entries and appends ordered migrations 0027 and 0028', () => {
   const journal = JSON.parse(journalText);
-  assert.equal(journal.entries.length,28);
+  assert.equal(journal.entries.length,29);
   assert.equal(hash(journal.entries.slice(0,26)),'a771273a49f31fd0865aa4cfac6f407fdc0fb769d3cfe0ee08968dbd5813e448');
   for (const [index,entry] of journal.entries.entries()) {
     assert.equal(entry.idx,index);
@@ -77,6 +91,7 @@ test('journal preserves 27 historical entries and appends ordered migration 0027
   }
   assert.deepEqual(journal.entries[26],{idx:26,version:'7',when:1791039600000,tag:'0026_dispatch_audit_metadata_select',breakpoints:true});
   assert.deepEqual(journal.entries[27],{idx:27,version:'7',when:1791066791084,tag:'0027_destination_verify_evidence',breakpoints:true});
+  assert.deepEqual(journal.entries[28],{idx:28,version:'7',when:1791082308596,tag:'0028_pacs_terminalization',breakpoints:true});
 });
 
 const rowsFor = entries => entries.map(entry => {
@@ -95,15 +110,15 @@ test('exact catalog comparison accepts reordered complete entries, not count-onl
   const approved = expectedRuntimePrivileges();
   await assertRuntimePrivilegeCatalog(catalogClient([...approved].reverse()));
   const swapped = approved.map(value => value === 'audit_events.occurred_at:SELECT' ? 'audit_events.created_at:SELECT' : value);
-  assert.equal(swapped.length,258);
-  await assert.rejects(assertRuntimePrivilegeCatalog(catalogClient(swapped)),/DESTINATION_EVIDENCE_EXACT_258_PRIVILEGES/);
+  assert.equal(swapped.length,262);
+  await assert.rejects(assertRuntimePrivilegeCatalog(catalogClient(swapped)),/PACS_TERMINALIZATION_EXACT_262_PRIVILEGES/);
 });
 
 test('catalog rejects missing extra duplicate and mutable Audit privileges', async () => {
   const approved = expectedRuntimePrivileges();
   for (const invalid of [approved.slice(1),[...approved,'audit_events.action:UPDATE'],
     [...approved.slice(1),approved[1]],approved.map(v => v === 'audit_events.action:SELECT' ? 'audit_events.action:DELETE' : v)]) {
-    await assert.rejects(assertRuntimePrivilegeCatalog(catalogClient(invalid)),/DESTINATION_EVIDENCE_EXACT_258_PRIVILEGES/);
+    await assert.rejects(assertRuntimePrivilegeCatalog(catalogClient(invalid)),/PACS_TERMINALIZATION_EXACT_262_PRIVILEGES/);
   }
 });
 

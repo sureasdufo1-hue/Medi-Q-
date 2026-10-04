@@ -79,11 +79,11 @@ test("PROV-001 operation-bound pending Provenance PostgreSQL/RLS Acceptance", {
       FROM information_schema.column_privileges
       WHERE grantee='mediq_runtime' AND table_schema='public'`);
     assert.deepEqual(privileges.rows[0], {
-      total: 258,
+      total: 262,
       provenance_select: 13,
       provenance_insert: 13,
-      provenance_update: 1,
-      provenance_update_columns: ["integrity_id"],
+      provenance_update: 4,
+      provenance_update_columns: ["ingested_at", "integrity_id", "transfer_status", "transferred_at"],
       provenance_delete: 0,
     });
     const tablePrivileges = await client.query(`

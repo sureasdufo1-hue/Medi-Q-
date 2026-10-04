@@ -58,7 +58,18 @@ export function legacyRuntimePrivileges() {
   return privileges.sort();
 }
 export function expectedRuntimePrivileges() {
+  return [...postDestinationRuntimePrivileges(), ...terminalizationPrivilegeDelta()].sort();
+}
+export function postDestinationRuntimePrivileges() {
   return [...dispatchAuditRuntimePrivileges(), ...destinationEvidencePrivilegeDelta()].sort();
+}
+export function terminalizationPrivilegeDelta() {
+  return [
+    'provenance_records.transfer_status:UPDATE',
+    'provenance_records.ingested_at:UPDATE',
+    'provenance_records.transferred_at:UPDATE',
+    'exchange_sessions.completed_at:UPDATE',
+  ];
 }
 export function dispatchAuditRuntimePrivileges() {
   return [...legacyRuntimePrivileges(), ...auditDispatchSelectColumns.map(column => `audit_events.${column}:SELECT`)].sort();
@@ -76,7 +87,7 @@ export async function assertRuntimePrivilegeCatalog(client) {
   const result = await client.query(`SELECT table_name,column_name,privilege_type FROM information_schema.column_privileges
     WHERE grantee='mediq_runtime' AND table_schema='public'`);
   const actual = result.rows.map(row => `${row.table_name}.${row.column_name}:${row.privilege_type}`).sort();
-  assert.ok(JSON.stringify(actual) === JSON.stringify(expectedRuntimePrivileges()), 'DESTINATION_EVIDENCE_EXACT_258_PRIVILEGES');
+  assert.ok(JSON.stringify(actual) === JSON.stringify(expectedRuntimePrivileges()), 'PACS_TERMINALIZATION_EXACT_262_PRIVILEGES');
   const forbidden = await client.query(`SELECT
     (SELECT count(*)::int FROM information_schema.table_privileges WHERE grantee IN ('PUBLIC','mediq_runtime') AND table_schema='public') AS tables,
     (SELECT count(*)::int FROM information_schema.column_privileges WHERE grantee='PUBLIC' AND table_schema='public') AS public_columns`);

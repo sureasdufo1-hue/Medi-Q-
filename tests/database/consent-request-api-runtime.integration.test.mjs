@@ -273,7 +273,7 @@ test("CON-003 signed OIDC HTTP request atomically creates/replays Consent under 
        WHERE grantee=current_user AND table_schema='public'
        ORDER BY table_name, column_name, privilege_type
     `);
-    assert.equal(catalog.rows.length, 258, "CON003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
+    assert.equal(catalog.rows.length, 262, "CON003_RUNTIME_PRIVILEGE_COUNT_MISMATCH");
     const consentGrants = catalog.rows.filter((r) => ["consents", "consent_actions"].includes(r.table_name));
     assert.equal(consentGrants.filter((r) => r.privilege_type === "SELECT" && r.table_name === "consents").length, 13);
     assert.equal(consentGrants.filter((r) => r.privilege_type === "INSERT" && r.table_name === "consents").length, 13);

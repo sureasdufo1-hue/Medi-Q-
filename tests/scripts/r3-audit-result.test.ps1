@@ -8,7 +8,7 @@ $functions=@($ast.FindAll({ param($node)
 },$true))
 if ($functions.Count -ne 1) { throw 'R3_RESULT_FUNCTION_MISSING' }
 . ([scriptblock]::Create($functions[0].Extent.Text))
-$marker='dispatch_audit_metadata=PASS exact_privileges=258 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true'
+$marker='dispatch_audit_metadata=PASS exact_privileges=262 audit_select=9 insert=12 rls=forced immutable=true synthetic_rollback=true'
 $valid=@('# tests 1','# pass 1','# fail 0','# cancelled 0','# skipped 0','# todo 0',"# $marker")
 $cases=0
 foreach ($lines in @(@($valid),@($valid | ForEach-Object { $_ + "`r" }))) {
@@ -26,7 +26,7 @@ $invalidSets += ,@($valid | ForEach-Object { $_ -replace '^# tests 1$','# tests 
 $invalidSets += ,@($valid | ForEach-Object { $_ -replace '^# skipped 0$','# skipped 1' })
 $invalidSets += ,@($valid | ForEach-Object { $_ -replace '^# fail 0$','# fail 1' })
 $invalidSets += ,@($valid | ForEach-Object { $_ -replace '^# dispatch_audit_metadata=', 'dispatch_audit_metadata=' })
-$invalidSets += ,@($valid | ForEach-Object { $_ -replace 'exact_privileges=258','exact_privileges=249' })
+$invalidSets += ,@($valid | ForEach-Object { $_ -replace 'exact_privileges=262','exact_privileges=249' })
 foreach ($invalid in $invalidSets) {
     $caught=$null
     try { Assert-R3AuditReadResult -ExitCode 0 -Output @($invalid) } catch { $caught=$_.Exception.Message }

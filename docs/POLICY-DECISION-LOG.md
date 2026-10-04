@@ -1,5 +1,17 @@
 # MediQ Policy Decision Log
 
+### PACS-001-DEC-025 — document the shared-runtime database enforcement boundary
+
+| 항목 | 권고안 및 적용 |
+|---|---|
+| 상태·권한·날짜 | ACCEPTED UNDER STANDING USER INSTRUCTION, 2026-10-04; CAPSTONE-P0, MEDIQ-PACS-001. Recorded before DEC-024 implementation. |
+| 확인된 한계 | `mediq_runtime` is one shared application database principal with required direct column `UPDATE` and Audit `INSERT` rights. An invoker trigger sees that database principal and row/transaction facts; it cannot distinguish a trusted Repository method from equivalent coherent SQL issued by another holder of the same credential. A custom GUC or advisory lock is not an independent identity proof. Preventing every same-principal direct-DML path would require a different trust/privilege architecture (for example, revoking direct DML and introducing a separately authenticated execution boundary), outside the accepted exact-262/no-definer scope. |
+| 채택안 | Keep the existing single runtime principal, forced RLS, and exact262 column tuple catalog. Migration 0028 will reject incomplete, cross-tenant, wrong-binding, illegal-state, missing-proof/purge/Audit, and non-atomic terminal writes. The internal application finalizer remains the only supported caller and must revalidate the exact opaque AuthorizationContext/current Consent/Grant and receive only service-owned successful STOW/destination/purge facts. Do not claim that PostgreSQL proves which same-principal application method issued a fully coherent set of DML. |
+| 대안·선택 이유 | (1) Add a `SECURITY DEFINER` terminal procedure or broader table rights — rejected by the current explicit invariant. (2) Add a second runtime role/credential now — rejected because it changes the accepted runtime/secret/deployment architecture and is unnecessary for the scoped capstone trust boundary. (3) Trust any status update without relational checks — rejected because it permits incomplete or inconsistent completion. |
+| 영향·잔여 위험 | Relational integrity, RLS, exact authorization re-evaluation in application, and atomicity remain mandatory. A party that obtains the `mediq_runtime` credential can issue coherent DML and fabricate database-only terminal facts; therefore the credential remains API-only, secret, non-user-accessible, and is never provided to tests/operators outside the isolated scratch harness. This shared-principal limitation must be reconsidered before productionization or any untrusted SQL access. |
+| Acceptance·추적성 | Add `TC-PACS-001-TERM-020~023`: incomplete/mismatched direct SQL denied; a scratch-only controlled coherent-DML probe documents the same-principal limit (it is not a product bypass or authorization); exact262/no extra role/DEFINER; public docs and threat record disclose the trust boundary. Retain TERM-011~019's successful internal persistence, authorization, atomicity, and full-transfer boundaries. |
+| 문서·구현 | Amend DEC-024 and TERM-013/017 so DB enforcement is described as relational/fact validation, not repository caller attestation. Synchronize Security Requirements, Threat Model, report/evidence. No production runtime credential or external environment is used. |
+
 ### PACS-001-DEC-024 — atomically finalize a verified one-Study PACS import
 
 | 항목 | 권고안 및 적용 |

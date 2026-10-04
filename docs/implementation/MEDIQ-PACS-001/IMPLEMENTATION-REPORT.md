@@ -1,5 +1,40 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 54. DEC-024/025 terminal-writer WIP checkpoint — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; internal persistence-only terminalization for the bound one-Study PACS_IMPORT operation
+Changed: Added migration 0028 and snapshot/journal entry; added database-fact validation triggers and exact four runtime UPDATE column tuples (target catalog 262); added internal terminalization repository with current AuthorizationContext/Consent/Grant revalidation, Session fence, atomic terminal Audit/Provenance/operation/conditional Session writes; extended AuditEvent rules and focused tests; recorded DEC-025 shared-principal residual and TERM-020~023
+Not changed: No route/module/coordinator wiring, no non-forgeable STOW receipt/proof parameter, no STOW call, no persistent development DB migration, no data/deployment/credential changes
+Security impact: Incomplete and mismatched terminal states are guarded by relational facts and RLS; same-principal fully coherent SQL cannot be distinguished from Repository DML (DEC-025). The repository is not evidence of successful STOW, destination verification, or physical purge by itself; it must remain unreachable from untrusted callers and unwired until an owning coordinator consumes service-owned proof
+Tests executed: npm run test:api exit0, 48 files/1,189 passed (includes build); dispatch-audit privilege + migration-runner contracts 17/17; npm run test:dicom-port-contract exit0; npm run test:pacs-import-contract exit0, 21/21; PowerShell parser checks for the edited DB-008 and R3 marker scripts PASS; R3 result script 21 cases PASS; npm run db:migrations:check exit0; npm run test:db-migrations exit0, 6/6; git diff --check exit0. `scripts/test-db-008-full-schema.ps1 -ScratchOnly` started its uniquely named scratch PostgreSQL and reported `db008_scratch_postgres=PASS role_bootstrap=PASS`, then stalled without a captured migration/apply/assertion result; it was interrupted (exit1) and its exact scratch container, volume and network were subsequently removed. Existing MediQ services remained healthy
+Tests not executed: Confirmed migration 0028 apply/reset/reapply result (scratch apply outcome unknown), exact262 runtime privilege catalog, PostgreSQL/RLS success/denial/atomicity/concurrency, complete Node/PowerShell regressions, coordinator/API composition, actual product STOW, physical-purge proof, destination observer, recovery, full A→MediQ→B E2E
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §90
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Scratch migration/apply phase did not return a captured result; do not infer SQL apply success or failure. Migration SQL and trigger semantics are statically journal-checked but have no confirmed PostgreSQL application or RLS behavior evidence. Repository accepts operation/context/correlation identifiers rather than a non-forgeable successful-STOW capability and is not wired; do not treat returned COMPLETED persistence result as end-to-end transfer acceptance. No full transfer/P0 PASS claim
+Status: PARTIAL / WIP checkpoint only
+```
+
+## 53. DEC-025 shared-runtime database enforcement boundary — before code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; refine DEC-024's PostgreSQL enforcement claim before terminal writer code
+Changed: Recommendation PACS-001-DEC-025 and pre-code Acceptance TC-PACS-001-TERM-020~023; corrected TERM-013/017 to describe relational fact enforcement without claiming same-principal caller attestation
+Not changed: Product code, schema/migration/grants, runtime wiring, routes, PACS calls, data or deployment
+Recommendation: Keep the current single mediq_runtime principal, forced RLS and exact262 privilege boundary. DB triggers deny incomplete or mismatched terminal states and require complete linked evidence/audits. The internal application finalizer revalidates exact current authorization and consumes service-owned success facts. Do not claim that an invoker trigger can distinguish a Repository method from fully coherent equivalent SQL under the same credential
+Alternatives rejected: SECURITY DEFINER terminal procedure, broadened table rights, adding a second runtime principal/credential, or omitting relational state/evidence guards
+Security impact: No control relaxation for Tenant, authorization, binding, evidence, audit or atomicity. Explicit residual: an attacker holding mediq_runtime can fabricate coherent database-only facts; its credential remains API-only and this model must be reassessed before productionization/untrusted SQL access
+Acceptance: TC-PACS-001-TERM-020~023 recorded before implementation; scratch test must demonstrate incomplete denial and disclose same-principal limit without representing that SQL probe as product-path authorization or actual STOW
+Tests executed: None for DEC-025 behavior; documentation diff check only
+Tests not executed: Terminal writer, scratch PostgreSQL/RLS, migration lifecycle and all PACS E2E
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §89 records pre-code status
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Shared-runtime database credentials cannot attest application call path; no production credential is used. Full coordinator and real app STOW remain required
+Status: PARTIAL — boundary correction and Acceptance recorded; implementation NOT STARTED
+```
+
 ## 52. DEC-024 terminal persistence recommendation and Acceptance — before code
 
 ```text

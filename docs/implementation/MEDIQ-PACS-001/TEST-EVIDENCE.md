@@ -1,5 +1,29 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 90. DEC-024/025 terminal-writer WIP checkpoint — 2026-10-04
+
+Fresh verification before the requested Git checkpoint, after updating active privilege expectations and the DB-008 scratch ledger for migration 0028:
+
+```text
+npm run test:api                                       exit 0 — 48 files, 1,189 tests passed (includes build)
+node --test tests/scripts/dispatch-audit-privilege-contract.test.mjs tests/database/migration-runner.test.mjs
+                                                      exit 0 — 17/17 passed; checks four new privilege tuples and ordered 0028 journal entry
+npm run test:dicom-port-contract                       exit 0 — TypeScript contract check
+npm run test:pacs-import-contract                      exit 0 — 21/21 passed
+PowerShell AST parse: DB-008 wrapper + R3 result script exit 0
+npm run db:migrations:check                            exit 0 — Drizzle journal check, Everything's fine
+npm run test:db-migrations                             exit 0 — 6/6 passed
+git diff --check                                       exit 0 — whitespace check
+```
+
+These are API/unit, contract, journal/runner, and PowerShell syntax checks only. Scratch attempt: `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` returned `db008_scratch_postgres=PASS role_bootstrap=PASS` and then produced no migration/assertion result for several minutes. It was interrupted with exit1; because the migration subcommand's result was not captured, whether 0028 applied inside that disposable DB is UNKNOWN. The exact project `mediq-db008-fd6831694408` container, volume and network were verified and removed; the pre-existing MediQ API, PostgreSQL and Orthanc containers remained healthy. This is neither a migration PASS nor a migration failure result; rerun the scratch gate after diagnosing the no-output stall. Exact262 runtime privilege equality, forced-RLS and trigger behavior, positive/negative atomic persistence, migration reset/reapply, and live database compatibility remain NOT RUN. No PACS, Test Orthanc, real/synthetic DICOM transfer, production environment, or credential was used. No route/coordinator invokes the new repository. It accepts identifiers plus an opaque application `AuthorizationContext`, but does not yet require a non-forgeable service-owned successful-STOW/destination/purge capability; its persistence return value must not be represented as actual transfer success. DEC-025's same-principal SQL limitation remains explicit. Overall MEDIQ-PACS-001/P0 remains PARTIAL.
+
+## 89. DEC-025 shared-runtime database enforcement boundary — before code
+
+On 2026-10-04, before DEC-024 implementation, recorded `PACS-001-DEC-025` and `TC-PACS-001-TERM-020~023`. The runtime database credential is one shared application principal; an invoker trigger can enforce relational facts and legal transitions but cannot attest whether coherent same-principal DML came from the supported Repository method. The accepted boundary retains exact262 grants/no definer and documents that residual rather than claiming repository-only enforcement.
+
+**Commands and results:** documentation patch only; no code, migration, grants, DB role, route, PACS, fixture, or runtime state changed. Behavior Acceptance remains NOT RUN; the controlled scratch-only same-principal SQL probe is required to document the limitation, and production/untrusted SQL access is out of scope.
+
 ## 88. DEC-024 terminal persistence Acceptance — before code
 
 On 2026-10-04, recorded `PACS-001-DEC-024` and `TC-PACS-001-TERM-011~019` before any terminal writer, schema, grant, or coordinator implementation. The recommendation is to finalize only an exact one-Study STOW and byte-verified/purged operation in one fenced transaction; operation/Provenance/audits are atomic. ExchangeSession closes only if the persisted Session has exactly one StudyReference; otherwise it remains ACTIVE. This conservative rule avoids claiming a multi-Study Session is complete when its requested set is not durably represented.

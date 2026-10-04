@@ -191,6 +191,27 @@ const EVENT_RULES: Readonly<Record<string, EventRule>> = Object.freeze({
     resourceRequired: true,
     reasonCodes: ["DESTINATION_MATCH"],
   },
+  PACS_TRANSFER_COMPLETED: {
+    resourceType: "STUDY",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [null],
+  },
+  INTEGRITY_VERIFIED: {
+    resourceType: "STUDY",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [null],
+  },
+  SESSION_COMPLETED: {
+    resourceType: "EXCHANGE_SESSION",
+    result: "SUCCESS",
+    sessionRequired: true,
+    resourceRequired: true,
+    reasonCodes: [null],
+  },
 });
 
 const ALLOWED_KEYS = new Set([
@@ -306,6 +327,8 @@ export class AuditEvent {
       (rule.resourceRequired && input.resourceId === null) ||
       ((input.action === "AUTHORIZATION_DENIED" ||
         input.action === "GRANT_DENIED") &&
+        input.resourceId !== input.exchangeSessionId) ||
+      (input.action === "SESSION_COMPLETED" &&
         input.resourceId !== input.exchangeSessionId)
     ) {
       throw new InvalidAuditEventError();
