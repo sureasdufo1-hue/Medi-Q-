@@ -410,6 +410,11 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsFenceSessionId = [guid]::NewGuid().ToString()
     $pacsFencePackageId = [guid]::NewGuid().ToString()
     $pacsFenceStudyRefId = [guid]::NewGuid().ToString()
+    $terminalizationSessionId = [guid]::NewGuid().ToString()
+    $terminalizationPackageId = [guid]::NewGuid().ToString()
+    $terminalizationStudyRefId = [guid]::NewGuid().ToString()
+    $terminalizationConsentId = [guid]::NewGuid().ToString()
+    $terminalizationGrantId = [guid]::NewGuid().ToString()
     $pacsTempSiblingStudyRefId = [guid]::NewGuid().ToString()
     $pacsQuotaSourceTenantStudyRefId = [guid]::NewGuid().ToString()
     $pacsQuotaEnvironmentFillOneSessionId = [guid]::NewGuid().ToString()
@@ -442,6 +447,7 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $integrityLateStudyRefId = [guid]::NewGuid().ToString()
     $syntheticStudyUid = "2.25.309.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
     $pacsFenceStudyUid = "2.25.310.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
+    $terminalizationStudyUid = "2.25.324.$([Convert]::ToUInt64($token.Substring(4, 15), 16))"
     $pacsTempSiblingStudyUid = "2.25.315.$([Convert]::ToUInt64($token.Substring(18, 12), 16))"
     $pacsQuotaSourceStudyUid = "2.25.316.$([Convert]::ToUInt64($token.Substring(20, 12), 16))"
     $pacsQuotaEnvironmentFillOneStudyUid = "2.25.318.$([Convert]::ToUInt64($token.Substring(4, 12), 16))"
@@ -520,15 +526,24 @@ SELECT gen_random_uuid(), g.grant_id, s.scope
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,expires_at,completed_at,idempotency_key)
 VALUES ('$pacsFenceSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic PACS authorization fence test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
+INSERT INTO exchange_sessions
+ (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,expires_at,completed_at,idempotency_key)
+VALUES ('$terminalizationSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic terminalization denial test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
 INSERT INTO imaging_packages
  (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
 VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,3,now(),now(),now()+interval '1 day',NULL);
+INSERT INTO imaging_packages
+ (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
+VALUES ('$terminalizationPackageId','$terminalizationSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now(),now()+interval '1 day',NULL);
 INSERT INTO study_references
  (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
 VALUES
  ('$pacsFenceStudyRefId','$pacsFencePackageId','$hospitalA','$pacsFenceStudyUid','CT',1,1,now()),
  ('$pacsTempSiblingStudyRefId','$pacsFencePackageId','$hospitalA','$pacsTempSiblingStudyUid','MR',1,1,now()),
  ('$pacsQuotaSourceTenantStudyRefId','$pacsFencePackageId','$hospitalA','$pacsQuotaSourceStudyUid','CT',1,1,now());
+INSERT INTO study_references
+ (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
+VALUES ('$terminalizationStudyRefId','$terminalizationPackageId','$hospitalA','$terminalizationStudyUid','CT',1,1,now());
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
 VALUES
@@ -588,6 +603,16 @@ INSERT INTO transfer_grants
 VALUES ('$pacsFenceGrantId','$pacsFenceSessionId','$pacsFenceConsentId','$tenantB','$hospitalB','$exc003ActorB','$pacsFencePackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
 INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
 VALUES (gen_random_uuid(),'$pacsFenceGrantId','study:pacs-transfer');
+INSERT INTO consents
+ (consent_id,exchange_session_id,patient_ref_id,source_hospital_id,destination_hospital_id,imaging_package_id,status,consent_version,issued_at,expires_at,withdrawn_at,created_at,updated_at)
+VALUES ('$terminalizationConsentId','$terminalizationSessionId','$patientRefId','$hospitalA','$hospitalB','$terminalizationPackageId','ACTIVE',1,now(),now()+interval '1 day',NULL,now(),now());
+INSERT INTO consent_actions (consent_action_id,consent_id,action)
+VALUES (gen_random_uuid(),'$terminalizationConsentId','PACS_IMPORT');
+INSERT INTO transfer_grants
+ (grant_id,exchange_session_id,consent_id,recipient_tenant_id,recipient_hospital_id,recipient_actor_id,imaging_package_id,status,issued_at,expires_at,revoked_at,created_at)
+VALUES ('$terminalizationGrantId','$terminalizationSessionId','$terminalizationConsentId','$tenantB','$hospitalB','$exc003ActorB','$terminalizationPackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
+INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
+VALUES (gen_random_uuid(),'$terminalizationGrantId','study:pacs-transfer');
 COMMIT;
 GRANT SELECT (organization_id) ON TABLE organizations TO mediq_runtime;
 GRANT SELECT (organization_id) ON TABLE tenants TO mediq_runtime;
@@ -733,6 +758,11 @@ ROLLBACK;
         otherSubject = $subjectB; withdrawnSessionId = $sessionId
         withdrawnStudyRefId = $studyRefId; withdrawnConsentId = $withdrawnConsentId
         withdrawnGrantId = $withdrawnConsentGrantId
+    } | ConvertTo-Json -Compress
+    $terminalizationFixture = [ordered]@{
+        tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
+        sessionId = $terminalizationSessionId; studyRefId = $terminalizationStudyRefId
+        consentId = $terminalizationConsentId; grantId = $terminalizationGrantId
     } | ConvertTo-Json -Compress
     $temporaryPayloadFixture = [ordered]@{
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
@@ -1133,6 +1163,28 @@ SELECT (
         throw "PACS-001 Session-fence PostgreSQL Acceptance failed (exit=$pacsFenceExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
     }
     Write-Output "pacs001_session_fence=PASS auth_after_lock=PASS revoke_serialized=PASS post_revoke_denied=PASS no_operation_state_change=PASS no_dicom_call=PASS"
+
+    $terminalizationInspectUrl = $Settings["MEDIQ_MIGRATION_DATABASE_URL"]
+    $terminalizationArgs = $ComposeArgs + @(
+        "--profile", "test", "run", "--build", "--rm", "--no-deps",
+        "--env", "MEDIQ_PACS_TERMINALIZATION_TEST_FIXTURE=$terminalizationFixture",
+        "--env", "MEDIQ_TEST_INSPECT_DATABASE_URL=$terminalizationInspectUrl",
+        "api-db-integration-test",
+        "node", "--test", "--test-reporter=tap", "tests/database/pacs-transfer-terminalization-runtime.integration.test.mjs"
+    )
+    $terminalizationOutput = @(& docker @terminalizationArgs 2>&1 | ForEach-Object { $_.ToString() })
+    $terminalizationExitCode = $LASTEXITCODE
+    $terminalizationSummary = [string]::Join("`n", [string[]]@($terminalizationOutput))
+    if ($terminalizationExitCode -ne 0 -or $terminalizationSummary -notmatch '(?m)^(?:#|ℹ) pass 1$') {
+        $passCount = [regex]::Match($terminalizationSummary, '(?m)^(?:#|ℹ) pass (\d+)$').Groups[1].Value
+        $failCount = [regex]::Match($terminalizationSummary, '(?m)^(?:#|ℹ) fail (\d+)$').Groups[1].Value
+        $failedTests = @([regex]::Matches($terminalizationSummary, '(?m)^\s*(?:not ok \d+ - |✖ )([^\r\n]{1,120})') | ForEach-Object { $_.Groups[1].Value.Trim() })
+        $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
+        $safeFailureCode = [regex]::Match($terminalizationSummary, '\b(TERM020_[A-Z_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|PROVENANCE_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23514|23505|AssertionError)\b').Groups[1].Value
+        if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
+        throw "DEC-024/025 terminalization denial PostgreSQL/RLS Acceptance failed (exit=$terminalizationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
+    }
+    Write-Output "term020_runtime=PASS no_context=DENY cross_tenant=DENY provenance=DENY operation=DENY session=DENY rollback_observer=PASS exact_privileges=262"
 
     $provenanceArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",

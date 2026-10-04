@@ -1,5 +1,41 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 57. User-requested current-state commit/push — DEC-024/025 terminalization WIP
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; checkpoint the dedicated runtime terminalization-denial test and its wrapper integration
+Changed: Added synthetic runtime-role integration fixture/test for incomplete Provenance/operation/Session terminal writes, no-context/wrong-Tenant checks, independent observer; wired it into disposable DB-008 ScratchOnly; synchronized Acceptance, execution plan and evidence
+Not changed: Product runtime/route/coordinator, migration/schema/privileges, persistent MediQ DB, Orthanc, STOW, production environment, patient data; no test result was promoted to PASS
+Security impact: Scratch-only synthetic graph and existing mediq_runtime/read-only inspector; no new privilege, credential, PHI or DICOM payload. Existing DEC-025 same-principal residual remains
+Tests executed: Node syntax checks and 17 migration/contract static tests passed; diff check and Compose config passed. `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` session 44921 exited 1 at the new terminalization child gate after preceding DB-008/runtime regression stages; the wrapper returned no TAP pass/fail count and safe_error=unclassified, so the specific failing assertion/setup point is unknown. Automatic cleanup reported PASS; independent project-label inventory found zero scratch containers, volumes and networks. Existing MediQ API/PostgreSQL/Orthanc A/B containers remained healthy
+Tests not executed: Successful dedicated terminalization Acceptance or fresh clean+reset/reapply completion; persistent DB-002~007 regressions; coherent same-principal TERM-021, full TERM-020/TERM-017, product coordinator/STOW and A→B E2E
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §93; the prior general scratch pass remains §91 and does not override this failed later run
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: The terminalization test code is unaccepted until the child failure is diagnosed and the isolated test/wrapper passes. It remains a denial-only sub-gate and does not establish finalization, atomicity or transfer completion
+Status: PARTIAL; checkpoint only, DEC-024/025 and overall PACS-001/P0 remain PARTIAL
+```
+
+## 56. DEC-024/025 runtime denial sub-gate — before test code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; first dedicated actual PostgreSQL/RLS denial sub-gate for DEC-024/025
+Recommendation: Add a scratch-only runtime integration case with an isolated synthetic Session/Package/Study/Consent/Grant, legal operation transitions to VERIFYING, pending source evidence/Provenance, three negative terminal updates, and an independent post-commit row/Audit observer
+Alternatives considered: Do not substitute API mocks/static SQL inspection or migration-owner denials for runtime RLS; do not invoke the unwired finalizer as transfer proof while its service-owned successful-STOW/destination/purge input is absent
+Rationale: Directly tests the first unproven database boundary using the existing least-privilege runtime role and same isolated clean/reset/reapply lifecycle, without broadening product scope or asserting more than the observed denial cases
+Acceptance: Update Provenance, PACS operation and ExchangeSession completion without destination proof/purge/terminal Audit must each fail with SQLSTATE 23514 inside a savepoint; missing Tenant and wrong-Tenant attempts affect zero rows; after outer commit an independent read-only observer confirms VERIFYING/v3, PENDING/null dates, ACTIVE/null completed_at and zero terminal Audits. Assert exact262 and fixed safe output
+Changed: No code or configuration at this checkpoint; this recommendation/verification plan is recorded before test implementation
+Not changed: Normative TERM-011~023 scope, runtime privilege set, database schema, production/persistent database, application route/coordinator or PACS behavior
+Security impact: Synthetic scratch only; no production credential, PHI, DICOM payload, STOW, new role, or privilege expansion. DEC-025 same-principal residual remains
+Tests executed: Read-only inspection of current Acceptance, migration, repository, DB-008 fixture/wrapper and existing integration patterns; current baseline scratch evidence is §91
+Tests not executed: The planned denial sub-gate and all remaining TERM-011~023 cases
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §92; existing general scratch result §91
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: This is a denial-only sub-gate. It cannot accept coherent same-principal SQL, positive finalization, atomic failure matrix, one-/multi-Study behavior, trusted proof ownership or actual STOW
+Status: PLAN RECORDED BEFORE TEST CODE; DEC-024/025 and overall PACS-001/P0 remain PARTIAL
+```
+
 ## 55. DEC-024/025 scratch DB-008 verification — 2026-10-04
 
 ```text

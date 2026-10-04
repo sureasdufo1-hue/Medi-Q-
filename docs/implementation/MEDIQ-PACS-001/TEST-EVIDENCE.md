@@ -1,5 +1,25 @@
 # MEDIQ-PACS-001 Test Evidence
 
+## 93. User-requested current-state commit/push — DEC-024/025 terminalization WIP
+
+**Pre-checks:** New integration test `node --check` passed; related JavaScript syntax checks passed; migration/contract static tests **17/17**; `git diff --check` and `docker compose --env-file .env -f infra/docker-compose.yml config --quiet` passed.
+
+**Actual isolated attempt:** `./scripts/test-db-008-full-schema.ps1 -ScratchOnly`, session **44921**, exited **1**. Migration/reset setup and the preceding DB-008 runtime regressions reached the newly wired terminalization child gate. The wrapper reported `exit=1, pass=, fail=, failed_tests=unavailable, safe_error=unclassified` and deliberately suppressed raw child output. Therefore the specific assertion, fixture setup or runtime cause is **UNKNOWN**; no TERM-020 denial case is accepted from this run. The full wrapper did not reach its later reset/reapply completion round.
+
+**Cleanup / boundaries:** Wrapper automatic cleanup reported PASS. Independent Docker inventory for the exact scratch project `mediq-db008-c206d8b88be9` found zero labeled containers, volumes and networks. Existing `mediq-api-1`, `mediq-postgres-1`, `mediq-orthanc-a-1` and `mediq-orthanc-b-1` were observed healthy and were not redeployed. Persistent MediQ DB and Orthanc were not used by the scratch wrapper; no PHI, production credential, or real DICOM was introduced.
+
+**Checkpoint judgment:** This is an honest WIP checkpoint, not a test PASS. Next: add only fixed safe stage diagnostics or a narrow owned scratch invocation to expose where the child exits, diagnose without weakening guards, then rerun the dedicated test and full scratch reset/reapply path. Preserve §91 as the earlier general DB-008 pass; it does not negate session 44921. DEC-024/025 and PACS-001/P0 remain PARTIAL.
+
+## 92. DEC-024/025 runtime denial sub-gate — before test code
+
+**Current basis (2026-10-04):** the DB-008 general scratch migration/catalog/RLS gate passed in §91, but no dedicated terminalization PostgreSQL integration test is currently connected. The normative TERM-011~023 acceptance remains unchanged; this section narrows only the next execution increment, not its final requirements.
+
+**Recommended test slice:** add one scratch-only runtime integration test using a dedicated synthetic Tenant/Session/Package/Study/Consent/Grant fixture, a normally authorized `mediq_runtime` connection, and a separate migration-role read-only observer. Build a legal `VERIFYING` operation with a pending `SOURCE_CAPTURE` and pending `PACS_IMPORT` Provenance through existing repositories. With no destination proof/purge/terminal audits, attempt (a) Provenance completion, (b) operation completion, and (c) ExchangeSession completion as separate savepoint probes. Require SQLSTATE `23514`; also prove missing-context and wrong-Tenant attempts affect zero rows. After rolling back each savepoint and committing the outer fixture transaction, the independent observer must see operation still `VERIFYING`/version 3, Provenance still `PENDING` with null completion dates, Session still `ACTIVE` with null `completed_at`, and no terminal completion Audits. Assert exact262 grants and keep test output limited to fixed markers/codes.
+
+**Recommendation and boundary:** use only synthetic data and the existing disposable DB-008 project; run the test in both clean and reset/reapply rounds with the already-owned cleanup. Do not invoke `finalize()` as a claimed product success because its accepted service-owned STOW/destination/purge capability boundary is not implemented; do not use migration-owner DML for the denial probes because it would not test runtime RLS/grants. No PACS/STOW/HTTP route, persistent DB, new role, privilege expansion, or external state change is in scope.
+
+**Acceptance for this increment:** only the enumerated negative runtime updates, RLS zero-row boundaries, independent post-commit state/Audit observation, exact privilege assertion, repeated scratch execution, and resource cleanup. Passing it closes only those observed TERM-020 denial cases and contributes to TERM-022; coherent direct-SQL TERM-021, full TERM-020 matrix, TERM-017 finalizer success/rollback/concurrency/one-vs-multi Study matrix, and TERM-011/014 end-to-end proof remain NOT RUN. Implementation has not started at this checkpoint.
+
 ## 91. DEC-024/025 scratch migration and DB-008 reset/reapply verification — 2026-10-04
 
 **Command:** `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` — session **29101**, isolated Compose project `mediq-db008-9160de86ec71`, terminal exit **0**. This rerun followed the earlier stalled attempt in §90; that historical outcome remains UNKNOWN and is not overwritten.
