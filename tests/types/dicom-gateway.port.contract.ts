@@ -3,6 +3,8 @@ import type {
   CheckDicomCapabilityResult,
   DicomFrameStream,
   DicomGateway,
+  DicomGatewayOperation,
+  DicomGatewayRequestContext,
   DicomInstanceStream,
   DicomStowResult,
   DicomStudyMetadata,
@@ -20,6 +22,8 @@ import type {
 const emptyStream = () => new ReadableStream<Uint8Array>({ start() {} });
 
 class SyntheticConformingDicomGateway implements DicomGateway {
+  validateEndpoint(_context: DicomGatewayRequestContext, _operation: DicomGatewayOperation): void {}
+
   async checkCapability(
     _request: CheckDicomCapabilityRequest,
   ): Promise<CheckDicomCapabilityResult> {

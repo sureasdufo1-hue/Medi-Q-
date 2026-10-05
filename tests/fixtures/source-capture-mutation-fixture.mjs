@@ -24,6 +24,8 @@ export const mutationFixtureIds = Object.freeze({
   source: "04000000-0000-4000-8000-000000000001",
   patient: "15000000-0000-4000-8000-000000000001",
   mapping: "15000000-0000-4000-8000-000000000002",
+  coordinatorInvalidMapPatient: "15000000-0000-4000-8000-000000000051",
+  coordinatorInvalidMap: "15000000-0000-4000-8000-000000000052",
   baselineLocalId: "TEST-PATIENT-007", reboundLocalId: "TEST-R6-REBOUND",
 });
 

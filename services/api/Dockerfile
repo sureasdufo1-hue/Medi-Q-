@@ -76,6 +76,7 @@ COPY tests/fixtures/dispatched-source-read-fixture.mjs tests/fixtures/dispatched
 COPY scripts/seed-int001-dispatched-reads.mjs scripts/seed-int001-dispatched-reads.mjs
 COPY scripts/verify-int001-dispatched-reads.mjs scripts/verify-int001-dispatched-reads.mjs
 COPY tests/fixtures/source-capture-mutation-fixture.mjs tests/fixtures/source-capture-mutation-fixture.mjs
+COPY tests/fixtures/pacs-coordinator-fault-fixture.mjs tests/fixtures/pacs-coordinator-fault-fixture.mjs
 COPY scripts/int001-fixture-mutation-controller.mjs scripts/int001-fixture-mutation-controller.mjs
 COPY tests/fixtures/temporary-capture-lifecycle-fixture.mjs tests/fixtures/temporary-capture-lifecycle-fixture.mjs
 COPY tests/integration/authorized-source-capture.orthanc.integration.test.mjs tests/integration/authorized-source-capture.orthanc.integration.test.mjs
@@ -84,4 +85,6 @@ COPY scripts/seed-int001-source-capture-fixture.mjs scripts/seed-int001-source-c
 COPY scripts/seed-int001-temporary-orthanc-a.mjs scripts/seed-int001-temporary-orthanc-a.mjs
 COPY scripts/probe-int001-temporary-orthanc-b-empty.mjs scripts/probe-int001-temporary-orthanc-b-empty.mjs
 COPY scripts/verify-int001-source-capture.mjs scripts/verify-int001-source-capture.mjs
+COPY scripts/verify-int001-transfer-dispatch.mjs scripts/verify-int001-transfer-dispatch.mjs
+COPY scripts/int001-transfer-dispatch-diagnostics.mjs scripts/int001-transfer-dispatch-diagnostics.mjs
 CMD ["node", "--test", "tests/integration/authorized-source-capture.orthanc.integration.test.mjs"]

@@ -6,14 +6,19 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { dispatchedReadCases as cases, dispatchedReadIds as ids,
   dispatchedReadDigest, dispatchedExpectedAudits } from '../fixtures/dispatched-source-read-fixture.mjs';
+import { coordinatorFaultCases } from '../fixtures/pacs-coordinator-fault-fixture.mjs';
 import { pacsTransferOperationDigest } from '../../services/api/dist/pacs/domain/pacs-transfer-operation-digest.js';
+import { projectTransferDispatchObserverFailure, transferDispatchObserverStages,
+  transferDispatchObserverAssertionMarkers } from '../../scripts/int001-transfer-dispatch-diagnostics.mjs';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
-const [seed, observer, wrapper, integration, compose, dockerfile] = await Promise.all([
+const [seed, observer, wrapper, integration, compose, dockerfile, sourceCaptureSeed, transferObserver] = await Promise.all([
   read('../../scripts/seed-int001-dispatched-reads.mjs'), read('../../scripts/verify-int001-dispatched-reads.mjs'),
   read('../../scripts/test-int001-source-capture.ps1'),
   read('../integration/authorized-source-capture.orthanc.integration.test.mjs'),
   read('../../infra/docker-compose.yml'), read('../../services/api/Dockerfile'),
+  read('../../scripts/seed-int001-source-capture-fixture.mjs'),
+  read('../../scripts/verify-int001-transfer-dispatch.mjs'),
 ]);
 const named = name => cases.find(item => item.name === name);
 
@@ -32,6 +37,96 @@ test('actual diagnostic projector keeps fixed assertion/line only and reserves n
     { code:'ERR_ASSERTION',check:'SUPPRESSED',line:'0' });
   assert.ok(wrapper.includes("Where-Object { $_ -notmatch '^(?:DEC017|DISPREAD)_CASE_' }"));
   assert.ok(wrapper.includes("Where-Object { $_ -notmatch '^DISPREAD_CASE_' }"));
+});
+
+test('transfer dispatch failure diagnostic exposes only bounded enums and counts', () => {
+  const ast = ts.createSourceFile('capture.mjs',integration,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  const declarations = ast.statements.filter(node => ts.isFunctionDeclaration(node) &&
+    node.name?.text === 'pacsImportDispatchFailureDiagnostic');
+  assert.equal(declarations.length,1);
+  const project = runInNewContext(`${declarations[0].getText(ast)}; pacsImportDispatchFailureDiagnostic`);
+  assert.equal(project({ stowHookObserved:true, dispatchReturned:false, operationState:'RESULT_UNKNOWN',
+    sourceReads:4, gatewayStows:1, bPosts:1, destinationChecks:0,
+    error:{ name:'PacsImportTransferDispatchUnavailableError', message:'SENSITIVE_UID', code:'PRIVATE' } }),
+  'pacs_dispatch_diagnostic=FAIL hook=PASSED returned=no operation_state=RESULT_UNKNOWN source_reads=4 gateway_stow=1 b_posts=1 destination_checks=0 error=DISPATCH_UNAVAILABLE');
+  const hostile = project({ stowHookObserved:false, dispatchReturned:false, operationState:'2.25.SENSITIVE',
+    sourceReads:-1, gatewayStows:1000, bPosts:'SECRET', destinationChecks:null,
+    error:{ name:'SENSITIVE_ERROR', message:'SENSITIVE_PAYLOAD', code:'SENSITIVE' } });
+  assert.equal(hostile,
+    'pacs_dispatch_diagnostic=FAIL hook=NOT_REACHED returned=no operation_state=UNKNOWN source_reads=OVER_LIMIT gateway_stow=OVER_LIMIT b_posts=OVER_LIMIT destination_checks=OVER_LIMIT error=OTHER');
+  assert.ok(!/SENSITIVE|SECRET|2\.25|PRIVATE/.test(hostile));
+  assert.match(wrapper,/pacs_dispatch_diagnostic=FAIL hook=/);
+});
+
+test('transfer dispatch synthetic selectors are disjoint from coordinator fault fixture selectors', () => {
+  const dispatchIds = [...sourceCaptureSeed.matchAll(/^\s*transferDispatch[A-Za-z]+:\s*"([^"]+)"/gm)]
+    .map(match => match[1]);
+  assert.equal(dispatchIds.length,11);
+  const faultIds = new Set(coordinatorFaultCases.flatMap(item => [item.sessionId,item.sessionKey,item.packageId,
+    item.studyRefId,item.consentId,item.consentActionId,item.grantId,item.grantKey,item.grantScopeId,
+    item.operationId,item.idempotencyKey,item.correlationId]));
+  for (const value of dispatchIds) assert.ok(!faultIds.has(value),`transfer dispatch fixture must not reuse a coordinator-fault selector`);
+  assert.ok(!coordinatorFaultCases.some(item => item.sessionId === dispatchIds[0]));
+});
+
+test('transfer dispatch seed, application integration, and independent observer bind the same fixture IDs', () => {
+  const seeded = new Map([...sourceCaptureSeed.matchAll(/^\s*(transferDispatch[A-Za-z]+):\s*"([^"]+)"/gm)]
+    .map(match => [match[1],match[2]]));
+  const application = [
+    ['transferDispatchSessionId','transferDispatchSession'], ['transferDispatchPackageId','transferDispatchPackage'],
+    ['transferDispatchStudyRefId','transferDispatchStudy'], ['transferDispatchConsentId','transferDispatchConsent'],
+    ['transferDispatchGrantId','transferDispatchGrant'], ['transferDispatchOperationId','transferDispatchOperation'],
+    ['transferDispatchIdempotencyKey','transferDispatchOperationKey'],
+    ['transferDispatchCorrelationId','transferDispatchCorrelation'],
+  ];
+  for (const [integrationKey,seedKey] of application) {
+    const expected = seeded.get(seedKey);
+    assert.ok(expected,`seeded fixture selector must exist`);
+    assert.match(integration,new RegExp(`\\b${integrationKey}: "${expected}"`));
+  }
+  const observer = [['session','transferDispatchSession'], ['package','transferDispatchPackage'],
+    ['study','transferDispatchStudy'], ['operation','transferDispatchOperation'],
+    ['correlation','transferDispatchCorrelation']];
+  for (const [observerKey,seedKey] of observer) {
+    const expected = seeded.get(seedKey);
+    assert.ok(expected,`seeded fixture selector must exist`);
+    assert.match(transferObserver,new RegExp(`\\b${observerKey}: "${expected}"`));
+  }
+  assert.match(integration,/url\.pathname === `\/dicom-web\/studies\/\$\{manifest\.studyInstanceUID\}`/);
+});
+
+test('independent dispatch observer projects only allowlisted assertion and query-stage markers', () => {
+  assert.ok(transferObserver.includes('projectTransferDispatchObserverFailure({ stage: observerStage, error })'));
+  assert.ok(transferObserver.includes('SET LOCAL ROLE mediq_quota_owner'));
+  assert.ok(transferObserver.includes("set_config('mediq.tenant_id',$1,true)"));
+  assert.match(transferObserver,/BEGIN READ ONLY/);
+  assert.match(dockerfile,/COPY scripts\/int001-transfer-dispatch-diagnostics\.mjs scripts\/int001-transfer-dispatch-diagnostics\.mjs/);
+  assert.match(wrapper,/TRANSFER_DISPATCH_OBSERVER_FAILED_\(\?:TRANSFER_DISPATCH_/);
+  for (const stage of transferDispatchObserverStages) {
+    assert.ok(wrapper.includes(stage),`wrapper stage allowlist includes ${stage}`);
+  }
+  for (const marker of transferDispatchObserverAssertionMarkers) {
+    assert.ok(marker.startsWith('TRANSFER_DISPATCH_'),`fixed assertion marker ${marker}`);
+  }
+  assert.ok(wrapper.includes("$dispatchObserverFailure.Groups[1].Value"));
+});
+
+test('dispatch observer diagnostic keeps only fixed stage, marker or SQLSTATE', () => {
+  const marker = transferDispatchObserverAssertionMarkers[0];
+  const assertion = Object.assign(new Error(`${marker}\nSENSITIVE_UID raw SQL patient value`), { code: 'ERR_ASSERTION' });
+  const assertionResult = projectTransferDispatchObserverFailure({ stage: 'OPERATION_QUERY', error: assertion });
+  assert.equal(assertionResult, marker);
+  assert.ok(!assertionResult.includes('SENSITIVE'));
+  const sqlResult = projectTransferDispatchObserverFailure({ stage: 'PROVENANCE_QUERY',
+    error: Object.assign(new Error('SENSITIVE SQL and rows'), { code: '42501' }) });
+  assert.equal(sqlResult,'STAGE_PROVENANCE_QUERY_SQLSTATE_42501');
+  assert.ok(!sqlResult.includes('SENSITIVE'));
+  assert.equal(projectTransferDispatchObserverFailure({ stage: 'QUOTA_QUERY',
+    error: Object.assign(new Error('SENSITIVE secret'), { code: 'PRIVATE_CODE' }) }),
+  'STAGE_QUOTA_QUERY_UNCLASSIFIED');
+  assert.equal(projectTransferDispatchObserverFailure({ stage: 'SENSITIVE_STAGE',
+    error: Object.assign(new Error('SENSITIVE'), { code: '42P01' }) }),
+  'STAGE_UNKNOWN_SQLSTATE_42P01');
 });
 
 test('matrix has exactly 17 immutable explicit cases and 18 expected Node tests', () => {
@@ -122,9 +217,9 @@ test('test application receives runtime URL only; owner seed/observer are separa
   assert.match(observer,/NO_TABLE_RIGHTS/);
 });
 
-test('wrapper keeps default 58 and separately validates 18, exact markers, privacy and owned cleanup', () => {
+test('wrapper keeps default capture and opt-in transfer counts while separately validating 18 dispatched reads', () => {
   assert.match(wrapper,/\[switch\]\$IncludeDispatchedReads/);
-  assert.ok(/\$testPass -ne "58" -or \$testFail -ne "0"/.test(wrapper), 'DISPREAD_CONTRACT_ORIGINAL_58');
+  assert.ok(/\$expectedTestPass = if \(\$IncludeTransferDispatch\) \{ "71" \} else \{ "70" \}/.test(wrapper), 'DISPREAD_CONTRACT_CAPTURE_COUNTS');
   assert.match(wrapper,/\$dispatchPass -ne "18" -or \$dispatchFail -ne "0"/);
   const start = wrapper.indexOf('    if ($IncludeDispatchedReads)');
   assert.ok(start > wrapper.indexOf('audit_and_evidence_observer=PASS'));

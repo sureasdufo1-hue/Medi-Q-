@@ -183,6 +183,11 @@ export interface CheckDicomCapabilityResult {
  * against the configured Test Orthanc services.
  */
 export interface DicomGateway {
+  /** Local, side-effect-free endpoint/operation/TLS-policy validation. Never returns endpoint secrets. */
+  validateEndpoint(
+    context: DicomGatewayRequestContext,
+    operation: DicomGatewayOperation,
+  ): void;
   checkCapability(
     request: CheckDicomCapabilityRequest,
   ): Promise<CheckDicomCapabilityResult>;

@@ -1,5 +1,496 @@
 # MEDIQ-PACS-001 Implementation Report
 
+## 123. PACS-001 — commit checkpoint local revalidation
+
+**Scope:** read-only validation of the current worktree before the user-requested local commit; supplements, and does not replace, the disposable actual-dispatch evidence in §155.
+
+**Results:** `npm run build:api` and `npm run typecheck:api` exited 0; focused PACS coordinator Vitest suites passed **3 files / 21 tests**; the independent dispatch observer contract passed **15/15**; output privacy passed **50 cases**; `git diff --check` exited 0.
+
+**Runner correction:** one initial command invoked Vitest suites using `node --test` and failed during Vitest suite initialization. This was an invalid test-runner invocation, not a product assertion failure. Re-running those suites with `npx vitest run` passed 21/21; the Node-native observer contract was then run separately and passed 15/15.
+
+**Not re-run in this checkpoint:** the full API suite and disposable PostgreSQL/Orthanc wrapper. Their latest actual results and limits remain those in §122 and TEST-EVIDENCE §155. No fresh full P0/E2E claim is made.
+
+**Status:** local commit-precheck PASS; `MEDIQ-PACS-001` and overall P0 remain **PARTIAL**. No push performed.
+
+## 122. PACS-001-DEC-031 — positive dispatch path passes in scoped integration; full Acceptance remains open
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; follows the DEC-030/031 recommendation and Acceptance recorded before dispatch changes.
+
+**Current result (2026-10-05):** the full opt-in disposable wrapper now exits **0**. API integration is **71/71**; one application gateway STOW and one exact Study-level HTTPS Test B POST occurred. The independent dispatch observer verified the committed operation, pending Provenance, ordered state Audits, source-only pending Integrity and retained quota. The Test B fixture checker then matched the exact synthetic Study identity and bytes and purged only that owned Study; the post-run B probe reported `EMPTY`. Privacy checks, temporary-project cleanup and existing-stack preservation passed. This is a scoped positive dispatch/effect proof, not full PACS-001/P0 Acceptance: the product destination-verification service was not invoked, the operation remains `VERIFYING`, source Integrity and Provenance remain `PENDING`, and terminal Integrity/Provenance/Audit/purge state was not written.
+
+**Changed and security impact:** added a fixed, privacy-preserving observer failure projector, included it in the explicit test-image COPY list, and scoped the quota observation to a dedicated read-only transaction using the existing `mediq_quota_owner` role and transaction-local Tenant context. No schema, grant, runtime role, product API, route, worker or production behavior changed; raw error/row values remain suppressed. Local observer contract **15/15** and output privacy **50 cases** passed before the full wrapper.
+
+**Cleanup/status boundary:** the disposable test did perform one B POST, independently verified its exact synthetic Study/bytes, purged that exact Study, and confirmed B empty afterward. The product did not run its destination verifier or terminalizer. No route, module, worker, deployment, persistent DB or production PACS was changed. Full Preflight denial/fault cases, dispatch races/rollback/idempotency/ambiguous/partial outcomes, product destination-verifier integration, terminal Integrity/Provenance/Audit and audited source-payload purge, security validation and full E2E remain open. `AT-E2E-003` remains 0/1; overall P0 is **PARTIAL**.
+
+**Next:** complete the remaining Preflight and dispatch negative/race/failure matrix without enabling a route; connect the product's exact destination verifier after the successful STOW acknowledgement; then prove destination Integrity, terminal Provenance/Audit/state, encrypted source-payload purge/quota release, ambiguous-result no-resend and full security/E2E acceptance. Preserve `VERIFYING` until those product-owned checks commit. Detailed run history and scope: [TEST-EVIDENCE §155](TEST-EVIDENCE.md#155-pacs-001-dec-031--actual-dispatch-integration-attempts-and-scoped-positive-result).
+
+## 121. PACS-001-DEC-031 — atomic pending-Provenance correction before dispatch implementation
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; recommendation-first authority under DEC-030. Recorded before correcting the in-progress dispatch implementation.
+
+**Finding:** the DEC-030 dispatch readiness predicate joins a pending Provenance row, but accepted COORD-004 intentionally ends at source capture with no Provenance. The existing `PostgresProvenanceRepository.createPendingForPacsImport()` is already constrained to the verified Tenant and eligible operation states and uses existing grants; creating the row in a separate transaction would allow an orphan.
+
+**Recommendation and Acceptance:** within the same fresh-Authorization, verified-Tenant transaction and canonical Session fence, create/read back exactly one immutable-bound `PACS_IMPORT/PENDING` Provenance row, confirm all bindings and null Integrity/terminal fields, then evaluate the complete Preflight and atomically commit ordered `PREFLIGHT_PASSED` and `STOW_STARTED` transitions/Audits. Any Provenance, Preflight, CAS, Audit or COMMIT failure must roll the entire transaction back and keep B/STOW at zero. The first B request may occur only after independent observation of the committed row and state. The row remains PENDING until later destination-integrity linkage and terminalization. Detailed test criteria: `ACCEPTANCE-TESTS.md` DEC-030 matrix `PRE-007-PROVENANCE-ATOMIC`.
+
+**Alternatives/reason:** moving creation to source preparation contradicts COORD-004; a separate transaction can orphan it; skipping the row breaks the preflight/terminal evidence binding. The existing repository is preferred; no schema, grant, migration, role, route or worker change.
+
+**Status:** documentation only at this checkpoint. The finding does not claim this correction is implemented or tested; P0 remains PARTIAL and `AT-E2E-003` remains 0/1. See pre-test plan [TEST-EVIDENCE §154](TEST-EVIDENCE.md#154-pacs-001-dec-031-atomic-pending-provenance-pre-test-plan).
+
+## 120. PACS-001-DEC-030 — Mandatory Preflight and fenced dispatch recommendation
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; standing recommendation-first authority and existing PACS-001-DEC-004. Decision recorded in `POLICY-DECISION-LOG.md` before implementation.
+
+**Recommendation:** implement an internal-only source-preparation→Mandatory-Preflight→dispatch-claim coordinator. Reuse the actual compiled `PacsImportSourcePreparationCoordinator`, verified-Tenant `AuthorizationGatedOperationExecutor`, canonical ExchangeSession fence, operation CAS/Audit repository, endpoint resolver and `storeStudyStream`. Under one short verified Tenant transaction, reread exact operation/session/package/study/evidence/mapping and current Consent/Grant/action/scope/recipient bindings, validate the bounded source manifest and unexpired encrypted staging, re-evaluate `PACS_IMPORT` after the shared fence, and atomically commit `PREFLIGHT_PASSED` then `STOW_STARTED` plus their required state Audits. Commit must complete before the one authorized gateway call; no network I/O inside the transaction. Keep the coordinator unregistered and test only with synthetic data/disposable HTTPS Test Orthanc. A parsed all-stored STOW result can proceed only to `VERIFYING`; partial is `PARTIAL`; ambiguous is `RESULT_UNKNOWN` (or unresolved durable `STOW_STARTED` if state persistence itself fails). No replay may send again.
+
+**Alternatives/reason:** a mapping-only check does not establish full Mandatory Preflight; a mock alone does not prove RLS, Session-fence ordering, commit-before-effect or call count. Network-in-transaction is rejected. Public route/module/worker activation, new grants/schema, persistent PACS, real patient data and blind retry are outside scope. STOW acknowledgement is not destination Integrity or completion.
+
+**Acceptance before code:** operationalized `TC-PACS-001-PRE-001~006` and `TC-PACS-001-DISPATCH-001~006` in `ACCEPTANCE-TESTS.md` with positive, denial, race, transaction/Audit/commit fault, idempotency, ambiguous, partial and exact-state expectations. DEC-031 adds `PRE-007-PROVENANCE-ATOMIC` before the corrective code change. Required independent DB/Audit observer, B request/identity checks, privacy assertions, owned cleanup and existing-stack preservation. Detailed pre-test plans: [TEST-EVIDENCE §153](TEST-EVIDENCE.md#153-pacs-001-dec-030-preflight-and-dispatch-pre-test-plan) and [§154](TEST-EVIDENCE.md#154-pacs-001-dec-031-atomic-pending-provenance-pre-test-plan).
+
+**Status at recommendation:** no Preflight/dispatch implementation or test was run in this recommendation-only checkpoint. Overall P0 remains PARTIAL; `AT-E2E-003` remains 0/1. No route, worker, schema, grant, deployment or persistent system change.
+
+## 119. COORD-004 FAULT matrix — actual scoped result
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; implementation and evidence for the pre-recorded recommendation §118 and `FAULT-001~008` Acceptance.
+
+**Result:** `./scripts/test-int001-source-capture.ps1 -EnvFile .env` exited **0**. The actual compiled `PacsImportSourcePreparationCoordinator.prepare()` ran the full isolated PostgreSQL forced-RLS and HTTPS Test Orthanc A/B suite: **70/70** integration tests, including AUTH 9, SOURCE 3 and all eight FAULT cases. The independent Audit/evidence/quota observer and privacy checks passed; B was `EMPTY` before and after; six existing one-shot mutation fixtures were restored; disposable resources were cleaned and the existing MediQ stack was unchanged. `npm run build:api`, `npm run typecheck:api`, the focused admission/coordinator tests (**11/11**), JS syntax, PowerShell parsing and `git diff --check` passed.
+
+**Fault outcomes:** every case returned only the fixed unavailable response and left its admitted operation in `CREATED`, with no Integrity/Provenance, handoff, Destination call or STOW. Start-Audit failure made zero A requests. Partial WADO, ciphertext-write, seal, evidence-INSERT, success-Audit INSERT and deferred-COMMIT faults closed streams/transactions, left no ciphertext after cleanup, retained audited `PURGED` metadata and released quota. The physical-purge fault was deliberately **not** represented as purge success: while the owned `.enc` files still existed, an independent observer verified `PURGE_PENDING`, null purged timestamp, no purge-success Audit, no Integrity/Provenance and nonzero package/environment quota; only after that observation did the test remove its own temporary files during teardown.
+
+**Run history:** four earlier disposable attempts were not counted as Acceptance: the new fixture was initially absent from the test image; then a synthetic Grant idempotency key collided; then the unresolved quota case ran before lifecycle probes and contaminated their global-quota expectation; then the independent Audit allowlist omitted the existing positive-path `EXPLICIT_CLOSE` event. The scoped fixes added the fixture to the integration-test image, separated synthetic identifiers, ran the retained-quota case after lifecycle probes with an independent pre-teardown observation, and corrected the Audit allowlist. Each failed wrapper cleaned its owned resources and preserved the existing stack. The final complete wrapper above passed.
+
+**Status:** `FAULT-001~008` **PASS (scoped)**; AUTH (§115) and SOURCE (§117) remain **PASS (scoped)**; parent `TC-PACS-001-COORD-004-DENY` **PASS (scoped)**. This closes only the composed admission/source-preparation denial and compensation gate. Mandatory Preflight, session-fenced dispatch, actual application STOW to B, post-STOW destination identity/byte proof, terminal Integrity/Provenance/Audit/state and `AT-E2E-003` remain incomplete; overall PACS-001/P0 is **PARTIAL**. No product route, product schema/grant, persistent database/PACS, deployment, commit or push changed. Detailed command and case evidence: [TEST-EVIDENCE §152](TEST-EVIDENCE.md#152-coord-004-fault-matrix--actual-scoped-result).
+
+## 118. COORD-004 FAULT matrix — pre-test recommendation
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; continuation of accepted internal-only `TC-PACS-001-COORD-004-DENY` (§113) and AUTH/SOURCE scoped results (§115/§117).
+
+**Recommendation before test edits:** exercise eight fresh, unique synthetic authority graphs through the real compiled coordinator, with failures injected only at test boundaries: source-start Audit INSERT, partial A instance WADO, encrypted ciphertext write, ciphertext sync/seal, pending Integrity INSERT, source-success Audit INSERT, deferred final transaction COMMIT, and physical purge after a staged persistence failure. Use the existing `ciphertextIo` fault seam and disposable-DB-only triggers; do not change product code, schema, privileges, endpoints or production behavior. Every admitted operation must remain `CREATED`; no case may expose a handoff, Integrity/Provenance success, Destination read/call or STOW.
+
+**Purge decision:** for faults after a temporary reference is reserved, first require the existing audited purge saga to physically unlink data, commit `PURGED` evidence and release quota. Add one deliberate physical-unlink failure case: it is a successful fail-closed test only if the operation response stays generic/unavailable and independent evidence shows `PURGE_PENDING`, retained ciphertext, no `PURGED` timestamp/Audit, and nonzero reserved quota. Do not retry or erase that state before observation. The disposable runner may remove only its own synthetic files/database during teardown; teardown is not product purge evidence.
+
+**Alternatives/reason:** existing direct source-capture CAP-008/CAP-012 and temporary-store tests do not prove their composition after actual operation admission; mocks or model-only tests likewise cannot prove runtime RLS, Orthanc call bounds, Audit transactions or quota behavior. Keep those tests as supporting coverage, but use the compiled coordinator plus the existing disposable PostgreSQL/RLS and HTTPS Test Orthanc A/B harness for this acceptance. Keep eight independent operation/correlation/idempotency identities so one injected fault cannot satisfy another case accidentally.
+
+**Acceptance before code:** `FAULT-001~008` are specified in `ACCEPTANCE-TESTS.md`. Each case must prove exact expected source call count, closed streams/no open Tenant transaction, operation/Audit/evidence/Provenance/temp/quota state, fixed caller error, zero B/Destination/STOW, observer/privacy pass, B EMPTY before/after, fixture/resource cleanup and existing-stack preservation. The parent matrix stays open until AUTH, SOURCE and all FAULT cases pass. No application route or positive dispatch/STOW authority is introduced. Pre-test state is recorded in [evidence §151](TEST-EVIDENCE.md#151-coord-004-fault-matrix--pre-test-recommendation-and-evidence-plan).
+
+## 117. COORD-004 SOURCE denial group — actual scoped result
+
+**Ticket:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; recommendation and criteria were recorded before the fixture/test edits in §116, evidence §149, and `ACCEPTANCE-TESTS.md`.
+
+**Result:** `./scripts/test-int001-source-capture.ps1 -EnvFile .env` exited **0**. API build and typecheck, focused admission/coordinator tests (**11/11**), JavaScript/PowerShell syntax, and diff checks passed. The complete disposable source suite was **61/61**. The compiled coordinator admitted three synthetic requests and then denied/failed closed at the source boundary: preseeded revoked destination mapping (zero A calls), mismatched DICOM PatientID (one metadata call, zero instance calls), and malformed metadata (one metadata call, zero instance calls, fixed unavailable response). Each persisted operation remained exactly bound and `CREATED`; no handoff, source Integrity/Provenance, temporary storage allocation, instance bytes, destination read or STOW occurred.
+
+**Independent checks:** exact Audit cardinality/identity/outcome and operation bindings passed; evidence and Provenance counts were zero; temporary storage fields and physical files were absent; quota counters were zero; invalid mapping remained unchanged. Privacy observers, existing six mutation-fixture restorations, B EMPTY before/after, wrapper cleanup and existing-stack preservation passed. Final independent owned-resource inventory was 0 containers/volumes/networks, with pre-existing API/PostgreSQL/Orthanc A/B healthy. Exact command output and scope are in [evidence §150](TEST-EVIDENCE.md#150-coord-004-source-denial-group--actual-scoped-result).
+
+**Status at this checkpoint:** SOURCE-001~003 **PASS (scoped)**. AUTH was also scoped PASS; FAULT and parent were still NOT RUN at the time of this entry. That interim status is superseded by §119, which records the later FAULT and parent denial result. Full Mandatory Preflight, dispatch, actual B STOW, destination proof, terminal evidence, product security and `AT-E2E-003` remain open; PACS-001/P0 **PARTIAL**. No route, product schema/privilege, persistent DB/PACS, deployment, commit or push changed.
+
+## 116. COORD-004 SOURCE denial group — pre-test recommendation
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`; continuation of accepted internal COORD-004.
+**Authority:** existing PACS-001 `DEC-004/005/006`, `TC-PACS-001-COORD-004-DENY`, and the standing recommendation-first instruction; no new product policy is proposed.
+**Recommendation before test edits:** create isolated synthetic source-preparation graphs whose admission authority is valid but whose destination PatientMapping is explicitly `REVOKED`, or whose actual synthetic A metadata fails the DICOM PatientID/metadata contract. Invoke the compiled coordinator, not `AuthorizedSourceCaptureService` directly. Assert admitted operation `CREATED`, minimal `DENIED` or fixed unavailable result, zero usable handoff, no Integrity/Provenance/temp-payload allocation, and no Destination/STOW. For metadata mismatch require exactly one metadata request and no instance-byte WADO; for invalid mapping require no A request. Observe the resulting operation/source denial/failure Audit under the independent observer and verify the synthetic REVOKED mapping fixture was immutable. Keep existing six lifecycle-mutation scenarios unchanged and reusable.
+**Alternatives/reason:** toggling the global mapping through an existing lifecycle mutation scenario would consume its one-shot restoration state and couple two Acceptance suites; use a preseeded, isolated invalid mapping graph instead. A direct source-service test is not sufficient to prove composition after actual operation admission.
+**Acceptance before code:** `SOURCE-001` covers invalid mapping; `SOURCE-002` covers PatientID mismatch; `SOURCE-003` covers invalid metadata. All three must bind the expected operation/session/study, remain `CREATED`, have no Integrity/Provenance/handoff/payload, and observe exact Audit plus zero B/STOW. This is only the SOURCE denial sub-gate; FAULT and parent matrix remain open. Pre-code criteria are in `ACCEPTANCE-TESTS.md` and evidence §149.
+
+## 115. COORD-004 AUTH denial matrix — actual scoped result
+
+The AUTH submatrix of `TC-PACS-001-COORD-004-DENY` passed nine actual compiled-coordinator cases under the full disposable wrapper. Malformed/authority-bearing input, missing/revoked/expired authority, withdrawn Consent, wrong scope, cross-Session/Tenant and out-of-package Study were all denied before operation-ID creation and source DICOM requests. Exact no-operation/no-evidence/no-Destination assertions passed, the independent Audit/evidence observer found no unexpected rows, B stayed EMPTY, and cleanup preserved the existing stack. Wrapper: `./scripts/test-int001-source-capture.ps1` exit 0, 60/60 suite, independent observers/privacy and cleanup PASS; detailed evidence [§148](TEST-EVIDENCE.md#148-coord-004-auth-denial-matrix--actual-scoped-result). This is scoped AUTH PASS only; SOURCE/FAULT remain unrun and the parent denial Acceptance remains NOT RUN.
+
+## 114. COORD-004 AUTH matrix — wrapper diagnostic before rerun
+
+The first full `./scripts/test-int001-source-capture.ps1` attempt started the disposable DB/A/B fixture and parsed **60/60** Node tests as passing, but wrapper exit was **1** because the required AUTH marker matcher omitted the `# ` prefix used by Node's TAP reporter. The final independent database observer was therefore not reached, so this is **not** an Acceptance pass. Cleanup and existing-stack preservation passed. Only the test wrapper matcher was corrected; the rerun and independent observer remain required. See [test evidence §147](TEST-EVIDENCE.md#147-coord-004-auth-matrix--first-wrapper-attempt-not-acceptance).
+
+## 113. PACS-001-COORD-004-DENY — composed failure matrix recommendation
+
+**Ticket/classification:** `MEDIQ-PACS-001` / `CAPSTONE-P0`.
+**Authority:** existing accepted PACS-001 `DEC-004/005/006`, COORD-004 Acceptance, and the standing recommendation-first instruction. This is Acceptance/test elaboration inside the accepted internal-only source-preparation scope; it changes no product policy, route, endpoint, schema, database grant, or PACS behavior.
+**Recommendation before test edits:** exercise the real `PacsImportSourcePreparationCoordinator.prepare()` composition against three groups: (AUTH) malformed/authority-bearing input, absent/revoked/expired/wrong-scope or cross-Session/Tenant Grant, withdrawn Consent, and out-of-package Study; (SOURCE) invalid PatientMapping, source PatientID mismatch, and invalid metadata; (FAULT) interrupted WADO, temporary payload write/seal failure, source Integrity/Audit persistence failure, and deferred commit failure. Require each case to distinguish pre-admission denial (no durable operation/state Audit and zero source requests) from post-admission failure (operation stays `CREATED`, no usable handoff, no false terminal state). If staging began, independent evidence must prove physical purge, retained PURGED metadata/Audit and quota release; otherwise leave cleanup explicitly unresolved. Test Orthanc B must remain EMPTY with zero destination calls/STOW.
+**Alternatives/reason:** relying only on source-capture tests does not prove the admission service prevents DICOM retrieval when authority is invalid, and mocked coordinator tests do not prove RLS/Audit/storage compensation. Do not broaden runtime Audit privileges to observe outcomes; use the existing independent observer. Do not use invalid real-patient data or alter normative guards to make fixtures seed.
+**Acceptance before code:** parent `TC-PACS-001-COORD-004-DENY` is expanded with AUTH/SOURCE/FAULT group criteria in `ACCEPTANCE-TESTS.md`. Each fixture uses a unique synthetic correlation and idempotency boundary; actual operation/evidence/payload facts are checked through the approved scoped runtime reads and independent observer, privacy output remains allowlisted, B is independently probed before/after, and the disposable project is fully cleaned while the existing stack is preserved. This paragraph records the pre-test recommendation; outcome, including any still-open matrix cases, will be reported separately in TEST-EVIDENCE.
+
+## 112. PACS-001-COORD-004 — scoped actual integration result
+
+**Ticket:** `MEDIQ-PACS-001` / `CAPSTONE-P0`.
+**Result:** the positive `TC-PACS-001-COORD-004` composition is **PASS (scoped)**. `./scripts/test-int001-source-capture.ps1` exited 0 with the actual compiled admission/source-capture composition against disposable PostgreSQL exact-privilege/forced-RLS and synthetic Test Orthanc A. The integration suite passed 59/59; independent Audit/evidence and privacy observers passed; Orthanc B remained EMPTY before and after; the encrypted temporary payload was physically purged, the persisted opaque reference retained its PURGED evidence, and quota returned to zero. The operation stayed `CREATED`; no Provenance row is expected at this preparation stage.
+**Security boundary:** the runtime Audit read was correctly denied (`42501`) and no runtime grants were expanded. The sensitive handoff stayed in-process. No B call/write, STOW, route/module/worker registration, migration, or existing-stack mutation occurred.
+**Still open:** the full composed `TC-PACS-001-COORD-004-DENY` matrix has not run. Mandatory Preflight, fenced dispatch, actual application STOW, post-STOW destination proof, terminal Integrity/Provenance/Audit/state, product security E2E and `AT-E2E-003` remain NOT RUN; overall PACS-001/P0 is PARTIAL. Detailed command/results/limits: [test evidence §145](TEST-EVIDENCE.md#145-pacs-001-coord-004--actual-admission-to-source-capture-integration). This result closes only the positive source-preparation sub-gate, not the ticket.
+
+## 108. PACS-001-COORD-001 — scoped implementation and Acceptance result
+
+Ticket: `MEDIQ-PACS-001` / `CAPSTONE-P0`; authority: accepted `PACS-001-DEC-001/004` and the standing recommendation-first instruction.
+
+Changed: added `PacsImportOperationAdmissionService` and focused unit/integration coverage. It strictly parses the command, requires a verified principal, reads the persisted Grant inside the verified Tenant transaction, binds Consent from that Grant, acquires the shared Session fence before fresh authorization, and persists/replays a Study-scoped `PACS_IMPORT` operation plus its initial state Audit. The service is intentionally not registered in the application/module graph and has no DICOM, storage, endpoint, controller, or STOW dependency.
+
+Tests executed: `npm run build:api` PASS; `npm run typecheck:api` PASS; `npx vitest run tests/api/pacs-import-operation-admission.test.mjs` PASS (4/4); `node --check tests/database/pacs-import-authorization-fence.integration.test.mjs` PASS; PowerShell parser PASS. `./scripts/test-db-008-full-schema.ps1 -ScratchOnly -PacsAdmissionOnly` exited 0 against an owned disposable PostgreSQL database. It verified exact262 grants/forced RLS; concurrent same-key claims produce one operation and one Audit; exact replay returns that operation; changed Study under the same key conflicts without extra writes; fresh admission is denied after Grant revocation and withdrawn Consent; injected Audit and deferred-COMMIT failures leave operation/Audit counts unchanged. Trigger cleanup and the owned ephemeral project cleanup passed; persistent MediQ DB and Orthanc/PACS were not accessed. Independent `mediq-db008-*` inventory was empty after cleanup.
+
+Not changed: no route/controller/worker registration, no OpenAPI/schema/grant change, no Mandatory Preflight/dispatch/`STOW_STARTED`, no DICOM call/STOW, no PACS mutation, and no commit/push.
+
+Remaining gaps: the COORD-001 denial matrix was subsequently closed within scoped scratch evidence (§110). The DB failure probe covers injected Audit and deferred-COMMIT failures, not network acknowledgment loss during a live commit. This slice ends at durable `CREATED`; no image transfer or full PACS-001/P0 completion is claimed. `AT-E2E-003` remains 0/1; status is PARTIAL.
+
+## 109. PACS-001-COORD-001 denial matrix — pre-test recommendation
+
+**Classification:** CAPSTONE-P0 / `MEDIQ-PACS-001`; test-only continuation of the previously accepted COORD-001 scope, not a policy or product-scope change.
+
+**Recommendation:** close the remaining acceptance gaps by invoking the real admission service against synthetic facts under the existing exact262/forced-RLS scratch database. Cover missing Grant, request Tenant mismatch, persisted Grant recipient-Tenant mismatch, Grant Session mismatch, expired Grant, withdrawn Consent, Study outside the Grant's package, and missing `study:pacs-transfer` scope. For each denial, independently read operation/Audit counts for the affected Session before and after and require no change. Reuse existing synthetic records where their bindings are exact; add only explicitly invalid, scratch-owner-seeded evidence for the recipient-Tenant-mismatch and missing-scope cases. Do not alter schema, grants, runtime code, routes, PACS state, or existing success/failure probes.
+
+**Alternatives/reason:** a mocked policy `DENY` or a nearby repository test is insufficient because it does not prove the actual Grant/Consent facts and Tenant transaction cause the service to deny. Registering a route or broadening Authorization is out of scope. The proposed matrix closes only the existing COORD-001 negative-path acceptance.
+
+**Acceptance before test edits:** actual `PacsImportOperationAdmissionService.admit()` rejects the eight specified fixture cases with only the expected fixed deny class; every case leaves operation and initial Audit counts unchanged; exact262 and forced RLS remain unchanged; valid admission/replay/concurrency, Audit/commit rollback, trigger cleanup, and scratch-project cleanup continue to pass. If the invalid fixture is rejected by an existing database constraint, use an already persisted natural mismatch instead—do not weaken the constraint. This paragraph is the recorded pre-test state; the terminal result is in §110.
+
+## 110. PACS-001-COORD-001 — actual denial matrix result
+
+`./scripts/test-db-008-full-schema.ps1 -ScratchOnly -PacsAdmissionOnly` exited 0 after the §109 pre-test criteria were recorded. The actual admission service denied absent Grant, request Tenant mismatch, persisted recipient-Tenant mismatch, cross-Session Grant, expired Grant, withdrawn Consent, Study outside the Grant-bound package, missing `study:pacs-transfer`, and revoked-Grant replay. Each denial assertion independently compared operation and operation-state Audit counts for its Session before/after; the fixed TAP marker `pacs001_admission_denials=PASS ... no_operation_or_audit=true` was required by the wrapper. The valid concurrent claim/replay/conflict path and injected Audit/deferred-COMMIT rollback remained green. Exact262/forced RLS, trigger cleanup and owned scratch cleanup passed; persistent MediQ DB and PACS were not accessed. This closes the named denial matrix only. It does not implement Mandatory Preflight, dispatch, STOW, destination verification, or full PACS-001/P0 E2E. See test evidence §143.
+
+## 111. PACS-001-COORD-004 — admission-to-source-capture composition recommendation
+
+**Ticket:** `MEDIQ-PACS-001` / `CAPSTONE-P0`.
+**Authority:** accepted `PACS-001-DEC-004/005/006`, existing PACS-001 Acceptance, and the standing recommendation-first instruction; no new product-policy decision is proposed.
+**Recommendation:** implement one internal-only application composition that admits the strict PACS import request, resolves Consent from the persisted Grant under verified Tenant/RLS context, and invokes the existing `captureForCoordinator()` path with that exact operation/authority context. Keep sensitive in-process handoff and per-instance identities out of ordinary results. Verify the operation, identity, Session, Study, Package, source evidence, mapping and encrypted temporary payload remain exactly bound. The composition stops at `CREATED`; it must not transition `PREFLIGHT_PASSED`/`STOW_STARTED`, contact Hospital B, invoke STOW, or be registered in a controller/module/worker.
+**Alternatives/reason:** caller-supplied Consent or a serialized handoff is rejected because neither is a trusted authority boundary. A mock-only composition is rejected because it would not prove actual Tenant/RLS, source capture, storage and Audit interactions. A complete dispatch/STOW coordinator is not being claimed by this slice; DEC-004 still requires later final reauthorization, atomic dispatch, one actual Test PACS attempt, destination verification, terminal evidence and product security/E2E gates.
+**Acceptance before implementation:** `TC-PACS-001-COORD-004` and `-DENY` in `ACCEPTANCE-TESTS.md` require a real compiled application path using disposable PostgreSQL with exact262/forced RLS and synthetic Test Orthanc A; derived Consent and exact handoff binding; operation remains `CREATED`; no patient/DICOM bytes or sensitive identifiers escape; zero B/STOW side effect; each deniable mutation/fault produces no usable handoff; temporary/scratch cleanup and existing-stack preservation are independently evidenced. This recommendation and criteria were recorded before code. See test evidence §144.
+
+## 110. PACS-001-COORD-001 — actual denial matrix result
+
+## 107. PACS-001-COORD-001 — pre-implementation recommendation and Acceptance
+
+**Ticket:** MEDIQ-PACS-001
+**Classification:** CAPSTONE-P0
+**Authority:** accepted `PACS-001-DEC-001/004` plus the standing recommendation-first instruction.
+**Recommendation:** implement an internal, non-route-registered operation-admission service before composing image transfer. Resolve the Consent ID only from the persisted Grant under a verified Tenant transaction; resolve Actor/Tenant from verified identity; acquire the shared ExchangeSession fence before current Authorization evaluation; create/replay the durable exact Study-scoped PACS_IMPORT operation with its state Audit. Keep the new service independent of DICOM, imaging storage, endpoints, and STOW.
+**Alternatives/reason:** no public endpoint or STOW yet (DEC-004 requires full product Acceptance first); do not treat PatientMapping as authorization; never accept caller-supplied Consent, Actor, Tenant, or operation authority.
+**Acceptance:** add `TC-PACS-001-COORD-001~003` for malformed/authority-bearing request rejection, valid/invalid Authorization, durable single-record/Audit creation, exact replay, changed-semantic conflict, concurrency, Audit/commit failure atomicity, exact262/forced RLS, and no route/DICOM side effects. See `ACCEPTANCE-TESTS.md` section `PACS-001-COORD-001`.
+**Scope limit:** this phase ends at `CREATED`; it does not claim Mandatory Preflight, `STOW_STARTED`, DICOM movement or full PACS-001/P0 PASS. No schema/grant/API/OpenAPI change is authorized by this slice. The recommendation and tests were recorded before code.
+
+## 106. DEC-029 attempt 21 — ScratchOnly lifecycle and reset smoke PASS
+
+Ran `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` after attempt 20's fixture correction; wrapper exited **0**. Clean/reapply and post-reset smoke passed the terminalization gates (TERM-020, TERM-030/031, TERM-032~036), Provenance pending-only and INT-001 least-privilege checks, plus the DB-008/009, PACS, Consent, Grant, Exchange, Audit, and registry-policy scratch regressions. Wrapper confirmation: reset/reapply PASS; previous schema regressions explicitly skipped in ScratchOnly; persistent MediQ database not accessed; ephemeral cleanup PASS; final schema validation PASS with scope `scratch_schema_runtime_acceptance_only`. Independent inventory found zero owned scratch containers, volumes or networks, and existing API/PostgreSQL/Orthanc A/B services remained healthy. This is a scoped disposable database/schema acceptance result, not deployment or product transfer completion. No actual Hospital A→MediQ→B STOW-RS, destination-byte verification, physical PACS purge, or product E2E was executed; `AT-E2E-003` remains 0/1 and PACS-001/P0 remain PARTIAL. No product/schema/guard/privilege change was made in this fixture-only correction.
+
+## 105. DEC-029 attempt 20 — align synthetic destination evidence time
+
+Attempt 20 progressed through earlier DB/RLS/PACS/Exchange/Consent/Grant and session-fence checks but failed in `SYNTHETIC_DESTINATION_EVIDENCE`, before terminalization. The wrapper's fixed diagnostic facts all read true; this does not constitute a terminalization PASS. Inspection of the destination-evidence repository showed its input contract requires `comparedAt <= now`. The fixture aligned `comparedAt` to the VERIFYING timestamp but still sourced `destinationRecordedAt` from an independent database clock, which could precede it. Changed only the synthetic fixture to choose `GREATEST(clock_timestamp(), comparedAt)` and assert the ordering. No product code, schema, privilege, guard, or Acceptance was changed or weakened. Owned scratch-resource inventory is zero and the persistent DB/PACS were not touched. The then-pending rerun is superseded by the exit-0 ScratchOnly result in §106.
+
+## 104. DEC-029 attempt 19 — synthetic audit chronology defect isolated
+
+Attempt 19 passed the first clean ScratchOnly cycle, including TERM-020, TERM-030/031, TERM-032~036 and Provenance, then post-reset smoke failed in TERM-035 at `23514 / PROVENANCE_TERMINALIZATION_GUARD`. Exact flags: VERIFYING Audit exists and is at/after STOW, but its timestamp is after destination verification; all other categories pass. The helper constructs state transitions at deterministic +10ms increments from a host clock, while destination time came directly from PostgreSQL `clock_timestamp()`, so the fixture could represent destination verification before its own VERIFYING transition. Corrected the test fixture only: `comparedAt` is now max(DB clock, VERIFYING updatedAt), with an explicit fixture assertion. This preserves the canonical time-order guard and product code. Cleanup/independent scratch inventory passed; existing services healthy; persistent DB/PACS untouched. Local checks and full ScratchOnly rerun pending.
+
+## 103. DEC-029 attempt 18 — VERIFYING Audit condition is the remaining false group
+
+Attempt 18 passed prior DB/RLS/PACS/Exchange/Consent/Grant regressions and reached TERM-035. Exact diagnostics showed runtime, resource lifecycle, operation/session timing, Provenance/integrity, authorization, purge Audit, Preflight Audit, STOW_STARTED Audit, destination-authorization Audit, and terminal Audit all true. Only `VERIFYING` Audit's combined time-window predicate was false; Provenance was denied by the canonical guard. ScratchOnly cleanup and independent zero-resource inventory passed; existing services healthy and persistent DB/PACS untouched. Split verification into existence, lower-bound, upper-bound, and dispatch-before-verification checks. Synthetic timestamp drift is only a hypothesis pending those results. No product behavior or Acceptance changed.
+
+## 102. DEC-029 attempt 17 — prerequisite Audit group was false
+
+Attempt 17 passed prior DB/RLS/PACS/Exchange/Consent/Grant regressions and reached TERM-035. Exact-aligned read-only diagnostics returned true for runtime, resource lifecycle, operation/session timing, Provenance/integrity, authorization scope, purge Audit, and terminal Audit, but false for the aggregate prerequisite-Audit group; canonical facts remained false and Provenance guard failed closed with `23514`. ScratchOnly cleanup and independent zero-resource inventory passed; existing services healthy and persistent DB/PACS untouched. Split prerequisite group into Preflight, STOW_STARTED, VERIFYING, and destination-authorization Audit checks to identify the failed requirement. No security predicate or Acceptance changed.
+
+## 101. TERM-035 exact predicate-group diagnostics refined
+
+The attempt 16 broad groups were insufficient to explain the canonical false. Replaced the TERM-035 boundary probe with finer Boolean categories for the canonical identity/bindings, package/study lifecycle, operation/session timing, Provenance/integrity, authorization scope, purge Audit, ordered prerequisite Audits and terminal Audits. It runs read-only immediately before Provenance UPDATE inside its dedicated savepoint and emits only fixed booleans. The PowerShell wrapper accepts only the exact field sequence and bounded SQLSTATE marker. No policy, product write, Acceptance predicate or guard changed. Fresh local checks and full ScratchOnly run pending.
+
+## 100. DEC-029 attempt 16 — broad fact groups did not cover canonical predicate
+
+Attempt 16 passed preceding DB/RLS/PACS/Exchange/Consent/Grant gates, including CON-005, then reached TERM-035. The read-only diagnostic ran at the failed-Provenance boundary and reported `canonical=false` while runtime context, broad resource/integrity/lifecycle, Consent/Grant, prerequisite-Audit and terminal-Audit groups were all `true`. The update was still rejected by `23514 / PROVENANCE_TERMINALIZATION_GUARD`. This demonstrates the diagnostic categories were incomplete; it does not indicate a false rejection or authorize weakening the DB guard. ScratchOnly cleanup passed; independent inventory found zero owned scratch resources; existing services healthy; persistent DB/PACS untouched. Next refine category queries to exactly match canonical conjuncts and repeat. Overall P0 remains PARTIAL.
+
+## 99. TERM-035 canonical fact probe added before Provenance UPDATE
+
+Added an integration-test-only hook immediately before the TERM-035 repository's Provenance write. In the same runtime transaction and with the actual synthetic operation/completion time and active terminal-correlation context, it evaluates the canonical predicate and fixed Boolean groups under a dedicated savepoint. The wrapper surfaces only those fixed flags through a strict allowlist; no IDs, timestamps, query, payload or raw errors. Diagnostic query failure is rolled back to its savepoint and yields only SQLSTATE/unavailable; the product write then proceeds unchanged if the diagnostic cleanup succeeds. PowerShell parser, Node syntax for both modified integration tests, focused terminalization tests (**7/7**) and diff checks passed. Fresh full ScratchOnly pending; no security guard or Acceptance weakened.
+
+## 98. DEC-029 attempt 15 — TERM-035 Provenance guard constraint identified
+
+Attempt 15 passed all preceding DB/RLS/PACS/Exchange/Consent/Grant gates, including CON-005, then failed TERM-035 at Provenance UPDATE with SQLSTATE `23514` and allowlisted constraint `PROVENANCE_TERMINALIZATION_GUARD`. The savepoint rollback completed and wrapper cleanup passed. Independent inventory found zero owned scratch resources; existing API/PostgreSQL/Orthanc A/B remained healthy; persistent DB/PACS were not accessed. This confirms the rejection comes from the canonical Provenance terminalization guard, not a SAVEPOINT command failure, but does not yet identify which fact is false. Add a dedicated-savepoint, read-only canonical-predicate/category probe immediately before that update; preserve the exact write and Acceptance. Fresh local/full ScratchOnly verification pending; P0 remains PARTIAL.
+
+## 97. DEC-029 attempt 14 — unrelated CON-005 concurrency regression stopped the wrapper
+
+Attempt 14 passed preceding database, RLS, PACS, Exchange and Consent request checks, then stopped before terminalization because CON-005 withdrawal's `CONCURRENCY` stage failed; CON-004/005 reported one passing and one failing subtest. ScratchOnly cleanup passed. Independent inventory showed zero owned scratch containers/volumes/networks; existing API/PostgreSQL/Orthanc A/B services remained healthy; persistent DB/PACS were untouched. The sanitized wrapper did not disclose which concurrency assertion failed. Added a test-only fixed marker for status codes, replay count and Audit count, plus bounded wrapper extraction, while preserving the exact existing expectation (200/200, one replay, one Audit). No product behavior or Acceptance changed. Fresh syntax/focused checks and full ScratchOnly rerun pending; overall P0 remains PARTIAL.
+
+## 96. DEC-029 attempt 13 — TERM-035 failure reproduced, safe marker hidden by wrapper
+
+Attempt 13 repeated attempt 12: preceding DB/RLS/PACS/Consent/Grant gates passed, terminalization failed at TERM-035/`SQL_SAVEPOINT` with fixed `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`, and ScratchOnly cleanup passed. The test process's new first-inner-query diagnostic is captured by the PowerShell wrapper, but the wrapper's final sanitized summary does not yet extract it; therefore no underlying SQLSTATE is claimed from this attempt. Persistent DB/PACS were not accessed. Added an allowlisted extraction for only category, SQLSTATE and known constraint marker in the wrapper's failure message. Local parser/tests and a full fresh ScratchOnly rerun are pending. Overall P0 remains PARTIAL.
+
+## 95. DEC-029 attempt 12 — TERM-035 savepoint-stage failure
+
+The twelfth full ScratchOnly run passed the earlier DB/RLS/PACS/Consent/Grant regressions and completed its wrapper cleanup, but the terminalizer acceptance failed at `TERM035_SQL_SAVEPOINT` with fixed error `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. Independent post-run inventory found zero owned `mediq-db008-*` containers, volumes, or networks; existing API/PostgreSQL/Orthanc A/B services remained healthy; persistent DB/PACS were not accessed. The existing wrapper's stage tracking was overwritten by later savepoint/rollback calls, so the original inner failure remains unknown. Added a test-only first-failure diagnostic limited to SQL category, SQLSTATE and allowlisted constraint. No behavioral or policy change. Fresh full ScratchOnly pending; P0 remains PARTIAL.
+
+## 94. TERM-036 predicate category diagnostics — before full rerun
+
+Added test-only, read-only category booleans immediately after a false result from the canonical TERM-036 predicate. The categories are runtime context, resource/integrity/lifecycle bindings, Consent/Grant scope, prerequisite Audits, and exact terminal Audits. Only fixed category labels and Boolean values are emitted. This helps locate the failed fact without changing the canonical predicate, production code, grants, schema, or Acceptance. `node --check`, focused terminalization tests (**7/7**), and `git -c core.safecrlf=false diff --check` passed. A fresh full ScratchOnly execution is pending; no database result is claimed.
+
+## 93. TERM-036 canonical predicate false on latest ScratchOnly run
+
+Attempt 11 ran the full `-ScratchOnly` wrapper after fixed TERM-035 query tracing. It passed schema, exact privilege/RLS, PACS, Consent and Grant prerequisites, then failed in TERM-036 at `SAME_PRINCIPAL_TERMINAL_FACTS_PRECHECK` with fixed assertion `TERM036_DATABASE_TERMINAL_FACTS_REJECTED`. The wrapper cleaned its temporary project; independent resource inventory found zero owned containers/volumes/networks and the existing MediQ services remained healthy. Persistent DB/PACS were not accessed. This run did not reach final reset/reapply or complete DEC-029. Attempt 10 had passed the same canonical precheck in its first clean cycle, so a run-to-run difference is observed, but its cause is not established. Next add read-only fixed boolean groups for resource/state/evidence, authorization, lifecycle Audits, purge, and terminal Audit predicates; emit only group names and true/false, never row values. No guard, policy, expiry, grant, or Acceptance condition may be weakened.
+
+## 91. TERM-035 repository-query stage tracing — before rerun
+
+Attempt 10 completed the first clean ScratchOnly cycle, including TERM-032~036 and the TERM-036 canonical facts precheck, but its post-reset/reapply integration cycle failed at `TERM035_REPOSITORY_FINALIZE` with `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. Add a test-only transparent query wrapper around only the TERM-035 repository invocation. It classifies SQL by a fixed allowlisted category and captures only SQLSTATE plus allowlisted constraint name when `query` rejects; parameters, raw SQL, rows, messages, IDs and secrets are never emitted. Repository calls and results are forwarded unchanged. No production repository, guards, acceptance checks, timeout, migration or privilege change. Local syntax/unit/diff checks and another full ScratchOnly run are required.
+
+## 90. DEC-029 tenth ScratchOnly attempt — first cycle passes, reapply TERM-035 fails
+
+The tenth full `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` execution passed all initial DB-008/RLS/PACS/Consent/Grant regressions. Its first terminalization cycle emitted PASS for TERM-020, TERM-030/031 and TERM-032~036, including fault atomicity, retry-once, concurrency/replay, multi-Study boundaries, shared-principal residual, and the TERM-036 provenance facts precheck. It also passed the following Provenance pending-only gate. The wrapper then reset/reapplied the disposable schema and reran regressions; this second cycle failed at `TERM035_REPOSITORY_FINALIZE` with `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. The wrapper cleanup passed. Independent inventory showed zero owned scratch containers/volumes/networks and the existing API/PostgreSQL/Orthanc A/B services healthy; persistent DB/PACS were not accessed. This is not a full DB-008 ScratchOnly PASS because the reapply cycle did not complete, though the first-cycle terminalization probes passed. The exact repository SQL failure is not exposed by the fixed error surface; test-only allowlisted query-stage tracing is next.
+
+## 91. TERM-035 repository-query stage tracing — before rerun
+
+Attempt 10 completed the first clean ScratchOnly cycle, including TERM-032~036 and the TERM-036 canonical facts precheck, but its post-reset/reapply integration cycle failed at `TERM035_REPOSITORY_FINALIZE` with `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. Added a test-only transparent query wrapper around only the TERM-035 repository invocation. It classifies SQL by a fixed allowlisted category and captures only SQLSTATE plus allowlisted constraint name when `query` rejects; parameters, raw SQL, rows, messages, IDs and secrets are never emitted. Repository calls and results are forwarded unchanged. No production repository, guards, acceptance checks, timeout, migration or privilege change. `node --check` passed; focused terminalization tests passed **7/7**; `git -c core.safecrlf=false diff --check` passed. A full ScratchOnly rerun is pending.
+
+## 90. DEC-029 tenth ScratchOnly attempt — first cycle passes, reapply TERM-035 fails
+
+The tenth full `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` execution passed all initial DB-008/RLS/PACS/Consent/Grant regressions. Its first terminalization cycle emitted PASS for TERM-020, TERM-030/031 and TERM-032~036, including fault atomicity, retry-once, concurrency/replay, multi-Study boundaries, shared-principal residual, and the TERM-036 provenance facts precheck. It also passed the following Provenance pending-only gate. The wrapper then reset/reapplied the disposable schema and reran regressions; this second cycle failed at `TERM035_REPOSITORY_FINALIZE` with `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. The wrapper cleanup passed. Independent inventory showed zero owned scratch containers/volumes/networks and the existing API/PostgreSQL/Orthanc A/B services healthy; persistent DB/PACS were not accessed. This is not a full DB-008 ScratchOnly PASS because the reapply cycle did not complete, though the first-cycle terminalization probes passed. The exact repository SQL failure is not exposed by the fixed error surface; test-only allowlisted query-stage tracing is next.
+
+## 88. TERM-036 database-facts precheck — before rerun
+
+The ninth full ScratchOnly run exercised the new TERM-035 substages successfully and isolated TERM-036 failure to `SAME_PRINCIPAL_PROVENANCE_UPDATE`, SQLSTATE `23514`. Before that update the test had inserted the exact terminal Audit events and set the transaction-local correlation. Added a read-only call to the existing `pacs_transfer_terminal_facts_valid(operation_id, completed_at, correlation_id)` function immediately before the update under the same runtime Tenant/correlation context. It reports only one boolean, establishing whether the canonical DB fact predicate itself is false or a separate trigger constraint rejects the write. It does not mutate data, relax the guard, or change product code/Acceptance. `node --check`, focused terminalization tests **7/7**, and `git diff --check` passed. A fresh full ScratchOnly run is pending; no database result is claimed yet.
+
+## 87. DEC-029 ninth ScratchOnly attempt — TERM-035 passed; provenance guard rejected
+
+The ninth full DB-008 ScratchOnly wrapper passed all preceding database, PACS, Consent and Grant regressions and advanced through TERM-035; its newly added TERM-035 fixture/setup and repository-finalizer stages no longer failed. It reached TERM-036 and failed while updating the coherent direct-SQL fixture's `provenance_records` row, with SQLSTATE `23514` at fixed stage `SAME_PRINCIPAL_PROVENANCE_UPDATE`. The wrapper completed temporary-project cleanup. Independent post-run inventory returned zero `mediq-db008-*` containers, volumes and networks; the existing API/PostgreSQL/Orthanc A/B services remained healthy; persistent database/PACS were not accessed. This narrows the earlier TERM-036 broad failure but does not yet distinguish a false terminal-facts predicate from another trigger condition. TERM-032~036 remain unaccepted; no product STOW/P0 E2E was run.
+
+## 85. TERM-035 fixture/finalizer stage precision — before rerun
+
+Following ScratchOnly attempt 8, added fixed test-only substages around the TERM-035 two-Study fixture preparation, target observations, runtime Tenant context, repository finalizer, and commit. The attempt failed before TERM-036 with fixed error `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE` while the stage still read `TWO_STUDY_FIXTURE_CHECK`; therefore it does not establish which SQL/finalizer step failed. This differs from attempt 7's TERM-036 SQLSTATE `23514`. Changes are diagnostic labels only; no product behavior, authorization, SQL guards, schema, grants, timeout, or Acceptance condition changed. `node --check` passed; focused terminalization tests passed **7/7**; PowerShell parser and `git diff --check` passed. The next complete ScratchOnly run is required to identify the precise TERM-035 boundary. The wrapper cleaned all owned resources; persistent DB/PACS were not accessed and existing services remained healthy.
+
+## 84. DEC-029 eighth ScratchOnly attempt — TERM-035 finalizer unavailable
+
+The eighth full DB-008 ScratchOnly wrapper passed migration, catalog, runtime role/grant, Tenant RLS, and preceding PACS/Consent/Grant regressions. It then failed in the terminalization integration test before TERM-036: safe wrapper output reported stage `TWO_STUDY_FIXTURE_CHECK`, probe `not_applicable`, and `PACS_TRANSFER_TERMINALIZATION_UNAVAILABLE`. The label was set before the TERM-035 fixture and remained unchanged through its repository finalizer, so the exact substep is unresolved. Wrapper temporary-project cleanup passed. Independent inventory found zero owned `mediq-db008-*` containers/volumes/networks; the existing API/PostgreSQL/Orthanc A/B services remained healthy. Persistent database and PACS were not accessed. No TERM-032~036 Acceptance PASS is claimed.
+
+## 83. TERM-036 diagnostic stage precision — before rerun
+
+Following the seventh fresh DB-008 `-ScratchOnly` attempt, added fixed test-only stage labels around the shared-principal fixture construction and each direct SQL substep. This is diagnostic-only: no product source, migration, schema, privilege, security condition, or Acceptance assertion changed. The next run must identify the exact fixture/write boundary that raised SQLSTATE `23514`; preserve the coherent-same-principal Acceptance expectation and do not weaken terminal guards. Local Node syntax and focused terminalization unit checks passed after instrumentation. Fresh ScratchOnly execution, full reset/reapply, and cleanup remain pending.
+
+## 82. DEC-029 seventh ScratchOnly attempt — TERM-036 constraint failure
+
+The seventh full disposable ScratchOnly wrapper passed its baseline schema/RLS/PACS/Consent/Grant regressions and the previously failing TERM-034 exact terminal-Audit count query, then failed in TERM-036, the shared-`mediq_runtime` principal coherent-direct-SQL probe, with SQLSTATE `23514`. The then-current stage label covered the whole fixture/probe and did not identify which check-constraint trigger rejected it. Wrapper cleanup completed; independent inventory found no `mediq-db008-*` container, volume, or network, and the existing API/PostgreSQL/Orthanc A/B services remained healthy. The persistent database and PACS were not accessed. This is not evidence that the DB guard is wrong or that direct SQL should be allowed; exact failing substep was unknown until diagnostic-only stage markers are exercised. TERM-032~036 remain unaccepted and the overall P0 remains PARTIAL.
+
+## 81. TERM-034 terminal Audit count scope — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Correct the test-only exact-once aggregate query after the sixth ScratchOnly run
+Changed: Require winner correlation_id for all four terminal events; additionally require reason_code='COMPLETED' for the operation-state Audit, excluding ordinary prior state-transition Audits
+Not changed: Product source, Audit writer, expected event count (still exactly 4), required per-event facts, schema/grants, Acceptance/security policy or persistent DB/PACS
+Security impact: Query remains on the independent synthetic scratch observer; no raw rows/IDs are emitted
+Tests executed: Node syntax, PowerShell parser, diff check, focused terminalization unit test 7/7 PASS
+Tests not executed: ScratchOnly actual DB/RLS rerun with the corrected query; TERM-032~036 full completion
+Evidence: TEST-EVIDENCE.md §117
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Corrected count query has not yet been exercised against a fresh disposable DB; DEC-029 remains PARTIAL
+Status: Test-scope correction ready; full ScratchOnly rerun required
+```
+
+## 80. DEC-029 sixth ScratchOnly attempt — overbroad terminal Audit count
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fresh disposable DB-008 ScratchOnly wrapper with allowlisted first-line assertion diagnostics
+Changed: No files changed during the actual run
+Not changed: Persistent DB/PACS, product source/schema/grants, existing services; no real DICOM or credentials
+Security impact: Scratch-only synthetic test. Wrapper cleanup PASS; independent inventory found no owned containers/volumes/networks and existing API/PostgreSQL/Orthanc A/B remained healthy
+Tests executed: Baseline migration/catalog/exact262/RLS, PAT/IAM/AUT, PACS-007, temporary payload, EXC, Consent, Grant and PACS Session-fence regression markers passed. The terminalization child exited 1 (0 passed / 1 failed) at TERM031_AUDIT_ASSERTIONS with safe error `TERM034_TERMINAL_AUDIT_NOT_EXACTLY_ONCE`. The preceding exact four correlated Audit-row assertions passed; failure came from the subsequent total count assertion
+Tests not executed: TERM-035/036 and full TERM-032~036 Acceptance, final wrapper reset/reapply/success gate
+Evidence: TEST-EVIDENCE.md §116
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Inspection showed the aggregate query counted all operation state-change events for the same operation/session, not only the terminal correlation; it lacked `correlation_id` and COMPLETED `reason_code` filters. No actual count value is reported or inferred
+Status: PARTIAL; scratch cleanup independently verified
+```
+
+## 78. TERM-031 multiline assertion safe-prefix extraction — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fix safe diagnostic extraction when Node AssertionError appends a multiline actual/expected diff
+Changed: The test catch now takes only the first line of error.message, validates it against the fixed TERM/terminalizer/SQLSTATE allowlist, and emits only that validated token; all following lines are discarded
+Not changed: Product source, expected Audit facts, acceptance assertions, schema/grants, wrapper raw-output suppression or persistent environments
+Security impact: Synthetic probe with marker values confirmed no actual/expected values pass to output; only a fixed code is emitted
+Tests executed: Node syntax, PowerShell parser, git diff --check, synthetic safe-prefix extraction probe, focused terminalization unit tests 7/7 PASS
+Tests not executed: Fresh ScratchOnly after this change; actual mismatching Audit field remains unknown
+Evidence: TEST-EVIDENCE.md §114
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: The next disposable integration run must reveal a fixed TERM031_AUDIT_* code or remain generic; Acceptance has not passed
+Status: Diagnostic-only correction ready; P0 PARTIAL
+```
+
+## 77. DEC-029 fifth ScratchOnly attempt — safe code still collapsed
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fresh disposable DB-008 ScratchOnly execution after outer-catch safe-code propagation
+Changed: No files changed during the integration run
+Not changed: Persistent DB/PACS, product schema/grants/runtime, existing services; no real DICOM or credentials
+Security impact: Scratch-only synthetic data. Wrapper cleanup PASS; independent inventory found no owned containers/volumes/networks and existing services remained healthy
+Tests executed: Baseline schema/catalog/exact privileges/RLS, PAT, PACS-007, temporary payload, EXC, Consent, Grant and PACS Session-fence regressions passed. Terminalization child exited 1 (0 passed / 1 failed), stage TERM031_AUDIT_ASSERTIONS, safe_error=ASSERTION_FAILED. No TERM-032~036 Acceptance PASS
+Tests not executed: Exact field did not reach sanitized wrapper; TERM-035/036 and final reset/reapply/successful wrapper completion were not established
+Evidence: TEST-EVIDENCE.md §113
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Safe output behavior, not product data, obscured the specific mismatch. Synthetic assertion reproduction showed Node's error.message contains a fixed first-line code followed by a multiline value diff
+Status: PARTIAL; scratch cleanup independently verified
+```
+
+## 76. TERM-031 safe field-code propagation — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Ensure the disposable integration wrapper can report the fixed TERM-031 assertion code
+Changed: The test's outer catch now emits only an allowlisted assertion message, SQLSTATE, or fixed generic category as TERM030/032/035/036_ERROR; raw error and database facts remain suppressed
+Not changed: Acceptance facts, field assertions, product source, schema/grants, fixtures, persistent DB/PACS or runtime
+Security impact: Output remains fixed-code-only and synthetic; no Audit row values, identifiers, secrets or raw error text are included
+Tests executed: Node syntax, PowerShell parser, git diff --check, focused terminalization unit test 7/7 PASS
+Tests not executed: Fresh ScratchOnly after safe-code propagation; TERM-032~036 complete lifecycle
+Evidence: TEST-EVIDENCE.md §112
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Exact mismatching field still unknown; next disposable run required
+Status: Diagnostic propagation ready; P0 PARTIAL
+```
+
+## 75. DEC-029 fourth ScratchOnly attempt — generic assertion remained
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fresh disposable DB-008 ScratchOnly wrapper after field-level Audit assertions were introduced
+Changed: No files changed during execution
+Not changed: Persistent DB/PACS, product schema/grants/runtime, existing services; no real DICOM or credentials
+Security impact: Scratch-only synthetic test; wrapper cleanup PASS. Independent inventory found zero owned mediq-db008 containers/volumes/networks; existing API/PostgreSQL/Orthanc A/B remained healthy
+Tests executed: Scratch migration/catalog/role/262-grant/RLS, PAT/IAM/AUT, PACS-007 and temporary payload, EXC, Consent, Grant, and session-fence revocation regression markers passed. Terminalization child exited 1 (0 passed / 1 failed) at TERM031_AUDIT_ASSERTIONS; wrapper reported only safe_error=AssertionError. No TERM-032~036 Acceptance PASS
+Tests not executed: Exact failed Audit field was not surfaced; TERM-035/036, final reset/reapply and successful wrapper terminal status were not established
+Evidence: TEST-EVIDENCE.md §111
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Field-level checks do not yet yield an actionable code through wrapper summary; the test expectation/product discrepancy must be identified without weakening Audit requirements
+Status: PARTIAL; scratch cleanup independently verified
+```
+
+## 74. TERM-031 fixed-field Audit assertion diagnostics — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Test-only diagnostic refinement under DEC-029 TERM-031; preserve every acceptance fact
+Changed: Replaced one opaque deep equality over terminal Audit rows with fixed assertions for event count/action set/resource type/resource ID/result/reason/correlation/timestamp. Failure messages expose only stable TERM codes, never row contents or identifiers
+Not changed: Product source, schema/grants, Audit policy, expected terminal Audit facts, test fixtures, database/PACS/infra or acceptance criteria
+Security impact: Diagnostic output remains allowlisted and synthetic-only; no PHI, SQL row, IDs, secrets or raw error details are emitted
+Tests executed: Node syntax, PowerShell parser, git diff --check, focused terminalization unit test (7/7) PASS after this edit
+Tests not executed: Fresh ScratchOnly after the field-level assertion change; full TERM-032~036 Acceptance/reset-reapply
+Evidence: TEST-EVIDENCE.md §110
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: The exact mismatching Audit fact is not yet known; the full terminalization test and DEC-029 Acceptance remain PARTIAL
+Status: Diagnostic correction ready; ScratchOnly rerun required
+```
+
+## 73. DEC-029 third ScratchOnly attempt — advanced to TERM-031 Audit assertions
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fresh disposable DB-008 ScratchOnly wrapper with exact waiter-PID pg_locks observer
+Changed: No implementation during the run; the following diagnostic correction was made only after preserving this result
+Not changed: Persistent DB/PACS, product source/schema/grants, existing services; no real DICOM or credentials
+Security impact: Synthetic-only disposable DB. Wrapper cleanup PASS; independent Docker inventory found zero owned mediq-db008 containers/volumes/networks. Existing API/PostgreSQL/Orthanc A/B remained healthy
+Tests executed: Static checks and focused 7/7 had passed before launch. Scratch migrations, catalogs, exact262/forced-RLS probes, PAT/IAM/AUT, PACS-007, temporary payload, EXC, Consent, Grant, and Session-fence revocation regression markers passed. The terminalization child exited 1 (0 passed / 1 failed) at TERM031_AUDIT_ASSERTIONS with safe_error=AssertionError. Test control flow reached this post-commit stage after the session-fence competition helper returned; this indicates the exact-PID lock observation and earlier helper assertions were traversed, but does not establish the complete TERM-032~036 Acceptance
+Tests not executed: The opaque Audit-row aggregate assertion did not identify its field; terminalization child remainder, wrapper reset/reapply, and final TERM-032~036 PASS were not reached
+Evidence: TEST-EVIDENCE.md §109
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: The exact Audit mismatch must be isolated without relaxing expected Audit facts; no complete terminalizer Acceptance, actual product STOW or original A-to-B P0 E2E is established
+Status: PARTIAL; scratch cleanup verified; existing DB/PACS unchanged
+```
+
+## 72. TERM-034 exact backend advisory-lock observer — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Test-observation correction under existing DEC-029 TERM-034; no Acceptance or product change
+Recommendation: After the waiter connects, capture its exact `pg_backend_pid()`. While the holder owns the Session fence, poll `pg_locks` for that PID's ungranted advisory lock in the current database. Continue to fail if not seen within the unchanged bound; only proceed to winner/loser/replay when actual PostgreSQL lock-table evidence proves overlap.
+Reason: Two ScratchOnly runs failed the former `pg_stat_activity` observer with TERM034_WAITER_DID_NOT_REACH_SESSION_FENCE. The second result identified only that the observer did not see a waiter; it did not prove the advisory lock itself was absent.
+Changed: Replaced application_name/state/wait_event matching with the exact waiter PID and `pg_locks (locktype='advisory', granted=false, current database)` query. Two independent `mediq_runtime` clients, Session fence, winner/loser assertions and fail-closed deadline are unchanged.
+Security/scope: ScratchOnly synthetic integration only; no schema, grant, product code, PACS, persistent DB or credential change.
+Tests executed: Node syntax, PowerShell parser, `git diff --check` — PASS.
+Tests not executed: Actual ScratchOnly rerun; TERM-034 plus TERM-035/036 remain not accepted until real DB evidence.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §108
+Status: Observer correction ready; next action full ScratchOnly rerun; P0 PARTIAL
+```
+
+## 71. DEC-029 second ScratchOnly attempt — advisory waiter not observed
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Fresh disposable DB-008 ScratchOnly execution after TERM-034 phase diagnostics
+Result: ./scripts/test-db-008-full-schema.ps1 -ScratchOnly exited 1. Existing migrations, exact262/RLS and PACS/Consent/Grant regressions again passed. The terminalization child failed at safe phase TERM034_STAGE=WAIT_FOR_REAL_SESSION_LOCK_FAILED with TERM034_WAITER_DID_NOT_REACH_SESSION_FENCE. The phase-specific result means the test did not observe the waiting runtime client within its bounded interval; winner/loser/replay and TERM-035/036 did not run in this attempt.
+Changed: None during the run. Wrapper cleanup emitted PASS; independent Docker inventories found no mediq-db008-* container/volume/network; the existing MediQ API/PostgreSQL/Orthanc A/B stayed healthy.
+Not changed: No product source, migration, grant, persistent DB, PACS data, or deployment.
+Next: Replace only the lock-wait observer with an exact backend-PID query for an ungranted advisory lock (`pg_locks`), retaining two actual `mediq_runtime` clients, the same Session fence, bounded wait, winner/loser/replay and independent state assertions. A missing lock wait remains failure; do not waive synchronization.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §107
+Status: PARTIAL; TERM-034 synchronization not yet proven; owned scratch cleaned; P0 PARTIAL
+```
+
+## 70. TERM-034 safe race-phase diagnostics — before rerun
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: Test diagnostics only for the failed DEC-029 ScratchOnly competition phase
+Recommendation: Preserve the existing TERM-032~036 behavior/acceptance; add fixed phase markers around holder transaction/fence, waiter lock observation, winner commit, loser conflict/commit, replay conflict/commit and transaction-local GUC checks. Expose only an allowlisted TERM034 code, SQLSTATE or fixed assertion category in wrapper diagnostics; continue suppressing raw PostgreSQL/test output.
+Reason: The first actual run safely reported only TERM033_034_SESSION_FENCE_COMPETITION + AssertionError, which does not locate the failing sub-operation. The same run's scratch resources were cleaned and the active MediQ services remained healthy.
+Changed: Added phase-only `TERM034_STAGE` markers and a fixed safe error classifier to the test helper, and taught the ScratchOnly wrapper to retain the last phase and allowlisted error. No assertion, timing bound, lock, product source, schema, grant or Authorization condition was changed.
+Tests executed: Node syntax check, PowerShell parser, `git diff --check` — PASS.
+Tests not executed: Second actual ScratchOnly run and full reset/reapply; TERM-032~036 remain NOT ACCEPTED pending that run.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §106
+Status: Diagnostic-only correction ready for a fresh ScratchOnly execution; P0 PARTIAL
+```
+
+## 69. DEC-029 first actual ScratchOnly attempt — race-stage failure
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: DEC-029 actual disposable DB-008 ScratchOnly test attempt only
+Changed: None during the execution. The previously recorded TERM-032~036 test implementation and fixtures were exercised.
+Result: ./scripts/test-db-008-full-schema.ps1 -ScratchOnly exited 1. Scratch migration/catalog/RLS, DB-009 synthetic Tenant fixture, PACS-007 regressions, temporary-payload regression, exact262/RLS boundary, Consent/Grant regressions and PACS Session-fence regression emitted PASS. The terminalization Node child exited 1 (pass=0, fail=1) at the broad stage TERM033_034_SESSION_FENCE_COMPETITION with AssertionError. The wrapper intentionally suppressed raw child output; the failing sub-operation is not yet known.
+Changed outside scope: No product code, migration, grant, live DB/PACS data or deployed service was changed. The wrapper's own cleanup emitted PASS; independent Docker inventories found no mediq-db008-* container, volume or network. Existing mediq-api, PostgreSQL and Orthanc A/B remained healthy.
+Tests not executed: Complete TERM-032~036 acceptance is NOT ACCEPTED; full DB-008 reset/reapply lifecycle did not run after the child failure; persistent DB-002~007 and product coordinator/STOW/full A→B remain outside/not run.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §105
+Remaining risk: The child failure output is insufficient to identify whether the lock waiter, winning finalize, loser conflict, replay, or GUC check failed. Add safe phase-level TERM034 diagnostics and rerun only after that test change; do not claim the broad gate PASS.
+Status: PARTIAL; actual ScratchOnly attempt failed; no scratch resource remains; P0 PARTIAL
+```
+
+## 68. DEC-029 test-only implementation — actual ScratchOnly acceptance pending
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; test-only TERM-032~036 coverage following the pre-code DEC-029 recommendation/Acceptance
+Changed: Added ScratchOnly fixture identities for a separate exact two-Study Session; guarded the runtime integration probe behind an explicit ScratchOnly marker and made the wrapper refuse this fault-injection slice without -ScratchOnly. Added owner-installed, operation/stage-scoped transient PostgreSQL triggers at all seven terminal writes; each runtime failure checks the fixed unavailable error, savepoint rollback, Tenant transaction usability, outer COMMIT, unchanged target row versions and independent scope fingerprints, and trigger removal. Added one post-rollback finalization through two clients synchronized on the real Session advisory fence, replay denial, multi-Study selected-only completion, and coherent same-principal direct SQL boundary observation.
+Not changed: Product source/domain behavior, migrations/journal, runtime grants (exact262 unchanged), public API/route, coordinator, PACS endpoints or deployed services. No persistent DB or Orthanc was used.
+Security impact: Test-only synthetic data. Transient triggers/function exist only inside the disposable ScratchOnly database and must be removed/independently inventoried absent. The coherent SQL result is an explicit shared-principal trust residual, not supported product authorization/STOW evidence.
+Tests executed: node --check tests/database/pacs-transfer-terminalization-runtime.integration.test.mjs; PowerShell parser for scripts/test-db-008-full-schema.ps1; git diff --check; npm run build:api; npx --no-install vitest run tests/api/pacs-transfer-terminalization.test.mjs --maxWorkers=1 — all PASS, focused 7/7.
+Tests not executed: Actual TERM-032~036 PostgreSQL/RLS probe and the full ./scripts/test-db-008-full-schema.ps1 -ScratchOnly clean/repeat/reset/reapply lifecycle; persistent DB-002~007; product coordinator, actual STOW and full A→MediQ→B E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §104
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: SQL trigger behavior, runtime error mapping under actual faults, savepoint recovery, concurrency, two-Study rules, same-principal residual and wrapper cleanup remain unverified until the actual ScratchOnly run completes. P0 release criterion AT-E2E-003 remains 0/1.
+Status: Implementation present; local checks PASS; TERM-032~036 NOT RUN; MEDIQ-PACS-001/P0 PARTIAL
+```
+
+## 67. DEC-029 terminalizer lifecycle probes — recommendation before code
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; test-only refinement of DEC-024/025 terminalizer persistence after the bounded DEC-028 positive repository probe
+Recommendation: In disposable PostgreSQL/RLS only, inject scoped one-shot database faults at all seven terminal write edges and prove savepoint rollback/outer transaction usability; then cover safe retry after a confirmed rollback, same-operation replay and two-client Session-fence serialization, selected Study completion while sibling StudyReference keeps Session ACTIVE, and the accepted TERM-021 coherent same-principal SQL boundary.
+Alternatives: Mock-only fault tests (cannot prove PostgreSQL abort/savepoint and observer state); add a new DB role/SECURITY DEFINER or alter grants (outside exact262 baseline); omit TERM-021 probe (leaves the accepted shared-principal residual unverified).
+Rationale: DEC-028 now proves a valid compiled finalizer commit but not failures after partial Audit writes, concurrent terminal calls, the sibling Study branch, or whether coherent direct DML under the shared role is accepted. The repository itself performs DB persistence only; no network or PACS effects belong in these tests.
+Acceptance: TC-PACS-001-TERM-032~036 recorded before code; preserve exact262, forced RLS, fixed external error mapping, original no-context/cross-Tenant denials, transaction-local GUC cleanup, independent before/after observer, no duplicate terminal Audit, explicit ACTIVE multi-Study Session, and honest documentation of same-principal coherent SQL acceptance/residual.
+Changed before code: Added this recommendation, detailed Acceptance and plan/index references. No source, test, schema, migration, grant, API, runtime service or deployment code changed for DEC-029 at this checkpoint.
+Not changed: Product coordinator/route, Mandatory Preflight, actual STOW, destination byte verification, persistent DB, existing PACS, Authorization semantics, exact262 privileges.
+Security impact: All probe data synthetic and ScratchOnly. Failure triggers are ephemeral, owner-installed, restricted to exact synthetic operation/fault stages, removed and checked absent; they never enter migration or product schema. The same-principal test confirms a documented trust residual, not a supported product path or credential disclosure.
+Tests executed: Read-only inspection of AGENTS.md, DEC-024/025/028, Acceptance TERM-011~036, terminalizer implementation, unit and actual runtime integration tests, current worktree and scratch resource inventory. No DEC-029 code test run.
+Tests not executed: All TERM-032~036; full enclosing ScratchOnly clean/repeat/reset/reapply (DEC-028 second cycle was interrupted); persistent DB-002~007; coordinator/STOW/E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §103
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Full TERM-017 negative matrix and actual trusted STOW proof remain open; the common runtime DB principal can issue fully coherent SQL, and DEC-029 documents rather than removes this residual.
+Status: DEC-029 accepted under standing recommendation instruction; criteria recorded before code; implementation NOT STARTED; MEDIQ-PACS-001/P0 PARTIAL
+```
+
+## 66. DEC-028 TERM-030/031 scoped runtime acceptance — 2026-10-04
+
+```text
+Ticket: MEDIQ-PACS-001
+Scope: CAPSTONE-P0; actual one-Study compiled repository terminalizer persistence under disposable PostgreSQL, mediq_runtime, forced Tenant RLS
+Changed: Extended only the database integration fixture to invoke PostgresPacsTransferTerminalizationRepository.finalize() with a real branded AuthorizationContext and existing synthetic persisted prerequisites; added independent row-version fingerprints for out-of-scope Study/operation/provenance/session/audit rows; wired the required fixture IDs and safe TERM-030/031 wrapper diagnostics.
+Not changed: Product coordinator/route/API, schema/migration/grants, persistent DB, existing PACS, actual STOW, destination byte read/compare, physical ciphertext deletion, full transfer status behavior.
+Security impact: Exact262 runtime column privileges and forced Tenant RLS remain asserted. All evidence uses synthetic fixtures; destination digest and PURGED metadata are preconditions, not trusted product capabilities. No secret, patient data or operational credential was introduced.
+Tests executed: API build PASS; `npx vitest run tests/api/pacs-transfer-terminalization.test.mjs tests/api/authorization-context.test.mjs tests/api/object-authorization-policy.test.mjs` — 3 files / 137 tests PASS; Node syntax check PASS; PowerShell parser check PASS; `git diff --check` PASS before the documentation synchronization. `./scripts/test-db-008-full-schema.ps1 -ScratchOnly` emitted `term030_031_terminalizer=PASS repository=ACTUAL_RUNTIME single_study=COMMITTED independent_observer=PASS` in its first clean cycle, as well as PROV-001/INT-001 and registry policy PASS markers. The wrapper then started reset/reapply; the user interrupted the second cycle during the PACS-007 Audit-failure regression. The full wrapper therefore has no final reset/reapply or successful process-exit evidence and is PARTIAL, not PASS. The exact owned scratch project was removed with Compose down --volumes; subsequent label inventory showed no owned container/volume/network. Existing MediQ API/PostgreSQL/Orthanc A/B remained healthy.
+Tests not executed: Complete second reset/reapply; persistent DB-002~007 regressions; terminalizer injected failure atomicity/savepoint rollback, replay/concurrency, multi-Study Session behavior, remaining TERM-020~023 same-principal probe, product coordinator/Preflight/STOW, actual destination byte verification following STOW, full A→MediQ→B security/E2E.
+Evidence: docs/implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md §102; Acceptance TERM-030~031.
+Implementation record: docs/implementation/MEDIQ-PACS-001/
+Remaining risks: Terminal persistence was exercised only with synthetic destination/purge prerequisites; this does not prove application transfer or physical purge. Product route/coordinator and full P0 golden path remain unimplemented/unverified. Overall status PARTIAL.
+Status: TERM-030~031 scoped PASS; enclosing ScratchOnly full lifecycle PARTIAL; MEDIQ-PACS-001/P0 PARTIAL
+```
+
 ## 65. DEC-028 one-Study real-repository persistence probe — recommendation before test code
 
 ```text

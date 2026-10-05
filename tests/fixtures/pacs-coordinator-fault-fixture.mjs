@@ -1,0 +1,60 @@
+const id = (prefix, value) =>
+  `${prefix}000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+
+const specifications = Object.freeze([
+  Object.freeze({ name: "start-audit", fault: "SOURCE_START_AUDIT", sourceRequests: [], instanceCalls: 0,
+    completedStreams: 0, temporaryState: "NONE", physicalFiles: 0, quota: "ZERO", auditTuples: [] }),
+  Object.freeze({ name: "partial-wado", fault: "PARTIAL_WADO", sourceRequests: ["METADATA", "INSTANCE"], instanceCalls: 1,
+    completedStreams: 0, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_READ_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "temporary-write", fault: "CIPHERTEXT_WRITE", sourceRequests: ["METADATA", "INSTANCE"], instanceCalls: 1,
+    completedStreams: 0, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_READ_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "temporary-seal", fault: "CIPHERTEXT_SEAL", sourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"], instanceCalls: 3,
+    completedStreams: 3, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_READ_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "evidence-insert", fault: "EVIDENCE_INSERT", sourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"], instanceCalls: 3,
+    completedStreams: 3, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "success-audit", fault: "SOURCE_SUCCESS_AUDIT", sourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"], instanceCalls: 3,
+    completedStreams: 3, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "deferred-commit", fault: "DEFERRED_COMMIT", sourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"], instanceCalls: 3,
+    completedStreams: 3, temporaryState: "PURGED", physicalFiles: 0, quota: "ZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE"] }),
+  Object.freeze({ name: "purge-unresolved", fault: "PURGE_FAILURE", sourceRequests: ["METADATA", "INSTANCE", "INSTANCE", "INSTANCE"], instanceCalls: 3,
+    completedStreams: 3, temporaryState: "PURGE_PENDING", physicalFiles: 3, quota: "NONZERO",
+    auditTuples: ["PACS_SOURCE_CAPTURE_STARTED|STUDY|ALLOW|NULL",
+      "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED"] }),
+]);
+
+export const coordinatorFaultCases = Object.freeze(specifications.map((scenario, index) => {
+  const sequence = 55 + index;
+  return Object.freeze({
+    ...scenario,
+    sessionId: id("16", sequence),
+    sessionKey: id("1c", sequence),
+    packageId: id("17", sequence),
+    studyRefId: id("18", sequence),
+    consentId: id("19", sequence),
+    consentActionId: id("19", sequence + 10),
+    grantId: id("1a", sequence),
+    grantKey: id("1c", 301 + index),
+    grantScopeId: id("1a", sequence + 10),
+    operationId: id("1b", 400 + index),
+    idempotencyKey: id("1b", 408 + index),
+    correlationId: id("1d", 64 + index),
+  });
+}));

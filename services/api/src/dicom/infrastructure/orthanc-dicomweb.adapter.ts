@@ -8,6 +8,7 @@ import type {
   DicomFrameStream,
   DicomGateway,
   DicomGatewayOperation,
+  DicomGatewayRequestContext,
   DicomInstanceMetadata,
   DicomInstanceStream,
   DicomSeriesMetadata,
@@ -99,6 +100,16 @@ export class OrthancDicomwebAdapter implements DicomGateway {
         throw new Error("DICOM_CONFIGURATION_INVALID");
       }
     }
+  }
+
+  validateEndpoint(
+    context: DicomGatewayRequestContext,
+    operation: DicomGatewayOperation,
+  ): void {
+    validateContext(context);
+    // Resolve against the server-owned allowlist without making a network call
+    // or returning the configured Authorization value to the caller.
+    this.#resolve(context, operation);
   }
 
   async checkCapability(

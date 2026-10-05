@@ -590,9 +590,13 @@ test("CON-005 signed synthetic patient claim withdraws Consent atomically and fa
       withdraw(app, patientHeaders, raceSession.sessionId, raceConsent.consentId),
       withdraw(app, patientHeaders, raceSession.sessionId, raceConsent.consentId),
     ]);
-    assert.deepEqual(raced.map((response) => response.statusCode).sort(), [200, 200]);
-    assert.equal(raced.filter((response) => response.headers["idempotency-replayed"] === "true").length, 1);
-    assert.equal((await withdrawalEvidence(inspector, fixture.tenantB, raceSession.sessionId, raceConsent.consentId)).withdrawal_audits, 1);
+    const raceEvidence = await withdrawalEvidence(inspector, fixture.tenantB, raceSession.sessionId, raceConsent.consentId);
+    const raceStatusCodes = raced.map((response) => response.statusCode).sort();
+    const raceReplayCount = raced.filter((response) => response.headers["idempotency-replayed"] === "true").length;
+    console.error(`CON005_RACE_FACTS=statuses=${raceStatusCodes.join(",")};replay_count=${raceReplayCount};audit_count=${raceEvidence.withdrawal_audits}`);
+    assert.deepEqual(raceStatusCodes, [200, 200]);
+    assert.equal(raceReplayCount, 1);
+    assert.equal(raceEvidence.withdrawal_audits, 1);
 
     console.error("CON005_STAGE=ATOMIC_ROLLBACK");
     for (const failure of ["withdraw-consent", "withdraw-audit", "withdraw-commit"]) {

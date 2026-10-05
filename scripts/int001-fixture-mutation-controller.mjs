@@ -12,7 +12,7 @@ const clone = value => JSON.parse(serialize(value));
 const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
 
 function assertSyntheticRegistry(snapshot) {
-  check(snapshot.actors.length === 3 && snapshot.mappings.length === 1, "SYNTHETIC_BASELINE");
+  check(snapshot.actors.length === 3 && snapshot.mappings.length === 2, "SYNTHETIC_BASELINE");
   const actorColumns = ["actor_id", "tenant_id", "hospital_id", "actor_type", "external_subject", "display_name", "status", "created_at", "updated_at"].sort();
   const mappingColumns = ["mapping_id", "patient_ref_id", "hospital_id", "local_patient_id", "status", "validated_at", "created_at", "updated_at"].sort();
   const fixedActors = [
@@ -26,11 +26,19 @@ function assertSyntheticRegistry(snapshot) {
     same([actor.actor_id, actor.tenant_id, actor.hospital_id, actor.external_subject, actor.display_name], fixedActors[index], "SYNTHETIC_BASELINE");
     check(actor.status === "ACTIVE" && actor.actor_type === "USER" && date(actor.created_at) && date(actor.updated_at), "SYNTHETIC_BASELINE");
   });
-  const mapping = snapshot.mappings[0];
+  const mapping = snapshot.mappings.find(row => row.mapping_id === ids.mapping);
+  check(mapping, "SYNTHETIC_BASELINE");
   same(Object.keys(mapping).sort(), mappingColumns, "SYNTHETIC_COLUMNS");
   check(mapping.mapping_id === ids.mapping && mapping.patient_ref_id === ids.patient && mapping.hospital_id === ids.hospital &&
     mapping.local_patient_id === ids.baselineLocalId && mapping.status === "VALID" && date(mapping.validated_at) &&
     date(mapping.created_at) && date(mapping.updated_at), "SYNTHETIC_BASELINE");
+  const invalidMapping = snapshot.mappings.find(row => row.mapping_id === ids.coordinatorInvalidMap);
+  check(invalidMapping, "SYNTHETIC_BASELINE");
+  same(Object.keys(invalidMapping).sort(), mappingColumns, "SYNTHETIC_COLUMNS");
+  check(invalidMapping.patient_ref_id === ids.coordinatorInvalidMapPatient &&
+    invalidMapping.hospital_id === ids.hospital && invalidMapping.local_patient_id === "TEST-PATIENT-COORD-INVALID" &&
+    invalidMapping.status === "REVOKED" && invalidMapping.validated_at === null &&
+    date(invalidMapping.created_at) && date(invalidMapping.updated_at), "SYNTHETIC_INVALID_MAPPING_BASELINE");
 }
 
 export function parseMutationRequest(input) {

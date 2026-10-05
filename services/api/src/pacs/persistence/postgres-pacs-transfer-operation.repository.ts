@@ -112,6 +112,36 @@ export class PostgresPacsTransferOperationRepository
     private readonly createId: () => string = randomUUID,
   ) {}
 
+  async findById(input: {
+    readonly operationId: string;
+    readonly tenantId: string;
+  }): Promise<PacsTransferOperation | null> {
+    if (!validUuid(input.operationId) || !validUuid(input.tenantId)) {
+      throw new PacsTransferOperationPersistenceError();
+    }
+    try {
+      const found = await this.transaction.query<OperationRow>(
+        `SELECT operation_id, tenant_id, exchange_session_id, study_ref_id,
+                actor_id, idempotency_key, request_digest, state, version,
+                reason_code, source_object_count, destination_object_count,
+                created_at, updated_at, stow_started_at
+           FROM pacs_transfer_operations
+          WHERE operation_id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND tenant_id = NULLIF(current_setting('mediq.tenant_id', true), '')::uuid`,
+        [input.operationId.toLowerCase(), input.tenantId.toLowerCase()],
+      );
+      if (found.rowCount === 0 && found.rows.length === 0) return null;
+      if (found.rowCount !== 1 || found.rows.length !== 1) {
+        throw new PacsTransferOperationPersistenceError();
+      }
+      return snapshot(found.rows[0]!);
+    } catch (error) {
+      if (error instanceof PacsTransferOperationPersistenceError) throw error;
+      throw new PacsTransferOperationPersistenceError();
+    }
+  }
+
   async createIdempotently(input: {
     readonly operation: PacsTransferOperation;
     readonly correlationId: string;

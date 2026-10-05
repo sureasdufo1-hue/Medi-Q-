@@ -2,7 +2,8 @@
 param(
     [string]$EnvFile = ".env",
     [string]$ComposeFile = "infra/docker-compose.yml",
-    [switch]$ScratchOnly
+    [switch]$ScratchOnly,
+    [switch]$PacsAdmissionOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -247,8 +248,75 @@ function Invoke-Migrations([string[]]$ComposeArgs) {
     Invoke-DockerQuiet -Label "DB-008 scratch migration apply" -DockerArgs ($ComposeArgs + @("--profile", "migration", "run", "--build", "--rm", "migrator"))
 }
 
+function Invoke-PacsFenceAcceptance([string]$Network, [hashtable]$Settings, [string[]]$ComposeArgs, [string]$FixtureJson) {
+    $fixture = $FixtureJson | ConvertFrom-Json
+    $auditFailureCorrelationId = [string]$fixture.auditFailureCorrelationId
+    $commitFailureCorrelationId = [string]$fixture.commitFailureCorrelationId
+    $uuidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    if ($auditFailureCorrelationId -notmatch $uuidPattern -or $commitFailureCorrelationId -notmatch $uuidPattern) {
+        throw "PACS-001 fault-probe correlation fixture is invalid."
+    }
+    $probeSql = @"
+CREATE FUNCTION public.pacs001_coord_audit_failure_probe() RETURNS trigger
+LANGUAGE plpgsql AS `$pacs001_coord_audit_failure`$
+BEGIN
+  IF NEW.resource_type = 'PACS_TRANSFER_OPERATION' AND NEW.correlation_id = '$auditFailureCorrelationId'::uuid THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='PACS001_COORD_AUDIT_FAILURE_PROBE';
+  END IF;
+  RETURN NEW;
+END
+`$pacs001_coord_audit_failure`$;
+CREATE TRIGGER pacs001_coord_audit_failure_probe BEFORE INSERT ON audit_events
+FOR EACH ROW EXECUTE FUNCTION public.pacs001_coord_audit_failure_probe();
+CREATE FUNCTION public.pacs001_coord_commit_failure_probe() RETURNS trigger
+LANGUAGE plpgsql AS `$pacs001_coord_commit_failure`$
+BEGIN
+  IF NEW.resource_type = 'PACS_TRANSFER_OPERATION' AND NEW.correlation_id = '$commitFailureCorrelationId'::uuid THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='PACS001_COORD_COMMIT_FAILURE_PROBE';
+  END IF;
+  RETURN NEW;
+END
+`$pacs001_coord_commit_failure`$;
+CREATE CONSTRAINT TRIGGER pacs001_coord_commit_failure_probe AFTER INSERT ON audit_events
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION public.pacs001_coord_commit_failure_probe();
+"@
+    $null = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $probeSql -Label "PACS-001 operation admission failure probes setup"
+    $pacsFenceArgs = $ComposeArgs + @(
+        "--profile", "test", "run", "--build", "--rm", "--no-deps",
+        "--env", "MEDIQ_PACS001_FENCE_FIXTURE=$FixtureJson",
+        "api-db-integration-test",
+        "node", "--test", "--test-reporter=tap", "tests/database/pacs-import-authorization-fence.integration.test.mjs"
+    )
+    $pacsFenceOutput = @(& docker @pacsFenceArgs 2>&1 | ForEach-Object { $_.ToString() })
+    $pacsFenceExitCode = $LASTEXITCODE
+    $pacsFenceSummary = [string]::Join("`n", [string[]]@($pacsFenceOutput))
+    $denialMatrixMarker = 'pacs001_admission_denials=PASS cases=missing_grant,wrong_tenant_candidate,wrong_recipient_tenant_grant,wrong_session_grant,expired_grant,withdrawn_consent,foreign_study,insufficient_scope,revoked_grant no_operation_or_audit=true'
+    $denialMatrixMatches = [regex]::Matches($pacsFenceSummary, '(?m)^# ' + [regex]::Escape($denialMatrixMarker) + '\r?$')
+    if ($pacsFenceExitCode -ne 0 -or $pacsFenceSummary -notmatch '(?m)^(?:#|ℹ) pass 1$' -or $denialMatrixMatches.Count -ne 1) {
+        $passCount = [regex]::Match($pacsFenceSummary, '(?m)^(?:#|ℹ) pass (\d+)$').Groups[1].Value
+        $failCount = [regex]::Match($pacsFenceSummary, '(?m)^(?:#|ℹ) fail (\d+)$').Groups[1].Value
+        $failedTests = @([regex]::Matches($pacsFenceSummary, '(?m)^\s*(?:not ok \d+ - |✖ )([^\r\n]{1,120})') | ForEach-Object { $_.Groups[1].Value.Trim() })
+        $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
+        $safeFailureCode = [regex]::Match($pacsFenceSummary, '\b(PACS001_FENCE_[A-Z_]+|GRANT_REVOCATION_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|TRANSFER_GRANT_[A-Z_]+|AUTHORIZATION_DENIED|PROTECTED_OPERATION_UNAVAILABLE|ACTOR_TENANT_[A-Z_]+|ActorTenantContextDeniedError|ActorTenantContextUnavailableError|P0001|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
+        if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
+        $failureDiagnostic = [regex]::Match($pacsFenceSummary, '\bPACS001_FENCE_FAILURE_STAGE=(FENCE_BASELINE_OPERATION_COUNT|FENCE_BASELINE_AUDIT_COUNT|ADMISSION_MISSING_GRANT_DENIAL|ADMISSION_WRONG_TENANT_CANDIDATE_DENIAL|ADMISSION_WRONG_RECIPIENT_TENANT_GRANT_DENIAL|ADMISSION_WRONG_SESSION_GRANT_DENIAL|ADMISSION_EXPIRED_GRANT_DENIAL|ADMISSION_FOREIGN_STUDY_DENIAL|ADMISSION_INSUFFICIENT_SCOPE_DENIAL|ADMISSION_AUDIT_FAILURE_ROLLBACK|ADMISSION_COMMIT_FAILURE_ROLLBACK|ADMISSION_CONCURRENT_CLAIM|ADMISSION_EXACTLY_ONE_OPERATION_AND_AUDIT|ADMISSION_EXACT_REPLAY|ADMISSION_CHANGED_STUDY_CONFLICT|REVOCATION_FENCE_START|POST_REVOCATION_ADMISSION_DENIAL|WITHDRAWN_CONSENT_DENIAL|FINAL_NO_SIDE_EFFECT_ASSERTIONS);ERROR=(AssertionError|AuthorizationDeniedError|ActorTenantContextDeniedError|ProtectedOperationUnavailableError|ActorTenantContextUnavailableError|TypeError|ReferenceError|RangeError|OTHER_ERROR);CODE=(NONE|[A-Z0-9_]{1,64})')
+        $safeFailureDiagnostic = if ($failureDiagnostic.Success) { "stage=$($failureDiagnostic.Groups[1].Value),class=$($failureDiagnostic.Groups[2].Value),code=$($failureDiagnostic.Groups[3].Value)" } else { "unavailable" }
+        throw "PACS-001 Session-fence PostgreSQL Acceptance failed (exit=$pacsFenceExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode, diagnostic=$safeFailureDiagnostic); raw output suppressed."
+    }
+    Write-Output "pacs001_session_fence=PASS auth_after_lock=PASS revoke_serialized=PASS post_revoke_denied=PASS revocation_no_state_change=PASS audit_and_commit_rollback=PASS no_dicom_call=PASS"
+    Write-Output "pacs001_admission_denials=PASS cases=missing_grant,wrong_tenant_candidate,wrong_recipient_tenant_grant,wrong_session_grant,expired_grant,withdrawn_consent,foreign_study,insufficient_scope,revoked_grant no_operation_or_audit=true"
+    $dropProbeSql = @"
+DROP TRIGGER IF EXISTS pacs001_coord_audit_failure_probe ON audit_events;
+DROP TRIGGER IF EXISTS pacs001_coord_commit_failure_probe ON audit_events;
+DROP FUNCTION IF EXISTS public.pacs001_coord_audit_failure_probe();
+DROP FUNCTION IF EXISTS public.pacs001_coord_commit_failure_probe();
+"@
+    $null = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql $dropProbeSql -Label "PACS-001 operation admission failure probes cleanup"
+}
+
 function Assert-Db009AccessBoundary {
-    param([string]$Network, [hashtable]$Settings, [string[]]$ComposeArgs)
+    param([string]$Network, [hashtable]$Settings, [string[]]$ComposeArgs, [switch]$PacsAdmissionOnly)
 
     $inventorySql = @"
 SELECT
@@ -415,6 +483,12 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $terminalizationStudyRefId = [guid]::NewGuid().ToString()
     $terminalizationConsentId = [guid]::NewGuid().ToString()
     $terminalizationGrantId = [guid]::NewGuid().ToString()
+    $terminalizationBoundarySessionId = [guid]::NewGuid().ToString()
+    $terminalizationBoundaryPackageId = [guid]::NewGuid().ToString()
+    $terminalizationBoundaryStudyRefId = [guid]::NewGuid().ToString()
+    $terminalizationBoundarySiblingStudyRefId = [guid]::NewGuid().ToString()
+    $terminalizationBoundaryConsentId = [guid]::NewGuid().ToString()
+    $terminalizationBoundaryGrantId = [guid]::NewGuid().ToString()
     $pacsTempSiblingStudyRefId = [guid]::NewGuid().ToString()
     $pacsQuotaSourceTenantStudyRefId = [guid]::NewGuid().ToString()
     $pacsQuotaEnvironmentFillOneSessionId = [guid]::NewGuid().ToString()
@@ -437,6 +511,8 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $pacsQuotaEnvironmentProbeStudyRefId = [guid]::NewGuid().ToString()
     $pacsFenceConsentId = [guid]::NewGuid().ToString()
     $pacsFenceGrantId = [guid]::NewGuid().ToString()
+    $pacsWrongTenantGrantId = [guid]::NewGuid().ToString()
+    $pacsInsufficientScopeGrantId = [guid]::NewGuid().ToString()
     $provenanceSessionId = [guid]::NewGuid().ToString()
     $provenancePackageId = [guid]::NewGuid().ToString()
     $provenanceStudyRefId = [guid]::NewGuid().ToString()
@@ -448,6 +524,8 @@ WHERE d.defaclnamespace IN (0,'public'::regnamespace)
     $syntheticStudyUid = "2.25.309.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
     $pacsFenceStudyUid = "2.25.310.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
     $terminalizationStudyUid = "2.25.324.$([Convert]::ToUInt64($token.Substring(4, 15), 16))"
+    $terminalizationBoundaryStudyUid = "2.25.325.$([Convert]::ToUInt64($token.Substring(0, 15), 16))"
+    $terminalizationBoundarySiblingStudyUid = "2.25.326.$([Convert]::ToUInt64($token.Substring(15, 15), 16))"
     $pacsTempSiblingStudyUid = "2.25.315.$([Convert]::ToUInt64($token.Substring(18, 12), 16))"
     $pacsQuotaSourceStudyUid = "2.25.316.$([Convert]::ToUInt64($token.Substring(20, 12), 16))"
     $pacsQuotaEnvironmentFillOneStudyUid = "2.25.318.$([Convert]::ToUInt64($token.Substring(4, 12), 16))"
@@ -529,12 +607,18 @@ VALUES ('$pacsFenceSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,expires_at,completed_at,idempotency_key)
 VALUES ('$terminalizationSessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic terminalization denial test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
+INSERT INTO exchange_sessions
+ (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,expires_at,completed_at,idempotency_key)
+VALUES ('$terminalizationBoundarySessionId','$patientRefId','$hospitalA','$hospitalB','$exc003ActorB','Synthetic two-study terminalization boundary test','ACTIVE',now(),now(),now()+interval '1 day',NULL,gen_random_uuid());
 INSERT INTO imaging_packages
  (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
 VALUES ('$pacsFencePackageId','$pacsFenceSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,3,now(),now(),now()+interval '1 day',NULL);
 INSERT INTO imaging_packages
  (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
 VALUES ('$terminalizationPackageId','$terminalizationSessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,1,now(),now(),now()+interval '1 day',NULL);
+INSERT INTO imaging_packages
+ (package_id,exchange_session_id,patient_ref_id,source_hospital_id,state,storage_ref,study_count,created_at,updated_at,retention_expires_at,deleted_at)
+VALUES ('$terminalizationBoundaryPackageId','$terminalizationBoundarySessionId','$patientRefId','$hospitalA','AVAILABLE',NULL,2,now(),now(),now()+interval '1 day',NULL);
 INSERT INTO study_references
  (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
 VALUES
@@ -544,6 +628,11 @@ VALUES
 INSERT INTO study_references
  (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
 VALUES ('$terminalizationStudyRefId','$terminalizationPackageId','$hospitalA','$terminalizationStudyUid','CT',1,1,now());
+INSERT INTO study_references
+ (study_ref_id,package_id,source_hospital_id,study_instance_uid,modality,series_count,instance_count,created_at)
+VALUES
+ ('$terminalizationBoundaryStudyRefId','$terminalizationBoundaryPackageId','$hospitalA','$terminalizationBoundaryStudyUid','CT',1,1,now()),
+ ('$terminalizationBoundarySiblingStudyRefId','$terminalizationBoundaryPackageId','$hospitalA','$terminalizationBoundarySiblingStudyUid','MR',1,1,now());
 INSERT INTO exchange_sessions
  (session_id,patient_ref_id,source_hospital_id,destination_hospital_id,requester_actor_id,purpose,state,created_at,updated_at,idempotency_key)
 VALUES
@@ -603,6 +692,15 @@ INSERT INTO transfer_grants
 VALUES ('$pacsFenceGrantId','$pacsFenceSessionId','$pacsFenceConsentId','$tenantB','$hospitalB','$exc003ActorB','$pacsFencePackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
 INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
 VALUES (gen_random_uuid(),'$pacsFenceGrantId','study:pacs-transfer');
+INSERT INTO transfer_grants
+ (grant_id,exchange_session_id,consent_id,recipient_tenant_id,recipient_hospital_id,recipient_actor_id,imaging_package_id,status,issued_at,expires_at,revoked_at,created_at)
+VALUES
+ ('$pacsWrongTenantGrantId','$pacsFenceSessionId','$pacsFenceConsentId','$tenantA','$hospitalB','$exc003ActorB','$pacsFencePackageId','ACTIVE',now(),now()+interval '1 day',NULL,now()),
+ ('$pacsInsufficientScopeGrantId','$pacsFenceSessionId','$pacsFenceConsentId','$tenantB','$hospitalB','$exc003ActorB','$pacsFencePackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
+INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
+VALUES
+ (gen_random_uuid(),'$pacsWrongTenantGrantId','study:pacs-transfer'),
+ (gen_random_uuid(),'$pacsInsufficientScopeGrantId','study:view');
 INSERT INTO consents
  (consent_id,exchange_session_id,patient_ref_id,source_hospital_id,destination_hospital_id,imaging_package_id,status,consent_version,issued_at,expires_at,withdrawn_at,created_at,updated_at)
 VALUES ('$terminalizationConsentId','$terminalizationSessionId','$patientRefId','$hospitalA','$hospitalB','$terminalizationPackageId','ACTIVE',1,now(),now()+interval '1 day',NULL,now(),now());
@@ -613,6 +711,16 @@ INSERT INTO transfer_grants
 VALUES ('$terminalizationGrantId','$terminalizationSessionId','$terminalizationConsentId','$tenantB','$hospitalB','$exc003ActorB','$terminalizationPackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
 INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
 VALUES (gen_random_uuid(),'$terminalizationGrantId','study:pacs-transfer');
+INSERT INTO consents
+ (consent_id,exchange_session_id,patient_ref_id,source_hospital_id,destination_hospital_id,imaging_package_id,status,consent_version,issued_at,expires_at,withdrawn_at,created_at,updated_at)
+VALUES ('$terminalizationBoundaryConsentId','$terminalizationBoundarySessionId','$patientRefId','$hospitalA','$hospitalB','$terminalizationBoundaryPackageId','ACTIVE',1,now(),now()+interval '1 day',NULL,now(),now());
+INSERT INTO consent_actions (consent_action_id,consent_id,action)
+VALUES (gen_random_uuid(),'$terminalizationBoundaryConsentId','PACS_IMPORT');
+INSERT INTO transfer_grants
+ (grant_id,exchange_session_id,consent_id,recipient_tenant_id,recipient_hospital_id,recipient_actor_id,imaging_package_id,status,issued_at,expires_at,revoked_at,created_at)
+VALUES ('$terminalizationBoundaryGrantId','$terminalizationBoundarySessionId','$terminalizationBoundaryConsentId','$tenantB','$hospitalB','$exc003ActorB','$terminalizationBoundaryPackageId','ACTIVE',now(),now()+interval '1 day',NULL,now());
+INSERT INTO transfer_grant_scopes (grant_scope_id,grant_id,scope)
+VALUES (gen_random_uuid(),'$terminalizationBoundaryGrantId','study:pacs-transfer');
 COMMIT;
 GRANT SELECT (organization_id) ON TABLE organizations TO mediq_runtime;
 GRANT SELECT (organization_id) ON TABLE tenants TO mediq_runtime;
@@ -753,16 +861,37 @@ ROLLBACK;
     } | ConvertTo-Json -Compress
     $pacsFenceFixture = [ordered]@{
         subject = $exc003SubjectB; tenantId = $tenantB
+        otherTenantId = $tenantA; expiredGrantId = $expiredGrantId
         sessionId = $pacsFenceSessionId; studyRefId = $pacsFenceStudyRefId
+        siblingStudyRefId = $pacsTempSiblingStudyRefId
         consentId = $pacsFenceConsentId; grantId = $pacsFenceGrantId
+        wrongRecipientTenantGrantId = $pacsWrongTenantGrantId
+        insufficientScopeGrantId = $pacsInsufficientScopeGrantId
+        auditFailureCorrelationId = [guid]::NewGuid().ToString()
+        commitFailureCorrelationId = [guid]::NewGuid().ToString()
         otherSubject = $subjectB; withdrawnSessionId = $sessionId
         withdrawnStudyRefId = $studyRefId; withdrawnConsentId = $withdrawnConsentId
         withdrawnGrantId = $withdrawnConsentGrantId
     } | ConvertTo-Json -Compress
+    if ($PacsAdmissionOnly) {
+        Invoke-PacsFenceAcceptance -Network $Network -Settings $Settings -ComposeArgs $ComposeArgs -FixtureJson $pacsFenceFixture
+        return
+    }
     $terminalizationFixture = [ordered]@{
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
         sessionId = $terminalizationSessionId; studyRefId = $terminalizationStudyRefId
+        hospitalId = $hospitalB; sourceHospitalId = $hospitalA
+        packageId = $terminalizationPackageId
         consentId = $terminalizationConsentId; grantId = $terminalizationGrantId
+        fenceSessionId = $pacsFenceSessionId; fencePackageId = $pacsFencePackageId
+        fenceStudyRefId = $pacsFenceStudyRefId; fenceSiblingStudyRefId = $pacsTempSiblingStudyRefId
+        fenceConsentId = $pacsFenceConsentId; fenceGrantId = $pacsFenceGrantId
+        boundarySessionId = $terminalizationBoundarySessionId
+        boundaryPackageId = $terminalizationBoundaryPackageId
+        boundaryStudyRefId = $terminalizationBoundaryStudyRefId
+        boundarySiblingStudyRefId = $terminalizationBoundarySiblingStudyRefId
+        boundaryConsentId = $terminalizationBoundaryConsentId
+        boundaryGrantId = $terminalizationBoundaryGrantId
     } | ConvertTo-Json -Compress
     $temporaryPayloadFixture = [ordered]@{
         tenantId = $tenantB; otherTenantId = $tenantC; actorId = $exc003ActorB
@@ -1087,7 +1216,11 @@ SELECT (
         $failedStageSummary = if ($failedStages.Count -gt 0) { [string]::Join(",", [string[]]$failedStages) } else { "unavailable" }
         $safeFailureCode = [regex]::Match($consentApprovalSummary, '\b(CON00[45]_[A-Z_]+|CONSENT_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ERR_MODULE_NOT_FOUND|ENOENT|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "CON-004/005 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$consentApprovalExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode); raw output suppressed."
+        $raceFactsMatch = [regex]::Match($consentApprovalSummary, '\bCON005_RACE_FACTS=statuses=(\d{3},\d{3});replay_count=(\d+);audit_count=(\d+)')
+        $safeRaceFacts = if ($raceFactsMatch.Success) {
+            "statuses=$($raceFactsMatch.Groups[1].Value),replay_count=$($raceFactsMatch.Groups[2].Value),audit_count=$($raceFactsMatch.Groups[3].Value)"
+        } else { "unavailable" }
+        throw "CON-004/005 signed OIDC HTTP/PostgreSQL Acceptance failed (exit=$consentApprovalExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stages=$failedStageSummary, safe_error=$safeFailureCode, race_facts=$safeRaceFacts); raw output suppressed."
     }
     Write-Output "con004_approval_api=PASS signed_oidc=PASS tenant_rls=PASS atomic_transition=PASS replay_concurrency=PASS rollback=PASS exact_privileges=262"
     Write-Output "con005_withdrawal_api=PASS signed_oidc=PASS tenant_rls=PASS expiry_independent=PASS atomic_audit=PASS replay_concurrency=PASS rollback=PASS exact_privileges=262"
@@ -1153,22 +1286,31 @@ SELECT (
     $pacsFenceOutput = @(& docker @pacsFenceArgs 2>&1 | ForEach-Object { $_.ToString() })
     $pacsFenceExitCode = $LASTEXITCODE
     $pacsFenceSummary = [string]::Join("`n", [string[]]@($pacsFenceOutput))
-    if ($pacsFenceExitCode -ne 0 -or $pacsFenceSummary -notmatch '(?m)^(?:#|ℹ) pass 1$') {
+    $denialMatrixMarker = 'pacs001_admission_denials=PASS cases=missing_grant,wrong_tenant_candidate,wrong_recipient_tenant_grant,wrong_session_grant,expired_grant,withdrawn_consent,foreign_study,insufficient_scope,revoked_grant no_operation_or_audit=true'
+    $denialMatrixMatches = [regex]::Matches($pacsFenceSummary, '(?m)^# ' + [regex]::Escape($denialMatrixMarker) + '\r?$')
+    if ($pacsFenceExitCode -ne 0 -or $pacsFenceSummary -notmatch '(?m)^(?:#|ℹ) pass 1$' -or $denialMatrixMatches.Count -ne 1) {
         $passCount = [regex]::Match($pacsFenceSummary, '(?m)^(?:#|ℹ) pass (\d+)$').Groups[1].Value
         $failCount = [regex]::Match($pacsFenceSummary, '(?m)^(?:#|ℹ) fail (\d+)$').Groups[1].Value
         $failedTests = @([regex]::Matches($pacsFenceSummary, '(?m)^\s*(?:not ok \d+ - |✖ )([^\r\n]{1,120})') | ForEach-Object { $_.Groups[1].Value.Trim() })
         $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
-        $safeFailureCode = [regex]::Match($pacsFenceSummary, '\b(PACS001_FENCE_[A-Z_]+|GRANT_REVOCATION_[A-Z_]+|AUTHORIZATION_DENIED|PROTECTED_OPERATION_UNAVAILABLE|ACTOR_TENANT_[A-Z_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
+        $safeFailureCode = [regex]::Match($pacsFenceSummary, '\b(PACS001_FENCE_[A-Z_]+|GRANT_REVOCATION_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|TRANSFER_GRANT_[A-Z_]+|AUTHORIZATION_DENIED|PROTECTED_OPERATION_UNAVAILABLE|ACTOR_TENANT_[A-Z_]+|ActorTenantContextDeniedError|ActorTenantContextUnavailableError|P0001|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23505|23514|AssertionError)\b').Groups[1].Value
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "PACS-001 Session-fence PostgreSQL Acceptance failed (exit=$pacsFenceExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode); raw output suppressed."
+        $failureDiagnostic = [regex]::Match($pacsFenceSummary, '\bPACS001_FENCE_FAILURE_STAGE=(FENCE_BASELINE_OPERATION_COUNT|FENCE_BASELINE_AUDIT_COUNT|ADMISSION_MISSING_GRANT_DENIAL|ADMISSION_WRONG_TENANT_CANDIDATE_DENIAL|ADMISSION_WRONG_RECIPIENT_TENANT_GRANT_DENIAL|ADMISSION_WRONG_SESSION_GRANT_DENIAL|ADMISSION_EXPIRED_GRANT_DENIAL|ADMISSION_FOREIGN_STUDY_DENIAL|ADMISSION_INSUFFICIENT_SCOPE_DENIAL|ADMISSION_AUDIT_FAILURE_ROLLBACK|ADMISSION_COMMIT_FAILURE_ROLLBACK|ADMISSION_CONCURRENT_CLAIM|ADMISSION_EXACTLY_ONE_OPERATION_AND_AUDIT|ADMISSION_EXACT_REPLAY|ADMISSION_CHANGED_STUDY_CONFLICT|REVOCATION_FENCE_START|POST_REVOCATION_ADMISSION_DENIAL|WITHDRAWN_CONSENT_DENIAL|FINAL_NO_SIDE_EFFECT_ASSERTIONS);ERROR=(AssertionError|AuthorizationDeniedError|ActorTenantContextDeniedError|ProtectedOperationUnavailableError|ActorTenantContextUnavailableError|TypeError|ReferenceError|RangeError|OTHER_ERROR);CODE=(NONE|[A-Z0-9_]{1,64})')
+        $safeFailureDiagnostic = if ($failureDiagnostic.Success) { "stage=$($failureDiagnostic.Groups[1].Value),class=$($failureDiagnostic.Groups[2].Value),code=$($failureDiagnostic.Groups[3].Value)" } else { "unavailable" }
+        throw "PACS-001 Session-fence PostgreSQL Acceptance failed (exit=$pacsFenceExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, safe_error=$safeFailureCode, diagnostic=$safeFailureDiagnostic); raw output suppressed."
     }
-    Write-Output "pacs001_session_fence=PASS auth_after_lock=PASS revoke_serialized=PASS post_revoke_denied=PASS no_operation_state_change=PASS no_dicom_call=PASS"
+    Write-Output "pacs001_session_fence=PASS auth_after_lock=PASS revoke_serialized=PASS post_revoke_denied=PASS revocation_no_state_change=PASS no_dicom_call=PASS"
+    Write-Output "pacs001_admission_denials=PASS cases=missing_grant,wrong_tenant_candidate,wrong_recipient_tenant_grant,wrong_session_grant,expired_grant,withdrawn_consent,foreign_study,insufficient_scope,revoked_grant no_operation_or_audit=true"
 
+    if (-not $ScratchOnly) {
+        throw "DEC-029 terminalization fault/concurrency probes require -ScratchOnly; persistent DB regressions are excluded."
+    }
     $terminalizationInspectUrl = $Settings["MEDIQ_MIGRATION_DATABASE_URL"]
     $terminalizationArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
         "--env", "MEDIQ_PACS_TERMINALIZATION_TEST_FIXTURE=$terminalizationFixture",
         "--env", "MEDIQ_TEST_INSPECT_DATABASE_URL=$terminalizationInspectUrl",
+        "--env", "MEDIQ_PACS_DB008_SCRATCH_ONLY=1",
         "api-db-integration-test",
         "node", "--test", "--test-reporter=tap", "tests/database/pacs-transfer-terminalization-runtime.integration.test.mjs"
     )
@@ -1180,15 +1322,42 @@ SELECT (
         $failCount = [regex]::Match($terminalizationSummary, '(?m)^(?:#|ℹ) fail (\d+)$').Groups[1].Value
         $failedTests = @([regex]::Matches($terminalizationSummary, '(?m)^\s*(?:not ok \d+ - |✖ )([^\r\n]{1,120})') | ForEach-Object { $_.Groups[1].Value.Trim() })
         $failedTestSummary = if ($failedTests.Count -gt 0) { [string]::Join(",", [string[]]$failedTests) } else { "unavailable" }
-        $stageMarkers = @([regex]::Matches($terminalizationSummary, '\bTERM020_STAGE=([A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
+        $stageMarkers = @([regex]::Matches($terminalizationSummary, '\bTERM(?:020|03[0-6])_STAGE=([A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
         $failedStage = if ($stageMarkers.Count -gt 0) { $stageMarkers[-1] } else { "unavailable" }
         $guardMarkers = @([regex]::Matches($terminalizationSummary, '\bTERM020_GUARD=([A-Z0-9_]+)') | ForEach-Object { $_.Groups[1].Value })
-        $guardResult = if ($guardMarkers.Count -gt 0) { $guardMarkers[-1] } else { "unavailable" }
-        $safeFailureCode = [regex]::Match($terminalizationSummary, '\b(TERM020_(?!STAGE|GUARD)[A-Z_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|PROVENANCE_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ENOENT|ERR_INVALID_ARG_TYPE|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23514|23505|AssertionError|TypeError|ReferenceError)\b').Groups[1].Value
+        $guardResult = if ($failedStage -like "TERM020*") { if ($guardMarkers.Count -gt 0) { $guardMarkers[-1] } else { "unavailable" } } else { "not_applicable" }
+        $safePhaseError = [regex]::Match($terminalizationSummary, '\bTERM03[0-6]_ERROR=(TERM03[0-6]_[A-Z0-9_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|[A-Z0-9]{5}|ASSERTION_FAILED|UNCLASSIFIED)\b')
+        $safeFailureMatches = [regex]::Matches($terminalizationSummary, '\b(TERM020_(?!STAGE|GUARD)[A-Z_]+|TERM03[0-6]_(?!STAGE|ERROR)[A-Z_]+|PACS_TRANSFER_TERMINALIZATION_[A-Z_]+|PROVENANCE_[A-Z_]+|PACS_TRANSFER_OPERATION_[A-Z_]+|EXCHANGE_SESSION_[A-Z_]+|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ENOENT|ERR_INVALID_ARG_TYPE|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23514|23505|AssertionError|TypeError|ReferenceError)\b')
+        $safeFailureCode = if ($safePhaseError.Success) { $safePhaseError.Groups[1].Value } elseif ($safeFailureMatches.Count -gt 0) { $safeFailureMatches[$safeFailureMatches.Count - 1].Groups[1].Value } else { $null }
         if (-not $safeFailureCode) { $safeFailureCode = "unclassified" }
-        throw "DEC-024/025 terminalization denial PostgreSQL/RLS Acceptance failed (exit=$terminalizationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stage=$failedStage, probe=$guardResult, safe_error=$safeFailureCode); raw output suppressed."
+        $innerSqlFailureMatch = [regex]::Match($terminalizationSummary, '\bTERM035_INNER_SQL_FAILURE=(SESSION_FENCE|SAVEPOINT|AUDIT_INSERT|PROVENANCE_UPDATE|OPERATION_UPDATE|SESSION_UPDATE|AUTHORIZATION_SELECT|TERMINAL_BINDING_SELECT|OPERATION_SELECT|DATABASE_CLOCK|OTHER_QUERY):([A-Z0-9]{5})(?::(PROVENANCE_TERMINALIZATION_GUARD|OPERATION_COMPLETION_GUARD|SESSION_COMPLETION_GUARD|AUDIT_CORRELATION_GUARD))?')
+        $safeInnerSqlFailure = if ($innerSqlFailureMatch.Success) {
+            $constraintMarker = if ($innerSqlFailureMatch.Groups[3].Success) { ":$($innerSqlFailureMatch.Groups[3].Value)" } else { "" }
+            "$($innerSqlFailureMatch.Groups[1].Value):$($innerSqlFailureMatch.Groups[2].Value)$constraintMarker"
+        } else { "unavailable" }
+        $term035FactsMatch = [regex]::Match($terminalizationSummary, '\bTERM035_FACTS_GROUPS=canonical=(true|false);runtime_context=(true|false);resource_lifecycle=(true|false);operation_session_timing=(true|false);provenance_and_integrity=(true|false);authorization_scope=(true|false);purge_audit=(true|false);preflight_audit=(true|false);dispatch_audit=(true|false);verifying_audit_exists=(true|false);verifying_audit_after_stow=(true|false);verifying_audit_before_destination_verification=(true|false);stow_before_destination_verification=(true|false);destination_authorization_audit=(true|false);terminal_audits=(true|false)')
+        $term035DiagnosticUnavailableMatch = [regex]::Match($terminalizationSummary, '\bTERM035_FACTS_DIAGNOSTIC=UNAVAILABLE:([A-Z0-9]{5}|UNKNOWN)(?::CLEANUP_FAILED)?')
+        $safeTerm035Facts = if ($term035FactsMatch.Success) {
+            "canonical=$($term035FactsMatch.Groups[1].Value),runtime=$($term035FactsMatch.Groups[2].Value),resource_lifecycle=$($term035FactsMatch.Groups[3].Value),operation_session=$($term035FactsMatch.Groups[4].Value),provenance_integrity=$($term035FactsMatch.Groups[5].Value),authorization_scope=$($term035FactsMatch.Groups[6].Value),purge_audit=$($term035FactsMatch.Groups[7].Value),preflight_audit=$($term035FactsMatch.Groups[8].Value),dispatch_audit=$($term035FactsMatch.Groups[9].Value),verifying_exists=$($term035FactsMatch.Groups[10].Value),verifying_after_stow=$($term035FactsMatch.Groups[11].Value),verifying_before_destination_verification=$($term035FactsMatch.Groups[12].Value),stow_before_destination_verification=$($term035FactsMatch.Groups[13].Value),destination_authorization_audit=$($term035FactsMatch.Groups[14].Value),terminal_audit=$($term035FactsMatch.Groups[15].Value)"
+        } elseif ($term035DiagnosticUnavailableMatch.Success) {
+            "unavailable:$($term035DiagnosticUnavailableMatch.Groups[1].Value)"
+        } else { "unavailable" }
+        throw "DEC-024/025/028/029 terminalization PostgreSQL/RLS Acceptance failed (exit=$terminalizationExitCode, pass=$passCount, fail=$failCount, failed_tests=$failedTestSummary, stage=$failedStage, probe=$guardResult, safe_error=$safeFailureCode, inner_sql_failure=$safeInnerSqlFailure, term035_facts=$safeTerm035Facts); raw output suppressed."
+    }
+    foreach ($requiredMarker in @(
+        'TERM032_FAILURE_MATRIX=PASS fault_points=7 savepoint_rollback=PASS outer_commit=PASS triggers_removed=PASS',
+        'TERM033_POST_ROLLBACK_PERSISTENCE=PASS attempts=1 no_ambiguous_retry=PASS',
+        'TERM034_CONCURRENCY_REPLAY=PASS winner=1 loser=CONFLICT replay=CONFLICT',
+        'TERM035_MULTI_STUDY=PASS selected_study=COMPLETED session=ACTIVE sibling=UNCHANGED',
+        'TERM036_SHARED_PRINCIPAL_DIRECT_SQL=ACCEPTED role=mediq_runtime product_authorization=NOT_PROVEN stow=NOT_PROVEN'
+    )) {
+        if ($terminalizationSummary -notlike "*$requiredMarker*") {
+            throw "PACS terminalization DEC-029 evidence marker missing; marker=$requiredMarker; raw output suppressed."
+        }
     }
     Write-Output "term020_runtime=PASS no_context=DENY cross_tenant=DENY provenance=DENY operation=DENY session=DENY rollback_observer=PASS exact_privileges=262"
+    Write-Output "term030_031_terminalizer=PASS repository=ACTUAL_RUNTIME single_study=COMMITTED independent_observer=PASS synthetic_preconditions=NOT_STOW_NOT_BYTE_PROOF_NOT_PHYSICAL_PURGE"
+    Write-Output "term032_036_terminalizer_boundaries=PASS fault_atomicity=PASS retry_once=PASS concurrency_replay=PASS multi_study=PASS shared_principal_residual=RECORDED scratch_only=REQUIRED"
 
     $provenanceArgs = $ComposeArgs + @(
         "--profile", "test", "run", "--build", "--rm", "--no-deps",
@@ -1248,7 +1417,7 @@ SELECT
 }
 
 function Assert-ScratchSchema {
-    param([string]$Network, [hashtable]$Settings, [string[]]$ComposeArgs, [switch]$RunRegistryPolicyAcceptance)
+    param([string]$Network, [hashtable]$Settings, [string[]]$ComposeArgs, [switch]$RunRegistryPolicyAcceptance, [switch]$PacsAdmissionOnly)
 
     $tables = Invoke-ScratchPsql -Network $Network -User $Settings["MEDIQ_DB_MIGRATION_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_MIGRATION_PASSWORD"] -Sql "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '__drizzle_migrations' ORDER BY tablename;" -Label "DB-008 scratch table inventory"
     $actualTables = @($tables | Sort-Object)
@@ -1281,7 +1450,7 @@ SELECT
     $runtimeLedger = Invoke-ScratchPsqlRaw -Network $Network -User $Settings["MEDIQ_DB_RUNTIME_USER"] -Database $Settings["MEDIQ_POSTGRES_DB"] -Password $Settings["MEDIQ_DB_RUNTIME_PASSWORD"] -Sql "SELECT count(*) FROM public.__drizzle_migrations;"
     if ($runtimeLedger.ExitCode -eq 0) { throw "DB-008 runtime role unexpectedly read the migration ledger." }
 
-    Assert-Db009AccessBoundary -Network $Network -Settings $Settings -ComposeArgs $ComposeArgs
+    Assert-Db009AccessBoundary -Network $Network -Settings $Settings -ComposeArgs $ComposeArgs -PacsAdmissionOnly:$PacsAdmissionOnly
 
     if ($RunRegistryPolicyAcceptance) {
         $token = [guid]::NewGuid().ToString("N")
@@ -1356,6 +1525,9 @@ SELECT count(*) FROM organizations WHERE organization_code IN ('DB008-ORGA-$toke
 foreach ($file in @($resolvedEnvFile, $resolvedComposeFile)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Required DB-008 input is missing: $([IO.Path]::GetFileName($file))" }
 }
+if ($PacsAdmissionOnly -and -not $ScratchOnly) {
+    throw "PACS admission-only Acceptance is permitted only with -ScratchOnly; persistent DB regressions are excluded."
+}
 
 Push-Location $repositoryRoot
 $temporaryProject = "mediq-db008-" + [guid]::NewGuid().ToString("N").Substring(0, 12)
@@ -1380,41 +1552,54 @@ try {
     $network = Start-ScratchDatabase -ComposeArgs $composeArgs -ProjectName $temporaryProject -Settings $settings
     Write-Output "db008_scratch_postgres=PASS role_bootstrap=PASS"
     Invoke-Migrations $composeArgs
-    Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
-    Invoke-Migrations $composeArgs
-    Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs
-    Write-Output "db008_clean_up=PASS product_tables=$($approvedProductTables.Count) ledger=30 catalog=$expectedCatalogCounts"
-
-    Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
-    Write-Output "db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true"
-
-    $network = Start-ScratchDatabase -ComposeArgs $composeArgs -ProjectName $temporaryProject -Settings $settings
-    Write-Output "db008_reset_postgres=PASS role_bootstrap=PASS"
-    Invoke-Migrations $composeArgs
-    Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
-    Write-Output "db008_reset_reapply=PASS product_tables=$($approvedProductTables.Count) ledger=30"
-
-    if ($ScratchOnly) {
-        Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"
+    if ($PacsAdmissionOnly) {
+        Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -PacsAdmissionOnly
+        Write-Output "pacs001_admission_fixture=PASS scope=disposable_postgresql_exact262_forced_rls=true"
     }
     else {
-        foreach ($scriptName in @("test-db-002-registry.ps1", "test-db-003-patient.ps1", "test-db-004-exchange.ps1", "test-db-005-consent-grant.ps1", "test-db-006-imaging.ps1", "test-db-007-evidence.ps1")) {
-            $scriptPath = Join-Path $PSScriptRoot $scriptName
-            if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Required regression script is missing: $scriptName" }
-            & $scriptPath -EnvFile $EnvFile -ComposeFile $ComposeFile
-            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "DB-008 regression failed: $scriptName" }
+        Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
+        Invoke-Migrations $composeArgs
+        Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs
+        Write-Output "db008_clean_up=PASS product_tables=$($approvedProductTables.Count) ledger=30 catalog=$expectedCatalogCounts"
+
+        Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
+        Write-Output "db008_reset=PASS only_owned_ephemeral_compose_resources_removed=true"
+
+        $network = Start-ScratchDatabase -ComposeArgs $composeArgs -ProjectName $temporaryProject -Settings $settings
+        Write-Output "db008_reset_postgres=PASS role_bootstrap=PASS"
+        Invoke-Migrations $composeArgs
+        Assert-ScratchSchema -Network $network -Settings $settings -ComposeArgs $composeArgs -RunRegistryPolicyAcceptance
+    }
+    if ($PacsAdmissionOnly) {
+        Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
+        $scratchCreated = $false
+        Write-Output "pacs001_admission_ephemeral_cleanup=PASS persistent_mediq_database=NOT_ACCESSED"
+    }
+    else {
+        Write-Output "db008_reset_reapply=PASS product_tables=$($approvedProductTables.Count) ledger=30"
+
+        if ($ScratchOnly) {
+            Write-Output "db008_prior_schema_regressions=SKIPPED scratch_only=true persistent_mediq_database=NOT_ACCESSED"
         }
-        Write-Output "db008_prior_schema_regressions=PASS tickets=DB-002,DB-003,DB-004,DB-005,DB-006,DB-007"
-    }
+        else {
+            foreach ($scriptName in @("test-db-002-registry.ps1", "test-db-003-patient.ps1", "test-db-004-exchange.ps1", "test-db-005-consent-grant.ps1", "test-db-006-imaging.ps1", "test-db-007-evidence.ps1")) {
+                $scriptPath = Join-Path $PSScriptRoot $scriptName
+                if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Required regression script is missing: $scriptName" }
+                & $scriptPath -EnvFile $EnvFile -ComposeFile $ComposeFile
+                if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "DB-008 regression failed: $scriptName" }
+            }
+            Write-Output "db008_prior_schema_regressions=PASS tickets=DB-002,DB-003,DB-004,DB-005,DB-006,DB-007"
+        }
 
-    Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
-    $scratchCreated = $false
-    Write-Output "db008_ephemeral_cleanup=PASS"
-    if ($ScratchOnly) {
-        Write-Output "db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED"
-    }
-    else {
-        Write-Output "db008_schema_validation=PASS complete_gate=GATE-IMP-02 baseline_decisions_pending=false"
+        Remove-TemporaryProject -ComposeArgs $composeArgs -ProjectName $temporaryProject
+        $scratchCreated = $false
+        Write-Output "db008_ephemeral_cleanup=PASS"
+        if ($ScratchOnly) {
+            Write-Output "db008_schema_validation=PASS scope=scratch_schema_runtime_acceptance_only persistent_mediq_database=NOT_ACCESSED"
+        }
+        else {
+            Write-Output "db008_schema_validation=PASS complete_gate=GATE-IMP-02 baseline_decisions_pending=false"
+        }
     }
 }
 finally {

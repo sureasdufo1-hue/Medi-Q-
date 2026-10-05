@@ -128,18 +128,27 @@ test('expected Audit partitions include exactly11 success gates and no false ter
 });
 test('actual Compose separates runtime app/B setup, keeps A-only profile and one hardened tmpfs',async () => {
   const doc=YAML.parse(await readFile(new URL('../../infra/docker-compose.yml',import.meta.url),'utf8'));
-  const app=doc.services['api-destination-verification-test'],helper=doc.services['source-capture-orthanc-b-fixture'],old=doc.services['api-source-capture-test'];
-  for (const service of [app,helper]) {
+  const app=doc.services['api-destination-verification-test'],helper=doc.services['source-capture-orthanc-b-fixture'],old=doc.services['api-source-capture-test'],dispatch=doc.services['api-transfer-dispatch-test'];
+  for (const service of [app,helper,dispatch]) {
     assert.deepEqual(service.tmpfs,['/tmp:rw,noexec,nosuid,size=16m']);assert.equal(service.user,'node');assert.equal(service.read_only,true);
     assert.deepEqual(service.cap_drop,['ALL']);assert.deepEqual(service.security_opt,['no-new-privileges:true']);
     assert.ok(!Object.keys(service.environment).some(key => /MIGRATION|FIXTURE_DATABASE/.test(key)));
   }
   assert.deepEqual(helper.networks,['hospital-b']);assert.deepEqual(app.networks,['database','hospital-a','hospital-b']);
+  assert.deepEqual(dispatch.networks,['database','hospital-a','hospital-b']);
+  assert.equal(dispatch.environment.MEDIQ_TEST_TRANSFER_DISPATCH_MODE,'true');
+  assert.match(dispatch.environment.ORTHANC_B_USERNAME,/ORTHANC_B_USERNAME/);
+  assert.match(dispatch.environment.ORTHANC_B_PASSWORD,/ORTHANC_B_PASSWORD/);
   assert.deepEqual(old.networks,['database','hospital-a']);assert.equal(old.environment.ORTHANC_B_PASSWORD,'source-capture-b-disabled');
 });
-test('wrapper retains58+18 and invokes actual seed/test/purge/observer with exact20 destination checks',async () => {
+test('wrapper keeps capture defaults, opt-in transfer dispatch, dispatch-read and destination checks separate',async () => {
   const source=await readFile(new URL('../../scripts/test-int001-source-capture.ps1',import.meta.url),'utf8');
-  assert.match(source,/\$testPass -ne "58" -or \$testFail -ne "0"/);assert.match(source,/\$dispatchPass -ne "18" -or \$dispatchFail -ne "0"/);
+  assert.match(source,/\$expectedTestPass = if \(\$IncludeTransferDispatch\) \{ "71" \} else \{ "70" \}/);
+  assert.match(source,/\$dispatchPass -ne "18" -or \$dispatchFail -ne "0"/);
+  assert.match(source,/\[switch\]\$IncludeTransferDispatch/);
+  assert.match(source,/api-transfer-dispatch-test/);
+  assert.match(source,/transfer_dispatch_observer=PASS operation=VERIFYING provenance=PENDING/);
+  assert.match(source,/int001-destination-pacs-fixture\.mjs", "purge", "exact"/);
   assert.match(source,/\$IncludeDispatchedReads = \$IncludeDispatchedReads -or \$IncludeDestinationVerification/);
   const part=source.slice(source.indexOf('    if ($IncludeDestinationVerification)'),source.indexOf('INT001_ORTHANC_B_AFTER_PROBE_FAILED'));
   assert.match(part,/MEDIQ_TEST_DESTINATION_VERIFY_MODE=true/);assert.match(part,/MEDIQ_TEST_DESTINATION_FIXTURE_KIND=\$destinationKind/);
@@ -157,4 +166,7 @@ test('independent observer is read-only/exact Audit/source/provenance/quota and 
   assert.doesNotMatch(source,/GRANT\s|INSERT\s|UPDATE\s|DELETE\s|MEDIQ_DATABASE_URL/);
   assert.match(source,/ORDER BY occurred_at,audit_event_id/);
   assert.ok(image.includes('COPY scripts/verify-int001-destination-verification.mjs scripts/verify-int001-destination-verification.mjs'));
+  const transferObserver=await readFile(new URL('../../scripts/verify-int001-transfer-dispatch.mjs',import.meta.url),'utf8');
+  assert.match(transferObserver,/STOW_ACKNOWLEDGED/);assert.match(transferObserver,/transfer_status/);
+  assert.ok(image.includes('COPY scripts/verify-int001-transfer-dispatch.mjs scripts/verify-int001-transfer-dispatch.mjs'));
 });

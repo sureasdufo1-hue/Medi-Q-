@@ -3,7 +3,8 @@ param(
     [string]$EnvFile = ".env",
     [string]$ComposeFile = "infra/docker-compose.yml",
     [switch]$IncludeDispatchedReads,
-    [switch]$IncludeDestinationVerification
+    [switch]$IncludeDestinationVerification,
+    [switch]$IncludeTransferDispatch
 )
 
 $ErrorActionPreference = "Stop"
@@ -156,10 +157,15 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
         $safeCode = if ($fixtureFailure.Success) { "$($fixtureFailure.Groups[1].Value):$($fixtureFailure.Groups[2].Value):$($fixtureFailure.Groups[3].Value)" }
             else { [regex]::Match($joined, '\b(INT001_[A-Z0-9_]+|MEDIQ_[A-Z0-9_]+|APP_CONFIG_[A-Z0-9_:]+|DICOM_[A-Z0-9_]+|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|28P01|42501|23503|23505|23514|ASSERTION_FAILED)\b').Value }
         if (-not $safeCode) { $safeCode = "UNCLASSIFIED" }
+        if ($FailureCode -eq 'INT001_TRANSFER_DISPATCH_OBSERVER_FAILED') {
+            $dispatchObserverFailure = [regex]::Match($joined, '\b(TRANSFER_DISPATCH_OBSERVER_FAILED_(?:TRANSFER_DISPATCH_[A-Z0-9_]{1,100}|STAGE_(?:OPERATION_QUERY|PROVENANCE_QUERY|INTEGRITY_QUERY|STATE_AUDIT_QUERY|TERMINAL_AUDIT_QUERY|QUOTA_QUERY|UNKNOWN)_(?:SQLSTATE_[0-9A-Z]{5}|NETWORK_(?:ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENOTFOUND|ETIMEDOUT)|ASSERTION|UNCLASSIFIED)))\b')
+            if ($dispatchObserverFailure.Success) { $safeCode = $dispatchObserverFailure.Groups[1].Value }
+        }
         $failedTestNames = @()
         $failedTestLocations = @()
         $failedAssertionMarkers = @()
         $failedCaseMarkers = @()
+        $dispatchDiagnostic = ""
         if ($FailureCode -in @("INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED", "INT001_DISPATCH_READ_ACCEPTANCE_FAILED", "INT001_DESTINATION_ACCEPTANCE_FAILED")) {
             $failedTestNames = @(
                 [regex]::Matches($joined, '(?m)^\s*not ok \d+ - ([^\r\n]{1,160})$') |
@@ -171,15 +177,17 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
                     Sort-Object -Unique | Select-Object -First 8
             )
             $failedAssertionMarkers = @(
-                [regex]::Matches($joined, '\b(?:CAP005|DEC017|DISPREAD)_[A-Z0-9_]{1,160}\b') |
+                [regex]::Matches($joined, '\b(?:CAP005|COORD004|DEC017|DISPREAD|DISPATCH)_[A-Z0-9_]{1,160}\b') |
                     ForEach-Object { $_.Value } |
                     Where-Object { $_ -notmatch '^(?:DEC017|DISPREAD)_CASE_' } |
                     Sort-Object -Unique |
                     Sort-Object @{ Expression = { if ($_ -match '^DEC017_PRIVACY_PROBE_') { 0 } elseif ($_ -match '^DEC017_ERROR_') { 1 } elseif ($_ -match '^DEC017_(QUERY_|ORIGIN_)') { 2 } else { 3 } } }, @{ Expression = { $_ } } |
                     Select-Object -First 8
             )
-            $failedCaseMarkers = @([regex]::Matches($joined, '\b(?:DEC017|DISPREAD)_CASE_[A-Z0-9_]{1,80}\b') |
+            $failedCaseMarkers = @([regex]::Matches($joined, '\b(?:COORD004|DEC017|DISPREAD)_CASE_[A-Z0-9_]{1,80}\b') |
                 ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 4)
+            $dispatchDiagnosticMatch = [regex]::Match($joined, '(?m)^\s*#\s*(pacs_dispatch_diagnostic=FAIL hook=(?:PASSED|NOT_REACHED) returned=(?:yes|no) operation_state=(?:CREATED|PREFLIGHT_PASSED|STOW_STARTED|VERIFYING|PARTIAL|FAILED|RESULT_UNKNOWN|UNRESOLVED|UNKNOWN) source_reads=(?:0|[1-9][0-9]?|100|OVER_LIMIT) gateway_stow=(?:0|[1-9][0-9]?|100|OVER_LIMIT) b_posts=(?:0|[1-9][0-9]?|100|OVER_LIMIT) destination_checks=(?:0|[1-9][0-9]?|100|OVER_LIMIT) error=(?:DISPATCH_UNAVAILABLE|ASSERTION_FAILURE|OTHER))\s*$')
+            if ($dispatchDiagnosticMatch.Success) { $dispatchDiagnostic = "; $($dispatchDiagnosticMatch.Groups[1].Value)" }
             if ($failedTestNames.Count -gt 0) { $safeCode = "NODE_TEST_FAILURE" }
         }
         if ($FailureCode -like 'INT001_DISPATCH*') {
@@ -194,11 +202,15 @@ function Invoke-Compose([string[]]$ComposeArgs, [string]$FailureCode, [string[]]
             $failedCaseMarkers = @([regex]::Matches($joined, '\bDESTVERIFY_CASE_[A-Z0-9_]{1,80}\b') |
                 ForEach-Object { $_.Value } | Sort-Object -Unique | Select-Object -First 4)
         }
+        if ($FailureCode -eq 'INT001_DATABASE_OBSERVER_FAILED') {
+            $observerAssertion = [regex]::Match($joined, 'INT001_OBSERVER_FAILED:[^:\s]+:([A-Z][A-Z0-9_]{1,127})')
+            if ($observerAssertion.Success) { $safeCode = "$safeCode; safe_check=$($observerAssertion.Groups[1].Value)" }
+        }
         $safeTestSummary = if ($failedTestNames.Count -gt 0) { "; failed_test_count=$($failedTestNames.Count)" } else { "" }
         $safeLocationSummary = if ($failedTestLocations.Count -gt 0) { "; test_locations=$($failedTestLocations -join ',')" } else { "" }
-        $safeAssertionSummary = if ($failedAssertionMarkers.Count -gt 0) { "; cap005_checks=$($failedAssertionMarkers -join ',')" } else { "" }
+        $safeAssertionSummary = if ($failedAssertionMarkers.Count -gt 0) { "; safe_checks=$($failedAssertionMarkers -join ',')" } else { "" }
         $safeCaseSummary = if ($failedCaseMarkers.Count -gt 0) { "; case_context=$($failedCaseMarkers -join ',')" } else { "" }
-        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary$safeLocationSummary$safeAssertionSummary$safeCaseSummary); raw output suppressed."
+        throw "$FailureCode (exit=$exitCode, safe_error=$safeCode$safeTestSummary$safeLocationSummary$safeAssertionSummary$safeCaseSummary$dispatchDiagnostic); raw output suppressed."
     }
     return ,$output
 }
@@ -351,9 +363,37 @@ try {
     $manifest = Get-Content -LiteralPath (Join-Path $repositoryRoot "data/synthetic-ct-env007/manifest.json") -Raw | ConvertFrom-Json
     $capturePrivacyValues = @($manifest.patient.patientId, $manifest.studyInstanceUID, $manifest.seriesInstanceUID) +
         @($manifest.instances | ForEach-Object { $_.sopInstanceUID }) +
+        @('16000000-0000-4000-8000-000000000051', '17000000-0000-4000-8000-000000000051',
+            '18000000-0000-4000-8000-000000000051', '19000000-0000-4000-8000-000000000051',
+            '1a000000-0000-4000-8000-000000000051', '1b000000-0000-4000-8000-000000000051',
+            '1b000000-0000-4000-8000-000000000052', '1d000000-0000-4000-8000-000000000051',
+            '16000000-0000-4000-8000-000000000052', '17000000-0000-4000-8000-000000000052',
+            '18000000-0000-4000-8000-000000000052', '19000000-0000-4000-8000-000000000052',
+            '1a000000-0000-4000-8000-000000000052', '1b000000-0000-4000-8000-000000000080',
+            '1b000000-0000-4000-8000-000000000083', '1d000000-0000-4000-8000-000000000061',
+            '16000000-0000-4000-8000-000000000053', '17000000-0000-4000-8000-000000000053',
+            '18000000-0000-4000-8000-000000000053', '19000000-0000-4000-8000-000000000053',
+            '1a000000-0000-4000-8000-000000000053', '1b000000-0000-4000-8000-000000000081',
+            '1b000000-0000-4000-8000-000000000084', '1d000000-0000-4000-8000-000000000062',
+            '16000000-0000-4000-8000-000000000054', '17000000-0000-4000-8000-000000000054',
+            '18000000-0000-4000-8000-000000000054', '19000000-0000-4000-8000-000000000054',
+            '1a000000-0000-4000-8000-000000000054', '1b000000-0000-4000-8000-000000000082',
+            '1b000000-0000-4000-8000-000000000085', '1d000000-0000-4000-8000-000000000063') +
         @($secretKeys | Where-Object { $_ -match 'PASSWORD$' } | ForEach-Object { $settings[$_] }) +
         @($settings["MEDIQ_DATABASE_URL"], $settings["MEDIQ_MIGRATION_DATABASE_URL"], $env:MEDIQ_TEST_OBSERVATION_TOKEN,
             $env:MEDIQ_TEST_MUTATION_TOKEN, 'TEST-R6-REBOUND')
+    for ($faultIndex = 0; $faultIndex -lt 8; $faultIndex++) {
+        $sequence = 55 + $faultIndex
+        foreach ($prefix in @('16', '17', '18', '19', '1a', '1c')) {
+            $capturePrivacyValues += [string]::Format('{0}000000-0000-4000-8000-{1:D12}', $prefix, $sequence)
+        }
+        $capturePrivacyValues += [string]::Format('1c000000-0000-4000-8000-{0:D12}', (301 + $faultIndex))
+        $capturePrivacyValues += [string]::Format('19000000-0000-4000-8000-{0:D12}', ($sequence + 10))
+        $capturePrivacyValues += [string]::Format('1a000000-0000-4000-8000-{0:D12}', ($sequence + 10))
+        $capturePrivacyValues += [string]::Format('1b000000-0000-4000-8000-{0:D12}', (400 + $faultIndex))
+        $capturePrivacyValues += [string]::Format('1b000000-0000-4000-8000-{0:D12}', (408 + $faultIndex))
+        $capturePrivacyValues += [string]::Format('1d000000-0000-4000-8000-{0:D12}', (64 + $faultIndex))
+    }
     Assert-CaptureOutputPrivacy -Output '' -SensitiveValues $capturePrivacyValues
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "config", "--quiet")) "INT001_COMPOSE_VALIDATION_FAILED"
     $null = Invoke-Compose ($composeBase + @("up", "--detach", "--wait", "postgres", "orthanc-a", "orthanc-b")) "INT001_TEMPORARY_SERVICES_START_FAILED"
@@ -395,7 +435,10 @@ COMMIT;
     $null = Invoke-Compose ($composeBase + @("--profile", "migration", "run", "--build", "--rm", "--no-deps", "migrator")) "INT001_TEMPORARY_DATABASE_MIGRATION_FAILED"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-b-empty-probe")) "INT001_ORTHANC_B_BEFORE_PROBE_FAILED"
     Write-Output "orthanc_b_before=EMPTY"
-    $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-fixture-seed")) "INT001_DATABASE_FIXTURE_SEED_FAILED"
+    $fixtureSeedArgs = @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps")
+    if ($IncludeTransferDispatch) { $fixtureSeedArgs += @("--env", "MEDIQ_TEST_TRANSFER_DISPATCH_MODE=true") }
+    $fixtureSeedArgs += "source-capture-fixture-seed"
+    $null = Invoke-Compose ($composeBase + $fixtureSeedArgs) "INT001_DATABASE_FIXTURE_SEED_FAILED"
     Write-Output "database_fixture=PASS synthetic_only=true"
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-orthanc-a-seed")) "INT001_ORTHANC_A_FIXTURE_SEED_FAILED"
     Write-Output "orthanc_a_fixture=PASS synthetic_instances=3"
@@ -425,16 +468,36 @@ COMMIT;
         Start-Sleep -Seconds 2
     }
     if (-not $mutationReady) { throw "INT001_MUTATION_CONTROLLER_NOT_READY" }
-    $testOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+    $testArgs = @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
         "--env", "MEDIQ_TEST_OBSERVATION_TOKEN", "--env", "MEDIQ_TEST_OBSERVATION_URL",
-        "--env", "MEDIQ_TEST_MUTATION_TOKEN", "--env", "MEDIQ_TEST_MUTATION_URL", "api-source-capture-test")) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED" $capturePrivacyValues
+        "--env", "MEDIQ_TEST_MUTATION_TOKEN", "--env", "MEDIQ_TEST_MUTATION_URL")
+    if ($IncludeTransferDispatch) {
+        $testArgs += @("--env", "MEDIQ_TEST_TRANSFER_DISPATCH_MODE=true", "api-transfer-dispatch-test")
+    }
+    else { $testArgs += "api-source-capture-test" }
+    $testOutput = Invoke-Compose ($composeBase + $testArgs) "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED" $capturePrivacyValues
     $testText = [string]::Join("`n", [string[]]$testOutput)
     $testPass = [regex]::Match($testText, '(?m)^# pass (\d+)$').Groups[1].Value
     $testFail = [regex]::Match($testText, '(?m)^# fail (\d+)$').Groups[1].Value
-    if ($testPass -ne "58" -or $testFail -ne "0") {
+    $expectedTestPass = if ($IncludeTransferDispatch) { "71" } else { "70" }
+    if ($testPass -ne $expectedTestPass -or $testFail -ne "0") {
         throw "INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_SUMMARY_INVALID:pass=${testPass}:fail=${testFail}"
     }
+    $coordinatorAuthMarker = [regex]::Match($testText, '(?m)^\s*#\s*pacs_import_coordinator_auth_denials=PASS cases=9 operation_created=0 source_requests=0 destination_calls=0\s*$')
+    if (-not $coordinatorAuthMarker.Success) { throw "INT001_COORDINATOR_AUTH_DENIAL_MARKER_MISSING" }
+    $coordinatorSourceMarker = [regex]::Match($testText, '(?m)^\s*#\s*pacs_import_coordinator_source_denials=PASS cases=3 admitted_created=3 no_handoff=true no_payload=true\s*$')
+    if (-not $coordinatorSourceMarker.Success) { throw "INT001_COORDINATOR_SOURCE_DENIAL_MARKER_MISSING" }
+    $coordinatorFaultMarker = [regex]::Match($testText, '(?m)^\s*#\s*pacs_import_coordinator_faults=PASS cases=8 fixed_unavailable=true nonterminal=true destination=0 unresolved_purge_explicit=true\s*$')
+    if (-not $coordinatorFaultMarker.Success) { throw "INT001_COORDINATOR_FAULT_MARKER_MISSING" }
+    if ($IncludeTransferDispatch) {
+        $dispatchMarker = [regex]::Match($testText, '(?m)^\s*#\s*pacs_import_dispatch=PASS commit_before_effect=true b_stow=1 operation=VERIFYING provenance=PENDING destination_verification=NOT_RUN payload_retained_for_next_gate=true\s*$')
+        if (-not $dispatchMarker.Success) { throw "INT001_TRANSFER_DISPATCH_MARKER_MISSING" }
+    }
     Write-Output "authorized_capture_test=PASS tests=$testPass failed=$testFail"
+    Write-Output "pacs_import_coordinator_positive=PASS admission_source_capture_audited_cleanup=true"
+    Write-Output "pacs_import_coordinator_auth_denials=PASS cases=9 no_operation=true no_source=true no_destination=true"
+    Write-Output "pacs_import_coordinator_source_denials=PASS cases=3 exact_operation_audit=true no_evidence_provenance_payload=true quota=0"
+    Write-Output "pacs_import_coordinator_faults=PASS cases=8 fail_closed=true unresolved_purge_not_falsely_purged=true"
     Write-Output "source_test_output_privacy=PASS known_values_and_markers_only=true"
     Invoke-DockerQuiet -DockerArgs @("exec", $privacyObserverName, "node", "--input-type=module", "-e", $privacyProbeScript, "summary") -FailureCode "INT001_PRIVACY_OBSERVER_INCOMPLETE"
     Write-Output "live_privacy_observer=PASS read_only=true runtime_privileges_unchanged=true"
@@ -443,6 +506,20 @@ COMMIT;
     $null = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps", "source-capture-db-observer")) "INT001_DATABASE_OBSERVER_FAILED" $capturePrivacyValues
     Write-Output "audit_and_evidence_observer=PASS"
     Write-Output "final_observer_output_privacy=PASS known_values_and_markers_only=true"
+    if ($IncludeTransferDispatch) {
+        $transferObserver = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "source-capture-db-observer", "node", "scripts/verify-int001-transfer-dispatch.mjs")) "INT001_TRANSFER_DISPATCH_OBSERVER_FAILED" $capturePrivacyValues
+        if ([string]::Join("`n", [string[]]$transferObserver) -notmatch '(?m)^transfer_dispatch_observer=PASS operation=VERIFYING provenance=PENDING state_audits=4 source_integrity=PENDING destination_integrity=0 quota=retained terminal=0\r?$') {
+            throw "INT001_TRANSFER_DISPATCH_OBSERVER_MARKER_MISSING"
+        }
+        Write-Output "transfer_dispatch_independent_observer=PASS pending_provenance=true ordered_state_audits=true no_terminalization=true"
+        $transferCleanupOutput = Invoke-Compose ($composeBase + @("--profile", "source-capture-test", "run", "--build", "--rm", "--no-deps",
+            "--env", "MEDIQ_TEST_PROJECT", "source-capture-orthanc-b-fixture", "node", "scripts/int001-destination-pacs-fixture.mjs", "purge", "exact")) "INT001_TRANSFER_DISPATCH_DESTINATION_CLEANUP_FAILED" $capturePrivacyValues
+        if ([string]::Join("`n", [string[]]$transferCleanupOutput) -notmatch '(?m)^destination_pacs_fixture=PASS action=purge kind=exact instances=3 exact_identity_bytes=true\r?$') {
+            throw "INT001_TRANSFER_DISPATCH_DESTINATION_CLEANUP_MARKER_MISSING"
+        }
+        Write-Output "transfer_dispatch_destination_fixture=PASS exact_identity_bytes=true exact_owned_study_purged=true"
+    }
     if ($IncludeDispatchedReads) {
         # Original exact 58-case source gate remains intact above. The new mode
         # has disjoint fixtures and no owner/migrator URL in the app process.

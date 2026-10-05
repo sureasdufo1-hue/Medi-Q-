@@ -1,9 +1,15 @@
 import pg from "pg";
 import { allSourceLifecycleCases as temporaryCaptureLifecycleCases } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
+import { coordinatorFaultCases } from "../tests/fixtures/pacs-coordinator-fault-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
 if (!databaseUrl) throw new Error("INT001_FIXTURE_DATABASE_URL_REQUIRED");
+const transferDispatchMode = process.env.MEDIQ_TEST_TRANSFER_DISPATCH_MODE;
+if (transferDispatchMode !== undefined && transferDispatchMode !== "true") {
+  throw new Error("INT001_TRANSFER_DISPATCH_MODE_INVALID");
+}
+const includeTransferDispatch = transferDispatchMode === "true";
 
 const ids = Object.freeze({
   organizationA: "01000000-0000-4000-8000-000000000001",
@@ -15,6 +21,8 @@ const ids = Object.freeze({
   actorB: "0a000000-0000-4000-8000-000000000001",
   patient: "15000000-0000-4000-8000-000000000001",
   mapping: "15000000-0000-4000-8000-000000000002",
+  coordinatorInvalidMapPatient: "15000000-0000-4000-8000-000000000051",
+  coordinatorInvalidMap: "15000000-0000-4000-8000-000000000052",
   session: "16000000-0000-4000-8000-000000000001",
   sessionOther: "16000000-0000-4000-8000-000000000011",
   sessionSourceMismatch: "16000000-0000-4000-8000-000000000012",
@@ -60,6 +68,46 @@ const ids = Object.freeze({
   cap012StartCorrelation: "1d000000-0000-4000-8000-000000000029",
   cap012EvidenceCorrelation: "1d000000-0000-4000-8000-000000000030",
   cap012SuccessAuditCorrelation: "1d000000-0000-4000-8000-000000000031",
+  coordinatorSession: "16000000-0000-4000-8000-000000000051",
+  coordinatorPackage: "17000000-0000-4000-8000-000000000051",
+  coordinatorStudy: "18000000-0000-4000-8000-000000000051",
+  coordinatorConsent: "19000000-0000-4000-8000-000000000051",
+  coordinatorGrant: "1a000000-0000-4000-8000-000000000051",
+  transferDispatchSession: "16000000-0000-4000-8000-000000000075",
+  transferDispatchPackage: "17000000-0000-4000-8000-000000000075",
+  transferDispatchStudy: "18000000-0000-4000-8000-000000000075",
+  transferDispatchConsent: "19000000-0000-4000-8000-000000000075",
+  transferDispatchConsentAction: "19000000-0000-4000-8000-000000000085",
+  transferDispatchGrant: "1a000000-0000-4000-8000-000000000075",
+  transferDispatchGrantKey: "1c000000-0000-4000-8000-000000000075",
+  transferDispatchGrantScope: "1c000000-0000-4000-8000-000000000085",
+  transferDispatchOperation: "1b000000-0000-4000-8000-000000000075",
+  transferDispatchOperationKey: "1b000000-0000-4000-8000-000000000076",
+  transferDispatchCorrelation: "1d000000-0000-4000-8000-000000000090",
+  coordinatorOperation: "1b000000-0000-4000-8000-000000000051",
+  coordinatorIdempotency: "1b000000-0000-4000-8000-000000000052",
+  coordinatorCorrelation: "1d000000-0000-4000-8000-000000000051",
+  coordinatorMappingSession: "16000000-0000-4000-8000-000000000052",
+  coordinatorMappingPackage: "17000000-0000-4000-8000-000000000052",
+  coordinatorMappingStudy: "18000000-0000-4000-8000-000000000052",
+  coordinatorMappingConsent: "19000000-0000-4000-8000-000000000052",
+  coordinatorMappingGrant: "1a000000-0000-4000-8000-000000000052",
+  coordinatorMappingOperation: "1b000000-0000-4000-8000-000000000080",
+  coordinatorMappingCorrelation: "1d000000-0000-4000-8000-000000000061",
+  coordinatorPatientIdSession: "16000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdPackage: "17000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdStudy: "18000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdConsent: "19000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdGrant: "1a000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdOperation: "1b000000-0000-4000-8000-000000000081",
+  coordinatorPatientIdCorrelation: "1d000000-0000-4000-8000-000000000062",
+  coordinatorMetadataSession: "16000000-0000-4000-8000-000000000054",
+  coordinatorMetadataPackage: "17000000-0000-4000-8000-000000000054",
+  coordinatorMetadataStudy: "18000000-0000-4000-8000-000000000054",
+  coordinatorMetadataConsent: "19000000-0000-4000-8000-000000000054",
+  coordinatorMetadataGrant: "1a000000-0000-4000-8000-000000000054",
+  coordinatorMetadataOperation: "1b000000-0000-4000-8000-000000000082",
+  coordinatorMetadataCorrelation: "1d000000-0000-4000-8000-000000000063",
 });
 const cap012Cases = Object.freeze([
   Object.freeze({
@@ -163,6 +211,18 @@ try {
       (mapping_id, patient_ref_id, hospital_id, local_patient_id, status, validated_at, created_at, updated_at)
      VALUES ($1, $2, $3, 'TEST-PATIENT-007', 'VALID', now(), now(), now())`,
     [ids.mapping, ids.patient, ids.hospitalB],
+  );
+  await client.query(
+    `INSERT INTO patient_refs
+      (patient_ref_id, patient_ref_code, status, created_at, updated_at)
+     VALUES ($1, 'MQ-TEST-INT001-COORD-INVALID-MAPPING', 'ACTIVE', now(), now())`,
+    [ids.coordinatorInvalidMapPatient],
+  );
+  await client.query(
+    `INSERT INTO patient_mappings
+      (mapping_id, patient_ref_id, hospital_id, local_patient_id, status, validated_at, created_at, updated_at)
+     VALUES ($1, $2, $3, 'TEST-PATIENT-COORD-INVALID', 'REVOKED', NULL, now(), now())`,
+    [ids.coordinatorInvalidMap, ids.coordinatorInvalidMapPatient, ids.hospitalB],
   );
   await client.query(
     `INSERT INTO exchange_sessions
@@ -398,7 +458,97 @@ try {
     (actor_id, tenant_id, hospital_id, actor_type, external_subject, display_name, status, created_at, updated_at)
     VALUES ('0a000000-0000-4000-8000-000000000003', $1, NULL, 'USER',
       'synthetic-int001-patient-actor', 'Synthetic Consent Patient', 'ACTIVE', now(), now())`, [ids.tenantB]);
-  for (const scenario of [...cap012Cases, ...temporaryCaptureLifecycleCases]) {
+  const coordinatorCase = Object.freeze({
+    sessionId: ids.coordinatorSession,
+    sessionKey: "1c000000-0000-4000-8000-000000000051",
+    packageId: ids.coordinatorPackage,
+    studyRefId: ids.coordinatorStudy,
+    consentId: ids.coordinatorConsent,
+    consentActionId: "19000000-0000-4000-8000-000000000061",
+    grantId: ids.coordinatorGrant,
+    grantKey: "1c000000-0000-4000-8000-000000000052",
+    grantScopeId: "1c000000-0000-4000-8000-000000000061",
+    operationId: ids.coordinatorOperation,
+    operationKey: ids.coordinatorIdempotency,
+    correlationId: ids.coordinatorCorrelation,
+  });
+  const transferDispatchCase = Object.freeze({
+    sessionId: ids.transferDispatchSession,
+    sessionKey: "1c000000-0000-4000-8000-000000000076",
+    packageId: ids.transferDispatchPackage,
+    studyRefId: ids.transferDispatchStudy,
+    consentId: ids.transferDispatchConsent,
+    consentActionId: ids.transferDispatchConsentAction,
+    grantId: ids.transferDispatchGrant,
+    grantKey: ids.transferDispatchGrantKey,
+    grantScopeId: ids.transferDispatchGrantScope,
+    operationId: ids.transferDispatchOperation,
+    operationKey: ids.transferDispatchOperationKey,
+    correlationId: ids.transferDispatchCorrelation,
+  });
+  const coordinatorSourceCases = Object.freeze([
+    Object.freeze({
+      sessionId: ids.coordinatorMappingSession,
+      sessionKey: "1c000000-0000-4000-8000-000000000052",
+      packageId: ids.coordinatorMappingPackage,
+      studyRefId: ids.coordinatorMappingStudy,
+      patientRefId: ids.coordinatorInvalidMapPatient,
+      consentId: ids.coordinatorMappingConsent,
+      consentActionId: "19000000-0000-4000-8000-000000000062",
+      grantId: ids.coordinatorMappingGrant,
+      grantKey: "1c000000-0000-4000-8000-000000000062",
+      grantScopeId: "1a000000-0000-4000-8000-000000000062",
+      operationId: ids.coordinatorMappingOperation,
+      operationKey: "1b000000-0000-4000-8000-000000000083",
+      correlationId: ids.coordinatorMappingCorrelation,
+    }),
+    Object.freeze({
+      sessionId: ids.coordinatorPatientIdSession,
+      sessionKey: "1c000000-0000-4000-8000-000000000053",
+      packageId: ids.coordinatorPatientIdPackage,
+      studyRefId: ids.coordinatorPatientIdStudy,
+      consentId: ids.coordinatorPatientIdConsent,
+      consentActionId: "19000000-0000-4000-8000-000000000063",
+      grantId: ids.coordinatorPatientIdGrant,
+      grantKey: "1c000000-0000-4000-8000-000000000063",
+      grantScopeId: "1a000000-0000-4000-8000-000000000063",
+      operationId: ids.coordinatorPatientIdOperation,
+      operationKey: "1b000000-0000-4000-8000-000000000084",
+      correlationId: ids.coordinatorPatientIdCorrelation,
+    }),
+    Object.freeze({
+      sessionId: ids.coordinatorMetadataSession,
+      sessionKey: "1c000000-0000-4000-8000-000000000054",
+      packageId: ids.coordinatorMetadataPackage,
+      studyRefId: ids.coordinatorMetadataStudy,
+      consentId: ids.coordinatorMetadataConsent,
+      consentActionId: "19000000-0000-4000-8000-000000000064",
+      grantId: ids.coordinatorMetadataGrant,
+      grantKey: "1c000000-0000-4000-8000-000000000064",
+      grantScopeId: "1a000000-0000-4000-8000-000000000064",
+      operationId: ids.coordinatorMetadataOperation,
+      operationKey: "1b000000-0000-4000-8000-000000000085",
+      correlationId: ids.coordinatorMetadataCorrelation,
+    }),
+  ]);
+  const coordinatorFaultFixtures = Object.freeze(coordinatorFaultCases.map(scenario => Object.freeze({
+    sessionId: scenario.sessionId,
+    sessionKey: scenario.sessionKey,
+    packageId: scenario.packageId,
+    studyRefId: scenario.studyRefId,
+    consentId: scenario.consentId,
+    consentActionId: scenario.consentActionId,
+    grantId: scenario.grantId,
+    grantKey: scenario.grantKey,
+    grantScopeId: scenario.grantScopeId,
+    operationId: scenario.operationId,
+    operationKey: scenario.idempotencyKey,
+    correlationId: scenario.correlationId,
+  })));
+  for (const scenario of [...cap012Cases, ...temporaryCaptureLifecycleCases, coordinatorCase,
+    ...(includeTransferDispatch ? [transferDispatchCase] : []),
+    ...coordinatorSourceCases, ...coordinatorFaultFixtures]) {
+    const patientRefId = scenario.patientRefId ?? ids.patient;
     await client.query(
       `INSERT INTO exchange_sessions
         (session_id, patient_ref_id, source_hospital_id, destination_hospital_id,
@@ -406,7 +556,7 @@ try {
          completed_at, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, 'Synthetic CAP-012 persistence fault', 'ACTIVE',
                now(), now(), now() + interval '1 hour', NULL, $6)`,
-      [scenario.sessionId, ids.patient, ids.hospitalA, ids.hospitalB, ids.actorB, scenario.sessionKey],
+      [scenario.sessionId, patientRefId, ids.hospitalA, ids.hospitalB, ids.actorB, scenario.sessionKey],
     );
     await client.query(
       `INSERT INTO imaging_packages
@@ -414,7 +564,7 @@ try {
          state, storage_ref, study_count, created_at, updated_at,
          retention_expires_at, deleted_at)
        VALUES ($1, $2, $3, $4, 'AVAILABLE', NULL, 1, now(), now(), NULL, NULL)`,
-      [scenario.packageId, scenario.sessionId, ids.patient, ids.hospitalA],
+      [scenario.packageId, scenario.sessionId, patientRefId, ids.hospitalA],
     );
     await client.query(
       `INSERT INTO study_references
@@ -430,7 +580,7 @@ try {
          issued_at, expires_at, withdrawn_at, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', 1, now(),
                now() + interval '1 hour', NULL, now(), now())`,
-      [scenario.consentId, scenario.sessionId, ids.patient, ids.hospitalA,
+      [scenario.consentId, scenario.sessionId, patientRefId, ids.hospitalA,
         ids.hospitalB, scenario.packageId],
     );
     await client.query(
@@ -524,6 +674,10 @@ try {
           AND NEW.action = 'PACS_SOURCE_CAPTURED')
          OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000103'::uuid
           AND NEW.action = 'PACS_SOURCE_CAPTURED')
+         OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000064'::uuid
+          AND NEW.action = 'PACS_SOURCE_CAPTURE_STARTED')
+         OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000069'::uuid
+          AND NEW.action = 'PACS_SOURCE_CAPTURED')
          OR (NEW.correlation_id = '1d000000-0000-4000-8000-000000000104'::uuid
           AND NEW.action = 'PACS_TEMPORARY_READ_AUTHORIZED'
           AND NEW.reason_code = 'BEFORE_DELIVERY') THEN
@@ -541,7 +695,9 @@ try {
     AS $function$
     BEGIN
       IF NEW.operation_id IN ('1b000000-0000-4000-8000-000000000022'::uuid,
-          '1b000000-0000-4000-8000-000000000113'::uuid)
+          '1b000000-0000-4000-8000-000000000113'::uuid,
+          '1b000000-0000-4000-8000-000000000404'::uuid,
+          '1b000000-0000-4000-8000-000000000407'::uuid)
          AND NEW.verification_stage = 'SOURCE_CAPTURE'
          AND NEW.status = 'PENDING' THEN
         RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'INT001_CAP012_TEST_FAULT';
@@ -552,6 +708,22 @@ try {
     CREATE TRIGGER int001_cap012_evidence_insert_fault
       BEFORE INSERT ON public.integrity_evidence
       FOR EACH ROW EXECUTE FUNCTION public.int001_cap012_evidence_insert_fault();
+
+    CREATE FUNCTION public.int001_coord004_deferred_commit_fault() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $function$
+    BEGIN
+      IF NEW.correlation_id = '1d000000-0000-4000-8000-000000000070'::uuid
+         AND NEW.action = 'PACS_SOURCE_CAPTURED' THEN
+        RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'INT001_COORD004_TEST_FAULT';
+      END IF;
+      RETURN NEW;
+    END;
+    $function$;
+    CREATE CONSTRAINT TRIGGER int001_coord004_deferred_commit_fault
+      AFTER INSERT ON public.audit_events
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION public.int001_coord004_deferred_commit_fault();
   `);
   await client.query("COMMIT");
   console.log("int001_database_fixture=PASS synthetic_only=true");

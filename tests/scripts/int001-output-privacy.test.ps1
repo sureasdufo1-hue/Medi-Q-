@@ -71,6 +71,30 @@ catch { $projected = $_.Exception.Message }
 Check ($projected -like '*failed_test_count=1*' -and $projected -like '*DEC017_PRIVACY_SNAPSHOT_AUDIT*' -and
     $projected -like '*test.mjs:123:4*' -and -not $projected.Contains('TEST-ARBITRARY') -and -not $projected.Contains('/workspace'))
 $script:cases++
+$script:dockerOutput = @('not ok 1 - TEST-ARBITRARY-UNTRUSTED-NAME',
+    '# pacs_dispatch_diagnostic=FAIL hook=PASSED returned=no operation_state=RESULT_UNKNOWN source_reads=4 gateway_stow=1 b_posts=1 destination_checks=0 error=DISPATCH_UNAVAILABLE',
+    'SENSITIVE_UID SENSITIVE_PAYLOAD')
+$projected = $null
+try { $null = Invoke-Compose @('compose', 'run', 'TEST-service') 'INT001_AUTHORIZED_CAPTURE_ACCEPTANCE_FAILED' @('TEST-ONLY-SECRET') }
+catch { $projected = $_.Exception.Message }
+Check ($projected -like '*pacs_dispatch_diagnostic=FAIL hook=PASSED returned=no operation_state=RESULT_UNKNOWN source_reads=4 gateway_stow=1 b_posts=1 destination_checks=0 error=DISPATCH_UNAVAILABLE*' -and
+    -not $projected.Contains('TEST-ARBITRARY') -and -not $projected.Contains('SENSITIVE'))
+$script:cases++
+$script:dockerOutput = @('TRANSFER_DISPATCH_OBSERVER_FAILED_TRANSFER_DISPATCH_OPERATION_BINDING',
+    'SENSITIVE_ROW_VALUE SENSITIVE_SQL_ERROR SENSITIVE_UID')
+$projected = $null
+try { $null = Invoke-Compose @('compose', 'run', 'TEST-service') 'INT001_TRANSFER_DISPATCH_OBSERVER_FAILED' @('TEST-ONLY-SECRET') }
+catch { $projected = $_.Exception.Message }
+Check ($projected -like '*safe_error=TRANSFER_DISPATCH_OBSERVER_FAILED_TRANSFER_DISPATCH_OPERATION_BINDING*' -and
+    -not $projected.Contains('SENSITIVE'))
+$script:cases++
+$script:dockerOutput = @('TRANSFER_DISPATCH_OBSERVER_FAILED_STAGE_PROVENANCE_QUERY_SQLSTATE_42501', 'SENSITIVE_SQL_TEXT TEST-ONLY-SECRET')
+$projected = $null
+try { $null = Invoke-Compose @('compose', 'run', 'TEST-service') 'INT001_TRANSFER_DISPATCH_OBSERVER_FAILED' @('UNRELATED-TEST-VALUE') }
+catch { $projected = $_.Exception.Message }
+Check ($projected -like '*safe_error=TRANSFER_DISPATCH_OBSERVER_FAILED_STAGE_PROVENANCE_QUERY_SQLSTATE_42501*' -and
+    -not $projected.Contains('SENSITIVE') -and -not $projected.Contains('TEST-ONLY-SECRET'))
+$script:cases++
 $script:dockerOutput = @('TEST-ARBITRARY-UNTRUSTED-ERROR')
 Expect-Error { Invoke-Compose @('compose', 'run', 'TEST-service') 'INT001_DATABASE_OBSERVER_FAILED' @('TEST-ONLY-SECRET') } 'INT001_DATABASE_OBSERVER_FAILED (exit=1, safe_error=UNCLASSIFIED); raw output suppressed.'
 

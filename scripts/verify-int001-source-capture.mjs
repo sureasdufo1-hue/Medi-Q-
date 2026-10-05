@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import pg from "pg";
 import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, expectedPrivacyPhases, privacyColumnContract, privacyAssert, privacyTokenMatches,
   parsePrivacyProbe, assertPrivacySnapshot } from "../tests/fixtures/temporary-capture-lifecycle-fixture.mjs";
 import { mutationExpectedAudit } from "../tests/fixtures/source-capture-mutation-fixture.mjs";
+import { coordinatorFaultCases } from "../tests/fixtures/pacs-coordinator-fault-fixture.mjs";
 
 const { Pool } = pg;
 const databaseUrl = process.env.MEDIQ_TEST_FIXTURE_DATABASE_URL;
@@ -17,6 +19,47 @@ const ids = Object.freeze({
   cap012StartSession: "16000000-0000-4000-8000-000000000031",
   cap012EvidenceSession: "16000000-0000-4000-8000-000000000032",
   cap012SuccessAuditSession: "16000000-0000-4000-8000-000000000033",
+  coordinatorSession: "16000000-0000-4000-8000-000000000051",
+  coordinatorPackage: "17000000-0000-4000-8000-000000000051",
+  coordinatorStudy: "18000000-0000-4000-8000-000000000051",
+  coordinatorConsent: "19000000-0000-4000-8000-000000000051",
+  coordinatorGrant: "1a000000-0000-4000-8000-000000000051",
+  coordinatorOperation: "1b000000-0000-4000-8000-000000000051",
+  coordinatorIdempotency: "1b000000-0000-4000-8000-000000000052",
+  coordinatorCorrelation: "1d000000-0000-4000-8000-000000000051",
+  coordinatorDenyMalformedCorrelation: "1d000000-0000-4000-8000-000000000052",
+  coordinatorDenyMissingGrantCorrelation: "1d000000-0000-4000-8000-000000000053",
+  coordinatorDenyRevokedGrantCorrelation: "1d000000-0000-4000-8000-000000000054",
+  coordinatorDenyExpiredGrantCorrelation: "1d000000-0000-4000-8000-000000000055",
+  coordinatorDenyWithdrawnConsentCorrelation: "1d000000-0000-4000-8000-000000000056",
+  coordinatorDenyWrongScopeCorrelation: "1d000000-0000-4000-8000-000000000057",
+  coordinatorDenyCrossSessionCorrelation: "1d000000-0000-4000-8000-000000000058",
+  coordinatorDenyCrossTenantCorrelation: "1d000000-0000-4000-8000-000000000059",
+  coordinatorDenyForeignStudyCorrelation: "1d000000-0000-4000-8000-000000000060",
+  coordinatorMappingSession: "16000000-0000-4000-8000-000000000052",
+  coordinatorMappingPackage: "17000000-0000-4000-8000-000000000052",
+  coordinatorMappingStudy: "18000000-0000-4000-8000-000000000052",
+  coordinatorMappingConsent: "19000000-0000-4000-8000-000000000052",
+  coordinatorMappingGrant: "1a000000-0000-4000-8000-000000000052",
+  coordinatorMappingOperation: "1b000000-0000-4000-8000-000000000080",
+  coordinatorMappingIdempotency: "1b000000-0000-4000-8000-000000000083",
+  coordinatorMappingCorrelation: "1d000000-0000-4000-8000-000000000061",
+  coordinatorPatientIdSession: "16000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdPackage: "17000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdStudy: "18000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdConsent: "19000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdGrant: "1a000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdOperation: "1b000000-0000-4000-8000-000000000081",
+  coordinatorPatientIdIdempotency: "1b000000-0000-4000-8000-000000000084",
+  coordinatorPatientIdCorrelation: "1d000000-0000-4000-8000-000000000062",
+  coordinatorMetadataSession: "16000000-0000-4000-8000-000000000054",
+  coordinatorMetadataPackage: "17000000-0000-4000-8000-000000000054",
+  coordinatorMetadataStudy: "18000000-0000-4000-8000-000000000054",
+  coordinatorMetadataConsent: "19000000-0000-4000-8000-000000000054",
+  coordinatorMetadataGrant: "1a000000-0000-4000-8000-000000000054",
+  coordinatorMetadataOperation: "1b000000-0000-4000-8000-000000000082",
+  coordinatorMetadataIdempotency: "1b000000-0000-4000-8000-000000000085",
+  coordinatorMetadataCorrelation: "1d000000-0000-4000-8000-000000000063",
   study: "18000000-0000-4000-8000-000000000001",
   studyOther: "18000000-0000-4000-8000-000000000011",
   studySourceMismatch: "18000000-0000-4000-8000-000000000012",
@@ -98,6 +141,20 @@ const correlationIds = [
   ids.cap012StartAuditFailure,
   ids.cap012EvidenceInsertFailure,
   ids.cap012SuccessAuditFailure,
+  ids.coordinatorCorrelation,
+  ids.coordinatorDenyMalformedCorrelation,
+  ids.coordinatorDenyMissingGrantCorrelation,
+  ids.coordinatorDenyRevokedGrantCorrelation,
+  ids.coordinatorDenyExpiredGrantCorrelation,
+  ids.coordinatorDenyWithdrawnConsentCorrelation,
+  ids.coordinatorDenyWrongScopeCorrelation,
+  ids.coordinatorDenyCrossSessionCorrelation,
+  ids.coordinatorDenyCrossTenantCorrelation,
+  ids.coordinatorDenyForeignStudyCorrelation,
+  ids.coordinatorMappingCorrelation,
+  ids.coordinatorPatientIdCorrelation,
+  ids.coordinatorMetadataCorrelation,
+  ...coordinatorFaultCases.map(scenario => scenario.correlationId),
 ];
 const sourceAuditScopes = new Map(
   correlationIds.map((correlationId) => [correlationId, {
@@ -123,6 +180,28 @@ sourceAuditScopes.set(ids.cap012SuccessAuditFailure, {
   sessionId: ids.cap012SuccessAuditSession,
   studyRefId: ids.cap012SuccessAuditStudy,
 });
+sourceAuditScopes.set(ids.coordinatorCorrelation, {
+  sessionId: ids.coordinatorSession,
+  studyRefId: ids.coordinatorStudy,
+});
+sourceAuditScopes.set(ids.coordinatorMappingCorrelation, {
+  sessionId: ids.coordinatorMappingSession,
+  studyRefId: ids.coordinatorMappingStudy,
+});
+sourceAuditScopes.set(ids.coordinatorPatientIdCorrelation, {
+  sessionId: ids.coordinatorPatientIdSession,
+  studyRefId: ids.coordinatorPatientIdStudy,
+});
+sourceAuditScopes.set(ids.coordinatorMetadataCorrelation, {
+  sessionId: ids.coordinatorMetadataSession,
+  studyRefId: ids.coordinatorMetadataStudy,
+});
+for (const scenario of coordinatorFaultCases) {
+  sourceAuditScopes.set(scenario.correlationId, {
+    sessionId: scenario.sessionId,
+    studyRefId: scenario.studyRefId,
+  });
+}
 const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
 async function inspectLifecycleQuota(scenario) {
   // mediq_migrator is NOINHERIT. Its already approved owner membership is
@@ -200,6 +279,54 @@ async function privacySnapshot(scenario, baseline, phase) {
   }
 }
 
+async function assertCoordinatorFaultPendingObserver() {
+  const scenario = coordinatorFaultCases.find(item => item.name === "purge-unresolved");
+  privacyAssert(Boolean(scenario), "COORD004_FAULT_PENDING_FIXTURE");
+  const rows = (await pool.query(`SELECT op.tenant_id::text AS tenant_id,op.actor_id::text AS actor_id,
+      op.exchange_session_id::text AS exchange_session_id,op.study_ref_id::text AS study_ref_id,
+      op.idempotency_key::text AS idempotency_key,op.state AS operation_state,op.version,op.stow_started_at,
+      count(DISTINCT ie.integrity_id)::integer AS evidence_count,
+      count(DISTINCT pr.provenance_id)::integer AS provenance_count,
+      sr.temporary_storage_ref::text AS temporary_storage_ref,sr.temporary_payload_state,
+      sr.temporary_payload_expires_at,sr.temporary_payload_purged_at
+    FROM pacs_transfer_operations op JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
+    LEFT JOIN integrity_evidence ie ON ie.operation_id=op.operation_id
+    LEFT JOIN provenance_records pr ON pr.operation_id=op.operation_id
+    WHERE op.operation_id=$1::uuid GROUP BY op.operation_id,sr.study_ref_id`, [scenario.operationId])).rows;
+  privacyAssert(rows.length === 1, "COORD004_FAULT_PENDING_OPERATION_CARDINALITY");
+  const row = rows[0];
+  privacyAssert(row.tenant_id === ids.tenant && row.actor_id === ids.actor &&
+    row.exchange_session_id === scenario.sessionId && row.study_ref_id === scenario.studyRefId &&
+    row.idempotency_key === scenario.idempotencyKey && row.operation_state === "CREATED" && row.version === 0 &&
+    row.stow_started_at === null && row.evidence_count === 0 && row.provenance_count === 0 &&
+    /^[0-9a-f-]{36}$/i.test(row.temporary_storage_ref ?? "") &&
+    row.temporary_payload_state === "PURGE_PENDING" && row.temporary_payload_expires_at instanceof Date &&
+    row.temporary_payload_purged_at === null, "COORD004_FAULT_PENDING_OPERATION_AND_METADATA");
+  const quota = await inspectLifecycleQuota(scenario);
+  privacyAssert(BigInt(quota.environment_reserved) > 0n && quota.refs === 1 && quota.packages === 1,
+    "COORD004_FAULT_PENDING_QUOTA_RETAINED");
+  const audits = (await pool.query(`SELECT actor_id::text AS actor_id,tenant_id::text AS tenant_id,
+      exchange_session_id::text AS exchange_session_id,resource_type,resource_id::text AS resource_id,
+      action,result,reason_code,correlation_id::text AS correlation_id
+    FROM audit_events WHERE correlation_id=$1::uuid ORDER BY action COLLATE "C"`,
+  [scenario.correlationId])).rows;
+  const expected = [{
+    actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: scenario.sessionId,
+    resource_type: "PACS_TRANSFER_OPERATION", resource_id: scenario.operationId,
+    action: "PACS_TRANSFER_OPERATION_STATE_CHANGED", result: "SUCCESS", reason_code: "CREATED",
+    correlation_id: scenario.correlationId,
+  }, ...scenario.auditTuples.map(tuple => {
+    const [action, resourceType, result, reason] = tuple.split("|");
+    return {
+      actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: scenario.sessionId,
+      resource_type: resourceType,
+      resource_id: resourceType === "PACS_TRANSFER_OPERATION" ? scenario.operationId : scenario.studyRefId,
+      action, result, reason_code: reason === "NULL" ? null : reason, correlation_id: scenario.correlationId,
+    };
+  })].sort((left, right) => left.action < right.action ? -1 : left.action > right.action ? 1 : 0);
+  privacyAssert(JSON.stringify(audits) === JSON.stringify(expected), "COORD004_FAULT_PENDING_EXACT_AUDIT");
+}
+
 async function servePrivacyObserver() {
   const observationToken = process.env.MEDIQ_TEST_OBSERVATION_TOKEN;
   privacyAssert(privacyTokenMatches(observationToken, observationToken), "TOKEN_CONFIGURATION");
@@ -218,10 +345,10 @@ async function servePrivacyObserver() {
     if (request.method === "GET" && request.url === "/health") return reply(200, { status: "READY" });
     if (request.method === "GET" && request.url === "/summary") {
       const complete = allSourceLifecycleCases.every(scenario => expectedPrivacyPhases(scenario)
-        .every(phase => observed.has(`${scenario.name}:${phase}`)));
+        .every(phase => observed.has(`${scenario.name}:${phase}`))) && observed.has("COORD004_FAULT_PENDING");
       return reply(!failed && complete && active === 0 ? 200 : 503, { status: !failed && complete && active === 0 ? "PRIVACY_OBSERVER_PASS" : "INCOMPLETE" });
     }
-    if (request.method !== "POST" || request.url !== "/probe") return reply(404, { status: "DENIED" });
+    if (request.method !== "POST" || !["/probe", "/fault-pending"].includes(request.url)) return reply(404, { status: "DENIED" });
     if (active >= 4) return reply(429, { status: "DENIED" });
     active++;
     try {
@@ -231,7 +358,16 @@ async function servePrivacyObserver() {
         privacyAssert(size <= 1024, "BODY_BOUND");
         body += chunk.toString("utf8");
       }
-      const { scenario, phase } = parsePrivacyProbe(JSON.parse(body));
+      const payload = JSON.parse(body);
+      if (request.url === "/fault-pending") {
+        privacyAssert(Object.keys(payload).sort().join(",") === "scenario" && payload.scenario === "purge-unresolved",
+          "COORD004_FAULT_PENDING_PROTOCOL");
+        await assertCoordinatorFaultPendingObserver();
+        observed.add("COORD004_FAULT_PENDING");
+        reply(200, { status: "OK" });
+        return;
+      }
+      const { scenario, phase } = parsePrivacyProbe(payload);
       const result = await privacySnapshot(scenario, baseline, phase);
       if (phase === "RESERVED") privacyAssert(result.state === "STAGING" && result.reserved === 0, "RESERVED_PHASE");
       if (phase === "QUOTA") privacyAssert(result.state === "STAGING" && result.reserved > 0, "QUOTA_PHASE");
@@ -328,7 +464,26 @@ try {
     [`${ids.cap012EvidenceInsertFailure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED`, 1],
     [`${ids.cap012SuccessAuditFailure}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
     [`${ids.cap012SuccessAuditFailure}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED`, 1],
+    [`${ids.coordinatorCorrelation}|PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|CREATED`, 1],
+    [`${ids.coordinatorCorrelation}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.coordinatorCorrelation}|PACS_SOURCE_CAPTURED|SUCCESS|<NULL>`, 1],
+    [`${ids.coordinatorCorrelation}|PACS_TEMPORARY_OBJECT_PURGED|SUCCESS|EXPLICIT_CLOSE`, 1],
+    [`${ids.coordinatorMappingCorrelation}|PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|CREATED`, 1],
+    [`${ids.coordinatorMappingCorrelation}|PACS_SOURCE_CAPTURE_DENIED|DENY|PATIENT_MAPPING_INVALID`, 1],
+    [`${ids.coordinatorPatientIdCorrelation}|PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|CREATED`, 1],
+    [`${ids.coordinatorPatientIdCorrelation}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.coordinatorPatientIdCorrelation}|PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_PATIENT_ID_MISMATCH`, 1],
+    [`${ids.coordinatorMetadataCorrelation}|PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|CREATED`, 1],
+    [`${ids.coordinatorMetadataCorrelation}|PACS_SOURCE_CAPTURE_STARTED|ALLOW|<NULL>`, 1],
+    [`${ids.coordinatorMetadataCorrelation}|PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED`, 1],
   ]);
+  for (const scenario of coordinatorFaultCases) {
+    expectedAudit.set(`${scenario.correlationId}|PACS_TRANSFER_OPERATION_STATE_CHANGED|SUCCESS|CREATED`, 1);
+    for (const tuple of scenario.auditTuples) {
+      const [action, _resourceType, result, reason] = tuple.split("|");
+      expectedAudit.set(`${scenario.correlationId}|${action}|${result}|${reason === "NULL" ? "<NULL>" : reason}`, 1);
+    }
+  }
   assert.deepEqual(actualAudit, expectedAudit, "Committed source-capture Audit outcomes must match the test cases");
 
   const auditColumns = await pool.query(
@@ -374,6 +529,7 @@ try {
       "PACS_SOURCE_CAPTURED",
       "PACS_SOURCE_CAPTURE_DENIED",
       "PACS_SOURCE_CAPTURE_FAILED",
+      "PACS_TEMPORARY_OBJECT_PURGED",
     ]],
   );
   const sourceAuditKeys = [
@@ -402,6 +558,8 @@ try {
     "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_CANCELLED",
     "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_DEADLINE",
     "PACS_SOURCE_CAPTURE_FAILED|STUDY|FAILURE|SOURCE_CAPTURE_PERSISTENCE_FAILED",
+    "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|CAPTURE_FAILURE",
+    "PACS_TEMPORARY_OBJECT_PURGED|STUDY|SUCCESS|EXPLICIT_CLOSE",
   ]);
   assert.ok(sourceAuditResult.rows.length > 0, "Expected scoped source-capture Audit rows");
   for (const row of sourceAuditResult.rows) {
@@ -469,10 +627,264 @@ try {
     { operation_id: ids.cap012EvidenceOperation, operation_state: "CREATED", evidence_count: 0 },
     { operation_id: ids.cap012SuccessAuditOperation, operation_state: "CREATED", evidence_count: 0 },
   ]);
-  console.log(`int001_capture_audit=PASS denied=13 unresolved=4 failed=9 started=14 capture_success=1 grant_revoked=1 source_rows=${sourceAuditResult.rows.length} metadata_allowlist=PASS`);
+  console.log(`int001_capture_audit=PASS denied=13 unresolved=4 failed=9 started=15 capture_success=2 grant_revoked=1 source_rows=${sourceAuditResult.rows.length} metadata_allowlist=PASS`);
   console.log("int001_cap003_operation_matrix=PASS mismatched_bindings=2 failed_state=1 no_evidence=true");
   console.log("int001_cap010_success_capture=PASS evidence=pending_one success_audit=one operation_state=CREATED response_allowlist=true");
   console.log("int001_cap012_insert_failures=PASS start_no_wado=true final_transaction_rollback=true operation_state=CREATED evidence=none");
+
+  const coordinator = (await pool.query(`SELECT op.operation_id::text,op.tenant_id::text,op.actor_id::text,
+    op.exchange_session_id::text,op.study_ref_id::text,op.idempotency_key::text,op.request_digest,
+    op.state,op.version,op.stow_started_at,ie.verification_stage,ie.status AS evidence_status,
+    ie.algorithm,ie.source_digest,ie.source_object_count,ie.verified_at,
+    pr.provenance_id::text,pr.package_id::text,pr.source_hospital_id::text,pr.destination_hospital_id::text,
+    pr.integrity_id::text,pr.transfer_type,pr.transfer_status,pr.ingested_at,pr.transferred_at,
+    sr.temporary_storage_ref::text,sr.temporary_payload_state,sr.temporary_payload_purged_at
+    FROM pacs_transfer_operations op JOIN integrity_evidence ie ON ie.operation_id=op.operation_id
+    LEFT JOIN provenance_records pr ON pr.operation_id=op.operation_id
+    JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
+    WHERE op.operation_id=$1::uuid`, [ids.coordinatorOperation])).rows;
+  assert.equal(coordinator.length, 1, "COORD004_INDEPENDENT_GRAPH");
+  const row = coordinator[0];
+  assert.equal(row.tenant_id, ids.tenant);
+  assert.equal(row.actor_id, ids.actor);
+  assert.equal(row.exchange_session_id, ids.coordinatorSession);
+  assert.equal(row.study_ref_id, ids.coordinatorStudy);
+  assert.equal(row.idempotency_key, ids.coordinatorIdempotency);
+  const canonicalDigest = JSON.stringify({ action: "PACS_IMPORT", actorId: ids.actor,
+    consentId: ids.coordinatorConsent, exchangeSessionId: ids.coordinatorSession,
+    grantId: ids.coordinatorGrant, studyRefId: ids.coordinatorStudy, tenantId: ids.tenant });
+  assert.equal(row.request_digest, createHash("sha256").update(canonicalDigest, "utf8").digest("hex"));
+  assert.equal(row.state, "CREATED"); assert.equal(row.version, 0); assert.equal(row.stow_started_at, null);
+  assert.equal(row.verification_stage, "SOURCE_CAPTURE"); assert.equal(row.evidence_status, "PENDING");
+  assert.equal(row.algorithm, "SHA256-MANIFEST-V1"); assert.equal(row.source_object_count, 3); assert.equal(row.verified_at, null);
+  assert.match(row.source_digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(row.provenance_id, null); assert.equal(row.package_id, null);
+  assert.equal(row.source_hospital_id, null); assert.equal(row.destination_hospital_id, null);
+  assert.equal(row.integrity_id, null); assert.equal(row.transfer_type, null);
+  assert.equal(row.transfer_status, null); assert.equal(row.ingested_at, null); assert.equal(row.transferred_at, null);
+  assert.match(row.temporary_storage_ref, /^[0-9a-f-]{36}$/i); assert.equal(row.temporary_payload_state, "PURGED");
+  assert.ok(row.temporary_payload_purged_at instanceof Date);
+  const coordinatorAudits = (await pool.query(`SELECT actor_id::text,tenant_id::text,
+    exchange_session_id::text,resource_type,resource_id::text,action,result,reason_code,
+    correlation_id::text FROM audit_events WHERE correlation_id=$1::uuid ORDER BY action`,
+  [ids.coordinatorCorrelation])).rows;
+  assert.deepEqual(coordinatorAudits, [
+    { actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: ids.coordinatorSession,
+      resource_type: "STUDY", resource_id: ids.coordinatorStudy, action: "PACS_SOURCE_CAPTURED",
+      result: "SUCCESS", reason_code: null, correlation_id: ids.coordinatorCorrelation },
+    { actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: ids.coordinatorSession,
+      resource_type: "STUDY", resource_id: ids.coordinatorStudy, action: "PACS_SOURCE_CAPTURE_STARTED",
+      result: "ALLOW", reason_code: null, correlation_id: ids.coordinatorCorrelation },
+    { actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: ids.coordinatorSession,
+      resource_type: "STUDY", resource_id: ids.coordinatorStudy, action: "PACS_TEMPORARY_OBJECT_PURGED",
+      result: "SUCCESS", reason_code: "EXPLICIT_CLOSE", correlation_id: ids.coordinatorCorrelation },
+    { actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: ids.coordinatorSession,
+      resource_type: "PACS_TRANSFER_OPERATION", resource_id: ids.coordinatorOperation,
+      action: "PACS_TRANSFER_OPERATION_STATE_CHANGED", result: "SUCCESS", reason_code: "CREATED",
+      correlation_id: ids.coordinatorCorrelation },
+  ], "COORD004_INDEPENDENT_AUDIT_BINDING");
+  const coordinatorFixture = { studyRefId: ids.coordinatorStudy, packageId: ids.coordinatorPackage };
+  const coordinatorQuota = await inspectLifecycleQuota(coordinatorFixture);
+  assert.equal(coordinatorQuota.refs, 0);
+  assert.equal(coordinatorQuota.packages, 0);
+  console.log("int001_pacs_import_coordinator=PASS independent_runtime_facts=true operation=CREATED source_evidence=one provenance=ABSENT_BEFORE_DISPATCH temp_payload=PURGED quota=0");
+
+  const coordinatorSourceCases = [
+    { operationId: ids.coordinatorMappingOperation, sessionId: ids.coordinatorMappingSession,
+      packageId: ids.coordinatorMappingPackage, studyRefId: ids.coordinatorMappingStudy,
+      idempotencyKey: ids.coordinatorMappingIdempotency, correlationId: ids.coordinatorMappingCorrelation,
+      sourceAudit: "PACS_SOURCE_CAPTURE_DENIED|DENY|PATIENT_MAPPING_INVALID" },
+    { operationId: ids.coordinatorPatientIdOperation, sessionId: ids.coordinatorPatientIdSession,
+      packageId: ids.coordinatorPatientIdPackage, studyRefId: ids.coordinatorPatientIdStudy,
+      idempotencyKey: ids.coordinatorPatientIdIdempotency, correlationId: ids.coordinatorPatientIdCorrelation,
+      sourceAudit: "PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL,PACS_SOURCE_CAPTURE_DENIED|DENY|SOURCE_PATIENT_ID_MISMATCH" },
+    { operationId: ids.coordinatorMetadataOperation, sessionId: ids.coordinatorMetadataSession,
+      packageId: ids.coordinatorMetadataPackage, studyRefId: ids.coordinatorMetadataStudy,
+      idempotencyKey: ids.coordinatorMetadataIdempotency, correlationId: ids.coordinatorMetadataCorrelation,
+      sourceAudit: "PACS_SOURCE_CAPTURE_STARTED|ALLOW|NULL,PACS_SOURCE_CAPTURE_FAILED|FAILURE|SOURCE_READ_FAILED" },
+  ];
+  const coordinatorSourceOperations = (await pool.query(`SELECT op.operation_id::text AS operation_id,
+      op.tenant_id::text AS tenant_id,op.actor_id::text AS actor_id,
+      op.exchange_session_id::text AS exchange_session_id,op.study_ref_id::text AS study_ref_id,
+      op.idempotency_key::text AS idempotency_key,op.state AS operation_state,op.version,op.stow_started_at,
+      count(DISTINCT ie.integrity_id)::integer AS evidence_count,
+      count(DISTINCT pr.provenance_id)::integer AS provenance_count,
+      sr.temporary_storage_ref::text AS temporary_storage_ref,sr.temporary_payload_state,
+      sr.temporary_payload_expires_at,sr.temporary_payload_purged_at
+    FROM pacs_transfer_operations op JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
+    LEFT JOIN integrity_evidence ie ON ie.operation_id=op.operation_id
+    LEFT JOIN provenance_records pr ON pr.operation_id=op.operation_id
+    WHERE op.operation_id=ANY($1::uuid[])
+    GROUP BY op.operation_id,sr.study_ref_id
+    ORDER BY op.operation_id`, [coordinatorSourceCases.map(scenario => scenario.operationId)])).rows;
+  assert.deepEqual(coordinatorSourceOperations, coordinatorSourceCases.map(scenario => ({
+    operation_id: scenario.operationId,
+    tenant_id: ids.tenant,
+    actor_id: ids.actor,
+    exchange_session_id: scenario.sessionId,
+    study_ref_id: scenario.studyRefId,
+    idempotency_key: scenario.idempotencyKey,
+    operation_state: "CREATED",
+    version: 0,
+    stow_started_at: null,
+    evidence_count: 0,
+    provenance_count: 0,
+    temporary_storage_ref: null,
+    temporary_payload_state: null,
+    temporary_payload_expires_at: null,
+    temporary_payload_purged_at: null,
+  })), "COORD004_SOURCE_INDEPENDENT_OPERATION_EVIDENCE_PAYLOAD_BINDING");
+
+  for (const scenario of coordinatorSourceCases) {
+    const quota = await inspectLifecycleQuota(scenario);
+    assert.equal(quota.refs, 0, "COORD004_SOURCE_INDEPENDENT_QUOTA_RELEASED");
+    assert.equal(quota.packages, 0, "COORD004_SOURCE_INDEPENDENT_QUOTA_RELEASED");
+    const rows = (await pool.query(`SELECT actor_id::text AS actor_id,tenant_id::text AS tenant_id,
+        exchange_session_id::text AS exchange_session_id,resource_type,resource_id::text AS resource_id,
+        action,result,reason_code,correlation_id::text AS correlation_id
+      FROM audit_events WHERE correlation_id=$1::uuid ORDER BY action COLLATE "C"`, [scenario.correlationId])).rows;
+    const expected = [
+      {
+      actor_id: ids.actor, tenant_id: ids.tenant, exchange_session_id: scenario.sessionId,
+      resource_type: "PACS_TRANSFER_OPERATION", resource_id: scenario.operationId,
+      action: "PACS_TRANSFER_OPERATION_STATE_CHANGED", result: "SUCCESS", reason_code: "CREATED",
+      correlation_id: scenario.correlationId,
+      },
+      ...scenario.sourceAudit.split(",").map(tuple => {
+        const [action, result, reason] = tuple.split("|");
+        return {
+          actor_id: ids.actor,
+          tenant_id: ids.tenant,
+          exchange_session_id: scenario.sessionId,
+          resource_type: "STUDY",
+          resource_id: scenario.studyRefId,
+          action,
+          result,
+          reason_code: reason === "NULL" ? null : reason,
+          correlation_id: scenario.correlationId,
+        };
+      }),
+    ].sort((left, right) => left.action < right.action ? -1 : left.action > right.action ? 1 : 0);
+    assert.deepEqual(rows, expected,
+      "COORD004_SOURCE_INDEPENDENT_AUDIT_BINDING");
+  }
+  assert.deepEqual((await pool.query(`SELECT mapping_id::text AS mapping_id,
+      patient_ref_id::text AS patient_ref_id,hospital_id::text AS hospital_id,
+      local_patient_id,status,validated_at
+    FROM patient_mappings WHERE mapping_id='15000000-0000-4000-8000-000000000052'`)).rows,
+  [{ mapping_id: "15000000-0000-4000-8000-000000000052",
+    patient_ref_id: "15000000-0000-4000-8000-000000000051",
+    hospital_id: "04000000-0000-4000-8000-000000000002",
+    local_patient_id: "TEST-PATIENT-COORD-INVALID", status: "REVOKED", validated_at: null }],
+  "COORD004_SOURCE_INVALID_MAPPING_FIXTURE_UNCHANGED");
+  console.log("int001_pacs_import_source_denials=PASS cases=3 exact_operation_audit=true evidence_provenance_payload=0 quota=0");
+
+  const coordinatorFaultRows = (await pool.query(`SELECT op.operation_id::text AS operation_id,
+      op.tenant_id::text AS tenant_id,op.actor_id::text AS actor_id,
+      op.exchange_session_id::text AS exchange_session_id,op.study_ref_id::text AS study_ref_id,
+      op.idempotency_key::text AS idempotency_key,op.state AS operation_state,op.version,op.stow_started_at,
+      count(DISTINCT ie.integrity_id)::integer AS evidence_count,
+      count(DISTINCT pr.provenance_id)::integer AS provenance_count,
+      sr.temporary_storage_ref::text AS temporary_storage_ref,sr.temporary_payload_state,
+      sr.temporary_payload_expires_at,sr.temporary_payload_purged_at
+    FROM pacs_transfer_operations op JOIN study_references sr ON sr.study_ref_id=op.study_ref_id
+    LEFT JOIN integrity_evidence ie ON ie.operation_id=op.operation_id
+    LEFT JOIN provenance_records pr ON pr.operation_id=op.operation_id
+    WHERE op.operation_id=ANY($1::uuid[])
+    GROUP BY op.operation_id,sr.study_ref_id ORDER BY op.operation_id`,
+  [coordinatorFaultCases.map(scenario => scenario.operationId)])).rows;
+  assert.equal(coordinatorFaultRows.length, coordinatorFaultCases.length,
+    "COORD004_FAULT_INDEPENDENT_OPERATION_CARDINALITY");
+  const unresolvedPurgeCase = coordinatorFaultCases.find(scenario => scenario.name === "purge-unresolved");
+  assert.ok(unresolvedPurgeCase, "COORD004_FAULT_UNRESOLVED_CASE_PRESENT");
+  const unresolvedQuota = await inspectLifecycleQuota(unresolvedPurgeCase);
+  assert.ok(BigInt(unresolvedQuota.environment_reserved) > 0n,
+    "COORD004_FAULT_UNRESOLVED_QUOTA_REMAINS_RESERVED");
+  assert.equal(unresolvedQuota.refs, 1);
+  assert.equal(unresolvedQuota.packages, 1);
+  for (const [index, scenario] of coordinatorFaultCases.entries()) {
+    const row = coordinatorFaultRows[index];
+    assert.deepEqual({
+      operation_id: row.operation_id,
+      tenant_id: row.tenant_id,
+      actor_id: row.actor_id,
+      exchange_session_id: row.exchange_session_id,
+      study_ref_id: row.study_ref_id,
+      idempotency_key: row.idempotency_key,
+      operation_state: row.operation_state,
+      version: row.version,
+      stow_started_at: row.stow_started_at,
+      evidence_count: row.evidence_count,
+      provenance_count: row.provenance_count,
+    }, {
+      operation_id: scenario.operationId,
+      tenant_id: ids.tenant,
+      actor_id: ids.actor,
+      exchange_session_id: scenario.sessionId,
+      study_ref_id: scenario.studyRefId,
+      idempotency_key: scenario.idempotencyKey,
+      operation_state: "CREATED",
+      version: 0,
+      stow_started_at: null,
+      evidence_count: 0,
+      provenance_count: 0,
+    }, "COORD004_FAULT_INDEPENDENT_OPERATION_AND_EVIDENCE_BINDING");
+    if (scenario.temporaryState === "NONE") {
+      assert.equal(row.temporary_storage_ref, null);
+      assert.equal(row.temporary_payload_state, null);
+      assert.equal(row.temporary_payload_expires_at, null);
+      assert.equal(row.temporary_payload_purged_at, null);
+    } else {
+      assert.match(row.temporary_storage_ref, /^[0-9a-f-]{36}$/i);
+      assert.equal(row.temporary_payload_state, scenario.temporaryState);
+      assert.ok(row.temporary_payload_expires_at instanceof Date);
+      if (scenario.temporaryState === "PURGED") assert.ok(row.temporary_payload_purged_at instanceof Date);
+      else assert.equal(row.temporary_payload_purged_at, null,
+        "COORD004_FAULT_UNRESOLVED_PURGE_REMAINS_PENDING");
+    }
+    const quota = await inspectLifecycleQuota(scenario);
+    if (scenario.quota === "ZERO") {
+      assert.deepEqual(quota, {
+        environment_reserved: unresolvedQuota.environment_reserved,
+        refs: 0,
+        packages: 0,
+      },
+        "COORD004_FAULT_INDEPENDENT_QUOTA_RELEASED");
+    } else {
+      assert.deepEqual(quota, unresolvedQuota, "COORD004_FAULT_UNRESOLVED_QUOTA_BOUND_TO_ONE_PACKAGE");
+    }
+    const audits = (await pool.query(`SELECT actor_id::text AS actor_id,tenant_id::text AS tenant_id,
+        exchange_session_id::text AS exchange_session_id,resource_type,resource_id::text AS resource_id,
+        action,result,reason_code,correlation_id::text AS correlation_id
+      FROM audit_events WHERE correlation_id=$1::uuid ORDER BY action COLLATE "C"`,
+    [scenario.correlationId])).rows;
+    const expected = [{
+      actor_id: ids.actor,
+      tenant_id: ids.tenant,
+      exchange_session_id: scenario.sessionId,
+      resource_type: "PACS_TRANSFER_OPERATION",
+      resource_id: scenario.operationId,
+      action: "PACS_TRANSFER_OPERATION_STATE_CHANGED",
+      result: "SUCCESS",
+      reason_code: "CREATED",
+      correlation_id: scenario.correlationId,
+    }, ...scenario.auditTuples.map(tuple => {
+      const [action, resourceType, result, reason] = tuple.split("|");
+      return {
+        actor_id: ids.actor,
+        tenant_id: ids.tenant,
+        exchange_session_id: scenario.sessionId,
+        resource_type: resourceType,
+        resource_id: resourceType === "PACS_TRANSFER_OPERATION" ? scenario.operationId : scenario.studyRefId,
+        action,
+        result,
+        reason_code: reason === "NULL" ? null : reason,
+        correlation_id: scenario.correlationId,
+      };
+    })].sort((left, right) => left.action < right.action ? -1 : left.action > right.action ? 1 : 0);
+    assert.deepEqual(audits, expected, "COORD004_FAULT_INDEPENDENT_EXACT_AUDIT_BINDING");
+  }
+  console.log("int001_pacs_import_faults=PASS cases=8 exact_operation_audit=true integrity_provenance=0 quota_and_purge_observed=true");
 
   // Separate observer process: these privileged reads are not application rights.
   const baselineDigest = (await pool.query("SELECT source_digest FROM integrity_evidence WHERE operation_id=$1 AND verification_stage='SOURCE_CAPTURE'", [ids.operation])).rows[0].source_digest;
@@ -559,7 +971,9 @@ try {
       assert.deepEqual(observed, mutationAudits, "DEC017_OBSERVER_MUTATION_AUDIT");
     } else assert.deepEqual(observed, expected, "DEC017_OBSERVER_EXACT_AUDIT");
     assert.doesNotMatch(JSON.stringify(audits), /2\.25\.|TEST-PATIENT|PRIVATE KEY|credential|password|\.enc|\/tmp\//i);
-    assert.deepEqual(await inspectLifecycleQuota(scenario), { environment_reserved: "0", refs: 0, packages: 0 });
+    const quota = await inspectLifecycleQuota(scenario);
+    assert.equal(quota.refs, 0);
+    assert.equal(quota.packages, 0);
   }
   assert.deepEqual((await pool.query("SELECT local_patient_id,status FROM patient_mappings WHERE mapping_id='15000000-0000-4000-8000-000000000002'")).rows, [{ local_patient_id: "TEST-PATIENT-007", status: "VALID" }]);
   assert.deepEqual((await pool.query("SELECT actor_id,status FROM actors ORDER BY actor_id")).rows,
@@ -571,7 +985,10 @@ try {
   const safeCode = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
     ? error.code
     : error?.name === "AssertionError" ? "ASSERTION_FAILED" : "UNCLASSIFIED";
-  throw new Error(`INT001_OBSERVER_FAILED:${safeCode}`);
+  const assertionMarker = error?.name === "AssertionError" && typeof error?.message === "string"
+    ? /^([A-Z][A-Z0-9_]{1,127})/.exec(error.message)?.[1]
+    : undefined;
+  throw new Error(`INT001_OBSERVER_FAILED:${safeCode}${assertionMarker ? `:${assertionMarker}` : ""}`);
 } finally {
   await pool.end();
 }

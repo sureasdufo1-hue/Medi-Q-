@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { assertRuntimePrivilegeCatalog } from "../fixtures/runtime-privilege-contract.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, mkdtemp, readdir, rm, stat, lstat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { temporaryCaptureLifecycleCases, allSourceLifecycleCases, privacyAssert, assertPublicCaptureProjection,
   assertPublicCaptureError } from "../fixtures/temporary-capture-lifecycle-fixture.mjs";
 import { sourceMutationCases } from "../fixtures/source-capture-mutation-fixture.mjs";
+import { coordinatorFaultCases } from "../fixtures/pacs-coordinator-fault-fixture.mjs";
 import { RemoteJwksOidcTokenVerifier } from "../../services/api/dist/authentication/oidc-jwt.verifier.js";
 import { EphemeralEncryptedTemporaryImagingStore } from "../../services/api/dist/imaging-storage/application/ephemeral-encrypted-temporary-imaging-store.js";
 import { TemporaryPayloadPurgeCoordinator } from "../../services/api/dist/imaging-storage/application/temporary-payload-purge.coordinator.js";
@@ -45,6 +46,10 @@ import { PacsTransferOperation } from "../../services/api/dist/pacs/domain/pacs-
 import { PostgresPacsTransferOperationRepository } from "../../services/api/dist/pacs/persistence/postgres-pacs-transfer-operation.repository.js";
 import { PostgresProvenanceRepository } from "../../services/api/dist/provenance/persistence/postgres-provenance.repository.js";
 import { DispatchedInstanceStreamFactory } from "../../services/api/dist/pacs/application/dispatched-instance-stream.factory.js";
+import { PacsImportOperationAdmissionService } from "../../services/api/dist/pacs/application/pacs-import-operation-admission.service.js";
+import { PacsImportSourcePreparationCoordinator } from "../../services/api/dist/pacs/application/pacs-import-source-preparation.coordinator.js";
+import { PacsImportTransferDispatchCoordinator } from "../../services/api/dist/pacs/application/pacs-import-transfer-dispatch.coordinator.js";
+import { pacsTransferOperationDigest } from "../../services/api/dist/pacs/domain/pacs-transfer-operation-digest.js";
 import { dispatchedReadCases, dispatchedReadIds, dispatchedReadDigest } from "../fixtures/dispatched-source-read-fixture.mjs";
 import { destinationVerificationCases, destinationFixtureKinds } from "../fixtures/destination-verification-fixture.mjs";
 import {
@@ -144,6 +149,50 @@ const fixture = Object.freeze({
   cap012StartCorrelation: "1d000000-0000-4000-8000-000000000029",
   cap012EvidenceCorrelation: "1d000000-0000-4000-8000-000000000030",
   cap012SuccessAuditCorrelation: "1d000000-0000-4000-8000-000000000031",
+  coordinatorSessionId: "16000000-0000-4000-8000-000000000051",
+  coordinatorPackageId: "17000000-0000-4000-8000-000000000051",
+  coordinatorStudyRefId: "18000000-0000-4000-8000-000000000051",
+  coordinatorConsentId: "19000000-0000-4000-8000-000000000051",
+  coordinatorGrantId: "1a000000-0000-4000-8000-000000000051",
+  coordinatorOperationId: "1b000000-0000-4000-8000-000000000051",
+  coordinatorIdempotencyKey: "1b000000-0000-4000-8000-000000000052",
+  coordinatorCorrelationId: "1d000000-0000-4000-8000-000000000051",
+  transferDispatchSessionId: "16000000-0000-4000-8000-000000000075",
+  transferDispatchPackageId: "17000000-0000-4000-8000-000000000075",
+  transferDispatchStudyRefId: "18000000-0000-4000-8000-000000000075",
+  transferDispatchConsentId: "19000000-0000-4000-8000-000000000075",
+  transferDispatchGrantId: "1a000000-0000-4000-8000-000000000075",
+  transferDispatchOperationId: "1b000000-0000-4000-8000-000000000075",
+  transferDispatchIdempotencyKey: "1b000000-0000-4000-8000-000000000076",
+  transferDispatchCorrelationId: "1d000000-0000-4000-8000-000000000090",
+  studyOtherRefId: "18000000-0000-4000-8000-000000000011",
+  coordinatorDenyMalformedCorrelationId: "1d000000-0000-4000-8000-000000000052",
+  coordinatorDenyMissingGrantCorrelationId: "1d000000-0000-4000-8000-000000000053",
+  coordinatorDenyRevokedGrantCorrelationId: "1d000000-0000-4000-8000-000000000054",
+  coordinatorDenyExpiredGrantCorrelationId: "1d000000-0000-4000-8000-000000000055",
+  coordinatorDenyWithdrawnConsentCorrelationId: "1d000000-0000-4000-8000-000000000056",
+  coordinatorDenyWrongScopeCorrelationId: "1d000000-0000-4000-8000-000000000057",
+  coordinatorDenyCrossSessionCorrelationId: "1d000000-0000-4000-8000-000000000058",
+  coordinatorDenyCrossTenantCorrelationId: "1d000000-0000-4000-8000-000000000059",
+  coordinatorDenyForeignStudyCorrelationId: "1d000000-0000-4000-8000-000000000060",
+  coordinatorMappingSessionId: "16000000-0000-4000-8000-000000000052",
+  coordinatorMappingStudyRefId: "18000000-0000-4000-8000-000000000052",
+  coordinatorMappingGrantId: "1a000000-0000-4000-8000-000000000052",
+  coordinatorMappingOperationId: "1b000000-0000-4000-8000-000000000080",
+  coordinatorMappingIdempotencyKey: "1b000000-0000-4000-8000-000000000083",
+  coordinatorMappingCorrelationId: "1d000000-0000-4000-8000-000000000061",
+  coordinatorPatientIdSessionId: "16000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdStudyRefId: "18000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdGrantId: "1a000000-0000-4000-8000-000000000053",
+  coordinatorPatientIdOperationId: "1b000000-0000-4000-8000-000000000081",
+  coordinatorPatientIdIdempotencyKey: "1b000000-0000-4000-8000-000000000084",
+  coordinatorPatientIdCorrelationId: "1d000000-0000-4000-8000-000000000062",
+  coordinatorMetadataSessionId: "16000000-0000-4000-8000-000000000054",
+  coordinatorMetadataStudyRefId: "18000000-0000-4000-8000-000000000054",
+  coordinatorMetadataGrantId: "1a000000-0000-4000-8000-000000000054",
+  coordinatorMetadataOperationId: "1b000000-0000-4000-8000-000000000082",
+  coordinatorMetadataIdempotencyKey: "1b000000-0000-4000-8000-000000000085",
+  coordinatorMetadataCorrelationId: "1d000000-0000-4000-8000-000000000063",
   withdrawnConsentId: "19000000-0000-4000-8000-000000000011",
   expiredConsentId: "19000000-0000-4000-8000-000000000012",
   revokedGrantId: "1a000000-0000-4000-8000-000000000011",
@@ -423,6 +472,8 @@ function createHarness({
   dispatchReadCommitAckLoss = false,
   destinationVerification = false,
   destinationCommitAckLoss = false,
+  allowStudyStow = false,
+  beforeStow,
   afterDestinationBytes,
 } = {}) {
   const parsedConfig = parseAppConfig(process.env);
@@ -556,6 +607,7 @@ function createHarness({
   let pendingFailure = failFirstInstance;
   let forbiddenEndpointAttempts = 0;
   let stowCalls = 0;
+  let bStowRequests = 0;
   let destinationVerificationCalls = 0;
   let destinationClaimQueries = 0, destinationClaimMatches = 0, destinationByteCalls = 0;
   const destinationObserved = [];
@@ -621,6 +673,18 @@ function createHarness({
           const configured = `Basic ${Buffer.from(`${config.orthancBUsername}:${config.orthancBPassword}`).toString('base64')}`;
           assert.equal(new Headers(init.headers).get('authorization'),configured,'DESTVERIFY_B_SERVER_CREDENTIAL');
           return globalThis.fetch(input,init);
+        }
+        if (allowStudyStow && url.protocol === "https:" && url.hostname === "orthanc-b" && url.port === "8042" &&
+          !url.username && !url.password && !url.hash && !url.search &&
+          url.pathname === `/dicom-web/studies/${manifest.studyInstanceUID}` && method === "POST") {
+          assertOutsideTransaction();
+          assert.equal(init?.redirect, "error", "DISPATCH_B_REDIRECT");
+          const configured = `Basic ${Buffer.from(`${config.orthancBUsername}:${config.orthancBPassword}`).toString("base64")}`;
+          assert.equal(new Headers(init?.headers).get("authorization"), configured, "DISPATCH_B_SERVER_CREDENTIAL");
+          await beforeStow?.();
+          assertOutsideTransaction();
+          bStowRequests += 1;
+          return globalThis.fetch(input, init);
         }
         if (
           url.protocol !== "https:" ||
@@ -789,6 +853,13 @@ function createHarness({
       stowCalls += 1;
       throw new Error("SOURCE_CAPTURE_TEST_STOW_FORBIDDEN");
     },
+    validateEndpoint: (context, operation) => adapter.validateEndpoint(context, operation),
+    storeStudyStream: async request => {
+      if (!allowStudyStow) throw new Error("SOURCE_CAPTURE_TEST_STUDY_STOW_FORBIDDEN");
+      assertOutsideTransaction();
+      stowCalls += 1;
+      return adapter.storeStudyStream(request);
+    },
     retrieveDestinationVerificationInstanceStream: async request => {
       if (!destinationVerification) throw new Error('SOURCE_CAPTURE_TEST_DESTINATION_BYTES_FORBIDDEN');
       assertOutsideTransaction(); destinationByteCalls++;
@@ -845,6 +916,7 @@ function createHarness({
     database,
     actorContext,
     executor,
+    dicomGateway,
     assertOutsideTransaction,
     counters: () => Object.freeze({
       tenantContextRuns,
@@ -863,6 +935,7 @@ function createHarness({
       maximumActiveInstanceStreams,
       forbiddenEndpointAttempts,
       stowCalls,
+      bStowRequests,
       destinationVerificationCalls,
       grantRevocationCompleted,
       grantRevocationStatus,
@@ -897,6 +970,19 @@ async function readOperationState(harness, operationId = fixture.operationId) {
         objectCount: row.source_object_count,
       })),
     });
+  });
+}
+
+async function readTemporaryPayloadState(harness, studyRefId) {
+  return harness.actorContext.run(principal, fixture.tenantId, async (_identity, client) => {
+    const result = await client.query(
+      `SELECT temporary_storage_ref::text, temporary_payload_state,
+              temporary_payload_expires_at, temporary_payload_purged_at
+         FROM study_references WHERE study_ref_id = $1::uuid`,
+      [studyRefId],
+    );
+    assert.equal(result.rowCount, 1, "COORD004_SOURCE_STUDY_EXISTS");
+    return result.rows[0];
   });
 }
 
@@ -937,6 +1023,33 @@ async function observePrivacy(scenario, phase, signal) {
     const code = /^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "") ? result.code : "DEC017_PRIVACY_OBSERVER_REJECTED";
     const diagnosticPhase = ["RESERVED", "QUOTA", "AVAILABLE", "READ_RESULT", "PHYSICAL_ABSENT", "FINAL", "MUTATED", "DENIED", "RESTORED", "WITHDRAWN"].includes(phase) ? phase : "UNKNOWN";
     console.error(`DEC017_PRIVACY_PROBE_${diagnosticPhase}_${code}`);
+    throw new Error(code);
+  }
+}
+
+async function observeCoordinatorFaultPending() {
+  const endpoint = new URL(process.env.MEDIQ_TEST_OBSERVATION_URL);
+  privacyAssert(endpoint.protocol === "http:" && endpoint.port === "8791" && endpoint.pathname === "/" &&
+    !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash &&
+    /^mediq-int001-capture-[0-9a-f]{12}-privacy-observer$/.test(endpoint.hostname), "OBSERVER_ADDRESS");
+  const token = process.env.MEDIQ_TEST_OBSERVATION_TOKEN;
+  privacyAssert(typeof token === "string" && /^[0-9a-f]{64}$/.test(token), "OBSERVER_TOKEN");
+  const response = await fetch(new URL("/fault-pending", endpoint), {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-mediq-test-observation": token },
+    body: JSON.stringify({ scenario: "purge-unresolved" }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  let raw = "", size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    privacyAssert(size <= 512, "OBSERVER_RESPONSE_BOUND");
+    raw += Buffer.from(chunk).toString("utf8");
+  }
+  const result = JSON.parse(raw);
+  if (!response.ok || result.status !== "OK") {
+    const code = /^DEC017_PRIVACY_[A-Z_]{1,80}$/.test(result.code ?? "")
+      ? result.code : "DEC017_PRIVACY_COORD004_FAULT_PENDING_REJECTED";
     throw new Error(code);
   }
 }
@@ -1994,6 +2107,20 @@ async function runActualDestinationVerificationMatrix(t) {
   } finally {server.closeAllConnections();await new Promise((done,fail) => server.close(error => error ? fail(error) : done()));}
 }
 
+function pacsImportDispatchFailureDiagnostic({ stowHookObserved, dispatchReturned, operationState,
+  sourceReads, gatewayStows, bPosts, destinationChecks, error }) {
+  const states = new Set(["CREATED", "PREFLIGHT_PASSED", "STOW_STARTED", "VERIFYING", "PARTIAL",
+    "FAILED", "RESULT_UNKNOWN", "UNRESOLVED"]);
+  const state = states.has(operationState) ? operationState : "UNKNOWN";
+  const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 100 ? String(value) : "OVER_LIMIT";
+  const errorCategory = error?.name === "PacsImportTransferDispatchUnavailableError" ? "DISPATCH_UNAVAILABLE"
+    : error?.name === "AssertionError" || error?.code === "ERR_ASSERTION" ? "ASSERTION_FAILURE" : "OTHER";
+  return `pacs_dispatch_diagnostic=FAIL hook=${stowHookObserved ? "PASSED" : "NOT_REACHED"}` +
+    ` returned=${dispatchReturned ? "yes" : "no"} operation_state=${state}` +
+    ` source_reads=${count(sourceReads)} gateway_stow=${count(gatewayStows)}` +
+    ` b_posts=${count(bPosts)} destination_checks=${count(destinationChecks)} error=${errorCategory}`;
+}
+
 if (process.argv.includes("--mediq-recovery-child")) {
   await runRecoveryReplica();
 } else if (process.env.MEDIQ_TEST_DISPATCH_READ_MODE === 'true') {
@@ -2673,6 +2800,544 @@ if (process.argv.includes("--mediq-recovery-child")) {
     }
   });
 
+  await t.test("TC-PACS-001-COORD-004 composes admitted operation with encrypted A capture and audited cleanup", { timeout: 60_000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "mediq-pacs-coordinator-"));
+    const storageRoot = join(root, "ciphertext");
+    const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+    const harness = createHarness({ temporaryImagingStore: store, observeInstanceStreams: true });
+    let coordinator;
+    let preparedResult;
+    let purgeAttempted = false;
+    let stage = "SETUP";
+    try {
+      const admission = new PacsImportOperationAdmissionService(
+        harness.executor,
+        () => new Date(),
+        () => fixture.coordinatorOperationId,
+      );
+      const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, store);
+      coordinator = new PacsImportSourcePreparationCoordinator(admission, harness.service, purge);
+      const request = Object.freeze({
+        sessionId: fixture.coordinatorSessionId,
+        tenantCandidate: fixture.tenantId,
+        idempotencyKey: fixture.coordinatorIdempotencyKey,
+        correlationId: fixture.coordinatorCorrelationId,
+        body: Object.freeze({ grantId: fixture.coordinatorGrantId, studyRefId: fixture.coordinatorStudyRefId }),
+      });
+
+      stage = "ADMISSION_AND_SOURCE_CAPTURE";
+      preparedResult = await coordinator.prepare({ principal, request });
+      assert.deepEqual(preparedResult, {
+        operationId: fixture.coordinatorOperationId,
+        operationState: "CREATED",
+        preparation: "SOURCE_CAPTURED",
+      });
+      stage = "PUBLIC_RESULT";
+      const publicResult = JSON.stringify(preparedResult);
+      for (const restricted of [manifest.patient.patientId, manifest.studyInstanceUID,
+        manifest.seriesInstanceUID, ...manifest.instances.map(instance => instance.sopInstanceUID)]) {
+        assert.equal(publicResult.includes(restricted), false, "COORD004_MINIMAL_PUBLIC_RESULT");
+      }
+
+      stage = "EXPECTED_DIGEST";
+      const expectedDigest = pacsTransferOperationDigest({
+        tenantId: fixture.tenantId,
+        actorId: fixture.actorId,
+        exchangeSessionId: fixture.coordinatorSessionId,
+        studyRefId: fixture.coordinatorStudyRefId,
+        consentId: fixture.coordinatorConsentId,
+        grantId: fixture.coordinatorGrantId,
+        action: "PACS_IMPORT",
+      });
+      stage = "RUNTIME_FACTS_QUERY";
+      const facts = await harness.actorContext.run(principal, fixture.tenantId, async (_identity, client) => {
+        stage = "OPERATION_QUERY";
+        const operation = (await client.query(`SELECT operation_id::text,tenant_id::text,actor_id::text,
+          exchange_session_id::text,study_ref_id::text,request_digest,state,version,stow_started_at
+          FROM pacs_transfer_operations WHERE operation_id=$1::uuid`, [fixture.coordinatorOperationId])).rows[0];
+        stage = "EVIDENCE_QUERY";
+        const evidence = (await client.query(`SELECT verification_stage,status,algorithm,source_digest,
+          source_object_count,verified_at FROM integrity_evidence WHERE operation_id=$1::uuid`,
+        [fixture.coordinatorOperationId])).rows;
+        stage = "PROVENANCE_QUERY";
+        const provenance = (await client.query(`SELECT provenance_id::text,exchange_session_id::text,
+          package_id::text,study_ref_id::text,source_hospital_id::text,destination_hospital_id::text,
+          integrity_id::text,transfer_type,transfer_status,ingested_at,transferred_at
+          FROM provenance_records WHERE operation_id=$1::uuid`, [fixture.coordinatorOperationId])).rows;
+        stage = "PAYLOAD_QUERY";
+        const payload = (await client.query(`SELECT temporary_storage_ref::text,temporary_payload_state,
+          temporary_payload_expires_at,temporary_payload_purged_at FROM study_references
+          WHERE study_ref_id=$1::uuid`, [fixture.coordinatorStudyRefId])).rows[0];
+        return { operation, evidence, provenance, payload };
+      });
+      stage = "OPERATION_BINDING";
+      const expectedOperation = {
+        operation_id: fixture.coordinatorOperationId,
+        tenant_id: fixture.tenantId,
+        actor_id: fixture.actorId,
+        exchange_session_id: fixture.coordinatorSessionId,
+        study_ref_id: fixture.coordinatorStudyRefId,
+        request_digest: expectedDigest,
+        state: "CREATED",
+        version: 0,
+        stow_started_at: null,
+      };
+      const operationMismatches = Object.keys(expectedOperation).filter(key =>
+        facts.operation?.[key] !== expectedOperation[key]);
+      assert.deepEqual(operationMismatches, [],
+        `COORD004_OPERATION_BINDING_MISMATCH_${operationMismatches.join("_") || "MISSING"}`);
+      stage = "INTEGRITY_EVIDENCE";
+      assert.equal(facts.evidence.length, 1, "COORD004_SINGLE_PENDING_INTEGRITY_EVIDENCE");
+      assert.deepEqual(facts.evidence[0], {
+        verification_stage: "SOURCE_CAPTURE",
+        status: "PENDING",
+        algorithm: "SHA256-MANIFEST-V1",
+        source_digest: expectedSourceManifestDigest(manifest),
+        source_object_count: manifest.instanceCount,
+        verified_at: null,
+      }, "COORD004_PENDING_SOURCE_INTEGRITY");
+      stage = "PROVENANCE";
+      assert.deepEqual(facts.provenance, [], "COORD004_NO_PROVENANCE_BEFORE_DISPATCH");
+      stage = "TEMPORARY_PACKAGE";
+      assert.ok(facts.payload.temporary_storage_ref, "COORD004_TEMP_STORAGE_REFERENCE");
+      assert.equal(facts.payload.temporary_payload_state, "AVAILABLE");
+      assert.ok(facts.payload.temporary_payload_expires_at instanceof Date);
+      assert.equal(facts.payload.temporary_payload_purged_at, null);
+      stage = "ENCRYPTED_OBJECTS";
+      const encryptedFiles = await readdir(join(storageRoot, facts.payload.temporary_storage_ref));
+      assert.equal(encryptedFiles.length, manifest.instanceCount);
+      assert.ok(encryptedFiles.every(name => /^[0-9a-f-]{36}\.enc$/.test(name)), "COORD004_ENCRYPTED_TEMPORARY_OBJECTS");
+      stage = "IDEMPOTENT_REPLAY";
+      const beforeReplay = harness.counters();
+      const replay = await coordinator.prepare({ principal, request });
+      assert.deepEqual(replay, {
+        operationId: fixture.coordinatorOperationId,
+        operationState: "CREATED",
+        preparation: "REPLAYED",
+      });
+      assert.deepEqual(harness.counters().sourceRequests, beforeReplay.sourceRequests,
+        "COORD004_IDEMPOTENT_REPLAY_NO_SOURCE_READ");
+
+      stage = "AUDITED_PURGE";
+      purgeAttempted = true;
+      await coordinator.discardPrepared(preparedResult);
+      assert.deepEqual(await readdir(storageRoot), [], "COORD004_PURGE_PHYSICAL_CIPHERTEXT");
+      stage = "POST_PURGE_OBSERVATION";
+      const afterPurge = await harness.actorContext.run(principal, fixture.tenantId, async (_identity, client) => {
+        const payload = (await client.query(`SELECT temporary_storage_ref::text,temporary_payload_state,
+          temporary_payload_expires_at,temporary_payload_purged_at FROM study_references
+          WHERE study_ref_id=$1::uuid`, [fixture.coordinatorStudyRefId])).rows[0];
+        return { payload };
+      });
+      assert.match(afterPurge.payload.temporary_storage_ref, /^[0-9a-f-]{36}$/i,
+        "COORD004_PURGE_BINDING_REFERENCE_RETAINED_FOR_AUDIT");
+      assert.equal(afterPurge.payload.temporary_payload_state, "PURGED");
+      assert.ok(afterPurge.payload.temporary_payload_purged_at instanceof Date);
+      stage = "NO_DESTINATION_SIDE_EFFECTS";
+      const counters = harness.counters();
+      assert.equal(counters.sourceRequests.length, manifest.instanceCount + 1);
+      assert.equal(counters.maximumActiveInstanceStreams, 1);
+      assert.equal(counters.stowCalls, 0, "COORD004_NO_STOW");
+      assert.equal(counters.destinationVerificationCalls, 0, "COORD004_NO_DESTINATION_VERIFY");
+      assert.equal(counters.destinationByteCalls, 0, "COORD004_NO_DESTINATION_READ");
+      assert.equal(counters.forbiddenEndpointAttempts, 0);
+      assert.equal(counters.activeTenantTransactions, 0);
+      console.log("pacs_import_coordinator=PASS real_runtime_rls=true test_orthanc_a=true encrypted_capture=true replay_no_refetch=true b_stow=0 operation=CREATED audited_purge=true");
+    } catch (error) {
+      const safeFailure = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code)
+        ? error.code
+        : typeof error?.message === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.message)
+          ? error.message
+          : error?.name === "AssertionError" ? "ASSERTION" : "UNCLASSIFIED";
+      console.log(`COORD004_FAILURE_STAGE_${stage}_${safeFailure}`);
+      throw error;
+    } finally {
+      try {
+        if (preparedResult?.preparation === "SOURCE_CAPTURED" && !purgeAttempted && coordinator) {
+          purgeAttempted = true;
+          await coordinator.discardPrepared(preparedResult);
+        }
+      } finally {
+        try {
+          await harness.database.onModuleDestroy();
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      }
+    }
+  });
+
+  await t.test("TC-PACS-001-COORD-004-DENY AUTH rejects before operation creation or source retrieval", async () => {
+    const cases = [
+      {
+        name: "malformed request attempts to supply Consent authority",
+        correlationId: fixture.coordinatorDenyMalformedCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000061",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000071",
+        grantId: fixture.grantId,
+        extraBody: { consentId: fixture.consentId },
+        malformed: true,
+      },
+      {
+        name: "missing persisted Grant",
+        correlationId: fixture.coordinatorDenyMissingGrantCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000062",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000072",
+        grantId: "1a000000-0000-4000-8000-000000000099",
+      },
+      {
+        name: "revoked Grant",
+        correlationId: fixture.coordinatorDenyRevokedGrantCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000063",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000073",
+        grantId: fixture.revokedGrantId,
+      },
+      {
+        name: "expired Grant",
+        correlationId: fixture.coordinatorDenyExpiredGrantCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000064",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000074",
+        grantId: fixture.expiredGrantId,
+      },
+      {
+        name: "active Grant bound to withdrawn Consent",
+        correlationId: fixture.coordinatorDenyWithdrawnConsentCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000065",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000075",
+        grantId: fixture.withdrawnConsentGrantId,
+      },
+      {
+        name: "Grant without PACS_IMPORT scope",
+        correlationId: fixture.coordinatorDenyWrongScopeCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000066",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000076",
+        grantId: fixture.wrongScopeGrantId,
+      },
+      {
+        name: "Grant belongs to another Exchange Session",
+        correlationId: fixture.coordinatorDenyCrossSessionCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000067",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000077",
+        grantId: fixture.grantInFlightRevocationId,
+      },
+      {
+        name: "request tenant does not match verified actor tenant",
+        correlationId: fixture.coordinatorDenyCrossTenantCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000068",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000078",
+        grantId: fixture.grantId,
+        tenantCandidate: fixture.otherTenantId,
+      },
+      {
+        name: "Study is outside the persisted Grant package",
+        correlationId: fixture.coordinatorDenyForeignStudyCorrelationId,
+        operationId: "1b000000-0000-4000-8000-000000000069",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000079",
+        grantId: fixture.grantId,
+        studyRefId: fixture.studyOtherRefId,
+      },
+    ];
+
+    for (const scenario of cases) {
+      const harness = createHarness();
+      let createIdCalls = 0;
+      try {
+        const admission = new PacsImportOperationAdmissionService(
+          harness.executor,
+          () => new Date(),
+          () => {
+            createIdCalls += 1;
+            return scenario.operationId;
+          },
+        );
+        const coordinator = new PacsImportSourcePreparationCoordinator(
+          admission,
+          harness.service,
+          { purge: async () => { throw new Error("UNEXPECTED_COORDINATOR_PURGE"); } },
+        );
+        const body = {
+          grantId: scenario.grantId,
+          studyRefId: scenario.studyRefId ?? fixture.studyRefId,
+          ...scenario.extraBody,
+        };
+        const request = Object.freeze({
+          sessionId: fixture.sessionId,
+          tenantCandidate: scenario.tenantCandidate ?? fixture.tenantId,
+          idempotencyKey: scenario.idempotencyKey,
+          correlationId: scenario.correlationId,
+          body: Object.freeze(body),
+        });
+
+        await assert.rejects(
+          coordinator.prepare({ principal, request }),
+          error => error?.message === "PACS_IMPORT_SOURCE_PREPARATION_UNAVAILABLE",
+          `COORD004_AUTH_${scenario.name.replaceAll(" ", "_")}_FIXED_DENIAL`,
+        );
+        assert.equal(createIdCalls, 0, `COORD004_AUTH_${scenario.name}_NO_OPERATION_ID`);
+        const counters = harness.counters();
+        assert.deepEqual(counters.sourceRequests, [], `COORD004_AUTH_${scenario.name}_NO_SOURCE_REQUEST`);
+        assert.deepEqual(counters.sourcePaths, [], `COORD004_AUTH_${scenario.name}_NO_SOURCE_PATH`);
+        assert.equal(counters.metadataCalls, 0, `COORD004_AUTH_${scenario.name}_NO_METADATA`);
+        assert.equal(counters.instanceCalls, 0, `COORD004_AUTH_${scenario.name}_NO_INSTANCE`);
+        assert.equal(counters.stowCalls, 0, `COORD004_AUTH_${scenario.name}_NO_STOW`);
+        assert.equal(counters.destinationVerificationCalls, 0, `COORD004_AUTH_${scenario.name}_NO_DESTINATION_VERIFY`);
+        assert.equal(counters.activeTenantTransactions, 0, `COORD004_AUTH_${scenario.name}_TRANSACTIONS_CLOSED`);
+        const state = await readOperationState(harness, scenario.operationId);
+        assert.equal(state.operationState, null, `COORD004_AUTH_${scenario.name}_NO_OPERATION`);
+        assert.deepEqual(state.evidence, [], `COORD004_AUTH_${scenario.name}_NO_INTEGRITY`);
+        if (scenario.malformed) {
+          assert.equal(counters.tenantContextRuns, 0, "COORD004_AUTH_MALFORMED_NO_DATABASE_CONTEXT");
+        }
+      } finally {
+        await harness.database.onModuleDestroy();
+      }
+    }
+    console.log("pacs_import_coordinator_auth_denials=PASS cases=9 operation_created=0 source_requests=0 destination_calls=0");
+  });
+
+  await t.test("TC-PACS-001-COORD-004-DENY SOURCE denies after valid admission without payload or handoff", async () => {
+    const cases = [
+      {
+        name: "valid authorization but destination PatientMapping is REVOKED",
+        sessionId: "16000000-0000-4000-8000-000000000052",
+        studyRefId: "18000000-0000-4000-8000-000000000052",
+        grantId: "1a000000-0000-4000-8000-000000000052",
+        operationId: "1b000000-0000-4000-8000-000000000080",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000083",
+        correlationId: "1d000000-0000-4000-8000-000000000061",
+        expectedPreparation: "DENIED",
+        expectedReason: "PATIENT_MAPPING_INVALID",
+        expectedRequests: [],
+      },
+      {
+        name: "valid mapping but DICOM PatientID differs from the mapped patient",
+        sessionId: "16000000-0000-4000-8000-000000000053",
+        studyRefId: "18000000-0000-4000-8000-000000000053",
+        grantId: "1a000000-0000-4000-8000-000000000053",
+        operationId: "1b000000-0000-4000-8000-000000000081",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000084",
+        correlationId: "1d000000-0000-4000-8000-000000000062",
+        metadataFault: "PATIENT_ID_MISMATCH",
+        expectedPreparation: "DENIED",
+        expectedReason: "SOURCE_PATIENT_ID_MISMATCH",
+        expectedRequests: ["METADATA"],
+      },
+      {
+        name: "malformed synthetic source DICOM JSON metadata",
+        sessionId: "16000000-0000-4000-8000-000000000054",
+        studyRefId: "18000000-0000-4000-8000-000000000054",
+        grantId: "1a000000-0000-4000-8000-000000000054",
+        operationId: "1b000000-0000-4000-8000-000000000082",
+        idempotencyKey: "1b000000-0000-4000-8000-000000000085",
+        correlationId: "1d000000-0000-4000-8000-000000000063",
+        metadataFault: "MALFORMED_JSON",
+        expectedError: "PACS_IMPORT_SOURCE_PREPARATION_UNAVAILABLE",
+        expectedRequests: ["METADATA"],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const root = await mkdtemp(join(tmpdir(), "mediq-coord-source-deny-"));
+      const storageRoot = join(root, "ciphertext");
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      const harness = createHarness({ temporaryImagingStore: store, metadataFault: scenario.metadataFault });
+      try {
+        let operationIdIssued = false;
+        const admission = new PacsImportOperationAdmissionService(
+          harness.executor,
+          () => new Date(),
+          () => {
+            if (!operationIdIssued) {
+              operationIdIssued = true;
+              return scenario.operationId;
+            }
+            return randomUUID();
+          },
+        );
+        const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, store);
+        const coordinator = new PacsImportSourcePreparationCoordinator(admission, harness.service, purge);
+        const request = Object.freeze({
+          sessionId: scenario.sessionId,
+          tenantCandidate: fixture.tenantId,
+          idempotencyKey: scenario.idempotencyKey,
+          correlationId: scenario.correlationId,
+          body: Object.freeze({ grantId: scenario.grantId, studyRefId: scenario.studyRefId }),
+        });
+        const beforePayload = await readTemporaryPayloadState(harness, scenario.studyRefId);
+        assert.deepEqual(beforePayload, {
+          temporary_storage_ref: null,
+          temporary_payload_state: null,
+          temporary_payload_expires_at: null,
+          temporary_payload_purged_at: null,
+        }, "COORD004_SOURCE_FIXTURE_HAS_NO_PRIOR_TEMPORARY_STATE");
+
+        if (scenario.expectedError) {
+          await assert.rejects(
+            coordinator.prepare({ principal, request }),
+            error => error?.message === scenario.expectedError,
+            "COORD004_SOURCE_FIXED_UNAVAILABLE",
+          );
+        } else {
+          assert.deepEqual(await coordinator.prepare({ principal, request }), {
+            operationId: scenario.operationId,
+            operationState: "CREATED",
+            preparation: scenario.expectedPreparation,
+            reason: scenario.expectedReason,
+          }, "COORD004_SOURCE_MINIMIZED_DENIAL");
+        }
+
+        const operation = await readOperationState(harness, scenario.operationId);
+        assert.equal(operation.operationState, "CREATED", "COORD004_SOURCE_OPERATION_REMAINS_CREATED");
+        assert.deepEqual(operation.evidence, [], "COORD004_SOURCE_NO_INTEGRITY");
+        assert.deepEqual(await readTemporaryPayloadState(harness, scenario.studyRefId), beforePayload,
+          "COORD004_SOURCE_NO_TEMPORARY_PAYLOAD_ALLOCATION");
+
+        const counters = harness.counters();
+        assert.deepEqual(counters.sourceRequests, scenario.expectedRequests, "COORD004_SOURCE_EXACT_REQUEST_BOUND");
+        assert.equal(counters.metadataCalls, scenario.expectedRequests.includes("METADATA") ? 1 : 0);
+        assert.equal(counters.instanceCalls, 0, "COORD004_SOURCE_NO_INSTANCE_BYTES");
+        assert.equal(counters.stowCalls, 0, "COORD004_SOURCE_NO_STOW");
+        assert.equal(counters.destinationVerificationCalls, 0, "COORD004_SOURCE_NO_DESTINATION_VERIFY");
+        assert.equal(counters.destinationByteCalls, 0, "COORD004_SOURCE_NO_DESTINATION_READ");
+        assert.equal(counters.forbiddenEndpointAttempts, 0);
+        assert.equal(counters.activeTenantTransactions, 0, "COORD004_SOURCE_TRANSACTIONS_CLOSED");
+        assert.deepEqual(await readdir(storageRoot).catch(error => error?.code === "ENOENT" ? [] : Promise.reject(error)), [],
+          "COORD004_SOURCE_NO_CIPHERTEXT_OBJECTS");
+      } finally {
+        await harness.database.onModuleDestroy();
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+    console.log("pacs_import_coordinator_source_denials=PASS cases=3 admitted_created=3 no_handoff=true no_payload=true");
+  });
+
+  const runCoordinatorFaultMatrix = async matrix => {
+    for (const scenario of coordinatorFaultCases) {
+      await matrix.test(`FAULT-${scenario.name}`, async () => {
+        const root = await mkdtemp(join(tmpdir(), "mediq-coord-fault-"));
+        const storageRoot = join(root, "ciphertext");
+        const ioFault = scenario.fault === "CIPHERTEXT_WRITE" ? {
+          async write() { throw new Error("SYNTHETIC_CIPHERTEXT_WRITE_FAILURE"); },
+          async sync(file) { return file.sync(); },
+        } : undefined;
+        const store = new EphemeralEncryptedTemporaryImagingStore({
+          rootDirectory: storageRoot,
+          ...(ioFault ? { ciphertextIo: ioFault } : {}),
+        });
+        const temporaryStore = Object.freeze({
+          beginReservedPackage: (...args) => store.beginReservedPackage(...args),
+          beginInstance: input => store.beginInstance(input),
+          sealPackage: input => scenario.fault === "CIPHERTEXT_SEAL"
+            ? Promise.reject(new Error("SYNTHETIC_CIPHERTEXT_SEAL_FAILURE"))
+            : store.sealPackage(input),
+          purgeByReference: input => scenario.fault === "PURGE_FAILURE"
+            ? Promise.reject(new Error("SYNTHETIC_PHYSICAL_PURGE_FAILURE"))
+            : store.purgeByReference(input),
+        });
+        const harness = createHarness({
+          failFirstInstance: scenario.fault === "PARTIAL_WADO",
+          observeInstanceStreams: true,
+          temporaryImagingStore: temporaryStore,
+        });
+        const filePaths = async directory => {
+          const entries = await readdir(directory, { withFileTypes: true }).catch(error =>
+            error?.code === "ENOENT" ? [] : Promise.reject(error));
+          const nested = await Promise.all(entries.map(entry => {
+            const path = join(directory, entry.name);
+            return entry.isDirectory() ? filePaths(path) : entry.isFile() ? [path] : [];
+          }));
+          return nested.flat();
+        };
+        try {
+          let operationIdIssued = false;
+          const admission = new PacsImportOperationAdmissionService(
+            harness.executor,
+            () => new Date(),
+            () => {
+              if (!operationIdIssued) {
+                operationIdIssued = true;
+                return scenario.operationId;
+              }
+              return randomUUID();
+            },
+          );
+          const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, temporaryStore);
+          const coordinator = new PacsImportSourcePreparationCoordinator(admission, harness.service, purge);
+          const request = Object.freeze({
+            sessionId: scenario.sessionId,
+            tenantCandidate: fixture.tenantId,
+            idempotencyKey: scenario.idempotencyKey,
+            correlationId: scenario.correlationId,
+            body: Object.freeze({ grantId: scenario.grantId, studyRefId: scenario.studyRefId }),
+          });
+          assert.deepEqual(await readTemporaryPayloadState(harness, scenario.studyRefId), {
+            temporary_storage_ref: null,
+            temporary_payload_state: null,
+            temporary_payload_expires_at: null,
+            temporary_payload_purged_at: null,
+          }, "COORD004_FAULT_FIXTURE_NO_PRIOR_TEMPORARY_STATE");
+          await assert.rejects(
+            coordinator.prepare({ principal, request }),
+            error => error?.message === "PACS_IMPORT_SOURCE_PREPARATION_UNAVAILABLE",
+            "COORD004_FAULT_FIXED_UNAVAILABLE_NO_HANDOFF",
+          );
+
+          const operation = await readOperationState(harness, scenario.operationId);
+          assert.equal(operation.operationState, "CREATED", "COORD004_FAULT_OPERATION_NONTERMINAL");
+          assert.deepEqual(operation.evidence, [], "COORD004_FAULT_NO_INTEGRITY_EVIDENCE");
+          const counters = harness.counters();
+          assert.deepEqual(counters.sourceRequests, scenario.sourceRequests, "COORD004_FAULT_EXACT_SOURCE_BOUND");
+          assert.equal(counters.metadataCalls, scenario.sourceRequests.includes("METADATA") ? 1 : 0);
+          assert.equal(counters.instanceCalls, scenario.instanceCalls);
+          assert.equal(counters.instanceStreamCompletionOrder.length, scenario.completedStreams);
+          assert.equal(counters.activeInstanceStreams, 0, "COORD004_FAULT_ALL_STREAMS_CLOSED");
+          assert.equal(counters.activeTenantTransactions, 0, "COORD004_FAULT_ALL_TRANSACTIONS_CLOSED");
+          assert.equal(counters.stowCalls, 0, "COORD004_FAULT_ZERO_STOW");
+          assert.equal(counters.destinationVerificationCalls, 0, "COORD004_FAULT_ZERO_DESTINATION_VERIFY");
+          assert.equal(counters.destinationByteCalls, 0, "COORD004_FAULT_ZERO_DESTINATION_READ");
+          assert.equal(counters.forbiddenEndpointAttempts, 0);
+
+          const temporaryState = await readTemporaryPayloadState(harness, scenario.studyRefId);
+          const paths = await filePaths(storageRoot);
+          assert.equal(paths.length, scenario.physicalFiles, "COORD004_FAULT_EXACT_PHYSICAL_FILE_COUNT");
+          if (scenario.temporaryState === "NONE") {
+            assert.deepEqual(temporaryState, {
+              temporary_storage_ref: null,
+              temporary_payload_state: null,
+              temporary_payload_expires_at: null,
+              temporary_payload_purged_at: null,
+            }, "COORD004_FAULT_NO_TEMPORARY_ALLOCATION");
+          } else {
+            assert.match(temporaryState.temporary_storage_ref, /^[0-9a-f-]{36}$/i);
+            assert.equal(temporaryState.temporary_payload_state, scenario.temporaryState);
+            assert.ok(temporaryState.temporary_payload_expires_at instanceof Date);
+            if (scenario.temporaryState === "PURGED") {
+              assert.ok(temporaryState.temporary_payload_purged_at instanceof Date);
+            } else {
+              assert.equal(temporaryState.temporary_payload_purged_at, null,
+                "COORD004_FAULT_UNRESOLVED_PURGE_HAS_NO_PURGED_TIMESTAMP");
+              for (const path of paths) {
+                assert.match(basename(path), /^[0-9a-f-]{36}\.enc$/i,
+                  "COORD004_FAULT_RETAINED_OBJECT_IS_OPAQUE_CIPHERTEXT");
+                const bytes = await readFile(path);
+                assert.ok(bytes.length > 32);
+                assert.equal(bytes.includes(Buffer.from("DICM")), false,
+                  "COORD004_FAULT_RETAINED_BYTES_ARE_NOT_DICOM_PLAINTEXT");
+                assert.equal(bytes.includes(Buffer.from(manifest.patient.patientId)), false,
+                  "COORD004_FAULT_RETAINED_BYTES_EXCLUDE_SYNTHETIC_PATIENT_IDENTIFIER");
+              }
+            }
+          }
+          if (scenario.name === "purge-unresolved") await observeCoordinatorFaultPending();
+        } finally {
+          await harness.database.onModuleDestroy();
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+    console.log("pacs_import_coordinator_faults=PASS cases=8 fixed_unavailable=true nonterminal=true destination=0 unresolved_purge_explicit=true");
+  };
+
   await t.test("TC-INT-001-CAP-009 final fenced reauthorization denies after live Grant revocation during WADO", async () => {
     const harness = createHarness({
       observeInstanceStreams: true,
@@ -2711,6 +3376,131 @@ if (process.argv.includes("--mediq-recovery-child")) {
 
   for (const scenario of allSourceLifecycleCases) {
     await t.test(`DEC017 signed lifecycle ${scenario.name}`, { timeout: 120_000 }, childTest => runTemporaryLifecycleCase(scenario, childTest.signal));
+  }
+
+  await t.test("TC-PACS-001-COORD-004-DENY FAULT fails closed and preserves unresolved purge evidence", runCoordinatorFaultMatrix);
+
+  if (process.env.MEDIQ_TEST_TRANSFER_DISPATCH_MODE === "true") {
+    await t.test("TC-PACS-001-DISPATCH-001-006 performs one committed synthetic Study STOW to Test Orthanc B", {
+      timeout: 120_000,
+    }, async () => {
+      const root = await mkdtemp(join(tmpdir(), "mediq-pacs-dispatch-"));
+      const storageRoot = join(root, "ciphertext");
+      const store = new EphemeralEncryptedTemporaryImagingStore({ rootDirectory: storageRoot });
+      let harness;
+      let stowBoundaryObserved = false;
+      let dispatchReturned = false;
+      const beforeStow = async () => {
+        assert.equal(harness.counters().activeTenantTransactions, 0, "DISPATCH_NO_OPEN_TENANT_TRANSACTION");
+        const facts = await harness.actorContext.run(principal, fixture.tenantId, async (identity, client) => {
+          assert.equal(identity.actorId, fixture.actorId, "DISPATCH_OBSERVER_VERIFIED_ACTOR");
+          const operation = (await client.query(`SELECT operation_id::text,state,version,reason_code,
+            source_object_count,destination_object_count,stow_started_at
+            FROM pacs_transfer_operations WHERE operation_id=$1::uuid`, [fixture.transferDispatchOperationId])).rows;
+          const provenance = (await client.query(`SELECT operation_id::text,exchange_session_id::text,
+            package_id::text,study_ref_id::text,source_hospital_id::text,destination_hospital_id::text,
+            transfer_type,transfer_status,integrity_id,ingested_at,transferred_at
+            FROM provenance_records WHERE operation_id=$1::uuid`, [fixture.transferDispatchOperationId])).rows;
+          return { operation, provenance };
+        });
+        assert.equal(harness.counters().activeTenantTransactions, 0, "DISPATCH_OBSERVER_TRANSACTION_SETTLED");
+        assert.equal(facts.operation.length, 1, "DISPATCH_INDEPENDENT_OPERATION_VISIBLE");
+        assert.equal(facts.operation[0].state, "STOW_STARTED", "DISPATCH_CLAIM_COMMITTED_BEFORE_POST");
+        assert.equal(facts.operation[0].version, 2);
+        assert.equal(facts.operation[0].source_object_count, manifest.instanceCount);
+        assert.equal(facts.operation[0].destination_object_count, null);
+        assert.ok(facts.operation[0].stow_started_at instanceof Date);
+        assert.equal(facts.provenance.length, 1, "DISPATCH_PENDING_PROVENANCE_COMMITTED_BEFORE_POST");
+        assert.deepEqual(facts.provenance[0], {
+          operation_id: fixture.transferDispatchOperationId,
+          exchange_session_id: fixture.transferDispatchSessionId,
+          package_id: fixture.transferDispatchPackageId,
+          study_ref_id: fixture.transferDispatchStudyRefId,
+          source_hospital_id: TEST_HOSPITAL_A_ID,
+          destination_hospital_id: TEST_HOSPITAL_B_ID,
+          transfer_type: "PACS_IMPORT",
+          transfer_status: "PENDING",
+          integrity_id: null,
+          ingested_at: null,
+          transferred_at: null,
+        });
+        stowBoundaryObserved = true;
+      };
+      harness = createHarness({ temporaryImagingStore: store, observeInstanceStreams: true,
+        allowStudyStow: true, beforeStow });
+      try {
+        const admission = new PacsImportOperationAdmissionService(
+          harness.executor,
+          () => new Date(),
+          () => fixture.transferDispatchOperationId,
+        );
+        const purge = new TemporaryPayloadPurgeCoordinator(harness.actorContext, store);
+        const preparation = new PacsImportSourcePreparationCoordinator(admission, harness.service, purge);
+        const dispatcher = new PacsImportTransferDispatchCoordinator(
+          preparation,
+          admission,
+          harness.service,
+          harness.dicomGateway,
+          new DispatchedInstanceStreamFactory(harness.service),
+        );
+        const request = Object.freeze({
+          sessionId: fixture.transferDispatchSessionId,
+          tenantCandidate: fixture.tenantId,
+          idempotencyKey: fixture.transferDispatchIdempotencyKey,
+          correlationId: fixture.transferDispatchCorrelationId,
+          body: Object.freeze({
+            grantId: fixture.transferDispatchGrantId,
+            studyRefId: fixture.transferDispatchStudyRefId,
+          }),
+        });
+        const result = await dispatcher.transfer({ principal, request });
+        dispatchReturned = true;
+        assert.deepEqual(result, {
+          operationId: fixture.transferDispatchOperationId,
+          operationState: "VERIFYING",
+          dispatch: "VERIFYING",
+        });
+        assert.equal(stowBoundaryObserved, true, "DISPATCH_BEFORE_EFFECT_OBSERVER_RAN");
+        const state = await readOperationState(harness, fixture.transferDispatchOperationId);
+        assert.equal(state.operationState, "VERIFYING");
+        assert.deepEqual(state.evidence.map(item => ({ stage: item.stage, status: item.status })), [
+          { stage: "SOURCE_CAPTURE", status: "PENDING" },
+        ]);
+        const counters = harness.counters();
+        assert.equal(counters.sourceRequests.length, manifest.instanceCount + 1);
+        assert.equal(counters.maximumActiveInstanceStreams, 1);
+        assert.equal(counters.stowCalls, 1, "DISPATCH_SINGLE_GATEWAY_STOW");
+        assert.equal(counters.bStowRequests, 1, "DISPATCH_SINGLE_HTTPS_B_POST");
+        assert.equal(counters.destinationVerificationCalls, 0, "DISPATCH_NO_PRODUCT_DESTINATION_VERIFY_YET");
+        assert.equal(counters.destinationByteCalls, 0);
+        assert.equal(counters.activeTenantTransactions, 0);
+        console.log("pacs_import_dispatch=PASS commit_before_effect=true b_stow=1 operation=VERIFYING provenance=PENDING destination_verification=NOT_RUN payload_retained_for_next_gate=true");
+      } catch (error) {
+        let counters = {};
+        try { counters = harness?.counters() ?? {}; } catch { /* diagnostic remains bounded and optional */ }
+        let operationState = "UNKNOWN";
+        try {
+          operationState = (await readOperationState(harness, fixture.transferDispatchOperationId)).operationState;
+        } catch { /* never expose the observer error */ }
+        console.log(pacsImportDispatchFailureDiagnostic({
+          stowHookObserved: stowBoundaryObserved,
+          dispatchReturned,
+          operationState,
+          sourceReads: counters.sourceRequests?.length,
+          gatewayStows: counters.stowCalls,
+          bPosts: counters.bStowRequests,
+          destinationChecks: counters.destinationVerificationCalls,
+          error,
+        }));
+        throw error;
+      } finally {
+        try {
+          await harness.database.onModuleDestroy();
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      }
+    });
   }
 
   assert.equal(TEST_HOSPITAL_A_ID, "04000000-0000-4000-8000-000000000001");

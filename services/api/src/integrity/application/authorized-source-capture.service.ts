@@ -672,6 +672,163 @@ export class AuthorizedSourceCaptureService {
     return this.captureInternal(input, true);
   }
 
+  /**
+   * Mandatory-Preflight source gate. Call only inside the verified-Tenant
+   * transaction after current PACS_IMPORT authorization and the shared Session
+   * fence have succeeded; this method returns no payload or identity details.
+   */
+  async assertDispatchReadyInVerifiedTransaction(input: {
+    readonly identity: VerifiedActorTenantContext;
+    readonly transactionClient: PoolClient;
+    readonly handoff: AuthorizedSourceCaptureCoordinatorHandoff;
+    readonly now: Date;
+  }): Promise<void> {
+    const { identity, transactionClient, handoff, now } = input;
+    const binding = this.#captureBindings.get(handoff);
+    const temporary = handoff?.temporaryPackage;
+    if (!binding || !temporary || !(now instanceof Date) ||
+      !Number.isFinite(now.getTime()) || handoff.sourceEvidence?.status !== "PENDING" ||
+      handoff.sourceEvidence.algorithm !== SOURCE_INTEGRITY_ALGORITHM ||
+      handoff.operationId !== binding.scope.operationId ||
+      handoff.tenantId !== binding.scope.tenantId ||
+      handoff.actorId !== binding.identity.actorId ||
+      handoff.exchangeSessionId !== binding.scope.exchangeSessionId ||
+      handoff.packageId !== binding.scope.packageId ||
+      handoff.studyRefId !== binding.scope.studyRefId ||
+      handoff.studyInstanceUid !== binding.scope.studyInstanceUid ||
+      handoff.sourceHospitalId !== binding.scope.sourceHospitalId ||
+      handoff.destinationHospitalId !== binding.scope.destinationHospitalId ||
+      !sameCaptureIdentity(identity, binding.identity) ||
+      !this.isTestBinding(identity, binding.scope) ||
+      temporary.packageId !== binding.scope.packageId ||
+      !validUuid(temporary.storageRef) ||
+      !Number.isSafeInteger(temporary.objectCount) || temporary.objectCount < 1 ||
+      temporary.objectCount > SOURCE_INTEGRITY_LIMITS.maximumInstances ||
+      !Number.isSafeInteger(temporary.totalBytes) || temporary.totalBytes < 1 ||
+      temporary.totalBytes > SOURCE_INTEGRITY_LIMITS.maximumStudyBytes ||
+      !Number.isSafeInteger(handoff.sourceEvidence.objectCount) ||
+      handoff.sourceEvidence.objectCount !== temporary.objectCount ||
+      handoff.sourceEvidence.totalBytes !== temporary.totalBytes ||
+      !/^sha256:[0-9a-f]{64}$/.test(handoff.sourceEvidence.aggregateDigest)) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const expiresAt = Date.parse(temporary.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime() ||
+      !Array.isArray(handoff.expectedInstances) ||
+      !Array.isArray(temporary.instances) ||
+      handoff.expectedInstances.length !== temporary.objectCount ||
+      temporary.instances.length !== temporary.objectCount ||
+      binding.scope.instanceCount !== temporary.objectCount) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const byObject = new Map(temporary.instances.map((instance) =>
+      [`${instance.seriesInstanceUid}\u0000${instance.sopInstanceUid}`, instance]));
+    const sopUids = new Set<string>();
+    const seriesUids = new Set<string>();
+    let totalBytes = 0;
+    for (const instance of handoff.expectedInstances) {
+      if (typeof instance.seriesInstanceUid !== "string" || instance.seriesInstanceUid.length > 64 ||
+        !DICOM_UID_PATTERN.test(instance.seriesInstanceUid) ||
+        typeof instance.sopInstanceUid !== "string" || instance.sopInstanceUid.length > 64 ||
+        !DICOM_UID_PATTERN.test(instance.sopInstanceUid) ||
+        typeof instance.sopClassUid !== "string" || instance.sopClassUid.length > 64 ||
+        !DICOM_UID_PATTERN.test(instance.sopClassUid) ||
+        typeof instance.transferSyntaxUid !== "string" || instance.transferSyntaxUid.length > 64 ||
+        !DICOM_UID_PATTERN.test(instance.transferSyntaxUid) ||
+        instance.byteLength < 1 || instance.byteLength > SOURCE_INTEGRITY_LIMITS.maximumInstanceBytes ||
+        !/^sha256:[0-9a-f]{64}$/.test(instance.sha256) ||
+        sopUids.has(instance.sopInstanceUid)) {
+        throw new AuthorizationDeniedError();
+      }
+      const staged = byObject.get(`${instance.seriesInstanceUid}\u0000${instance.sopInstanceUid}`);
+      if (!staged || !validUuid(staged.objectRef) || staged.sopClassUid !== instance.sopClassUid ||
+        staged.transferSyntaxUid !== instance.transferSyntaxUid ||
+        staged.byteLength !== instance.byteLength || staged.sha256 !== instance.sha256) {
+        throw new AuthorizationDeniedError();
+      }
+      sopUids.add(instance.sopInstanceUid);
+      seriesUids.add(instance.seriesInstanceUid);
+      totalBytes += instance.byteLength;
+    }
+    if (byObject.size !== handoff.expectedInstances.length ||
+      seriesUids.size < 1 || seriesUids.size > 64 ||
+      (binding.scope.seriesCount !== null && binding.scope.seriesCount !== seriesUids.size) ||
+      totalBytes !== temporary.totalBytes || totalBytes !== handoff.sourceEvidence.totalBytes) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const scope = await this.resolveScope(
+      transactionClient,
+      handoff.operationId,
+      identity.tenantId,
+    );
+    if (!this.isTestBinding(identity, scope) ||
+      !sameSourceCaptureBinding(binding.scope, scope) ||
+      scope.operationState !== "CREATED" ||
+      !IMPORTABLE_SESSION_STATES.has(scope.sessionState) ||
+      scope.instanceCount !== handoff.sourceEvidence.objectCount ||
+      (scope.seriesCount !== null && scope.seriesCount !== seriesUids.size)) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const mapping = await mappingBinding(scope, transactionClient);
+    if (!mapping || mapping.mappingId !== binding.mapping.mappingId ||
+      mapping.localPatientId !== binding.mapping.localPatientId) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const available = await transactionClient.query(
+      `SELECT 1 AS dispatch_preflight_source_ready
+         FROM study_references AS sr
+         JOIN integrity_evidence AS ie
+           ON ie.study_ref_id = sr.study_ref_id
+          AND ie.operation_id = $1::uuid
+         JOIN provenance_records AS pr
+           ON pr.operation_id = $1::uuid
+        WHERE sr.study_ref_id = $2::uuid
+          AND sr.package_id = $3::uuid
+          AND sr.source_hospital_id = $4::uuid
+          AND sr.instance_count = $5
+          AND ($6::integer IS NULL OR sr.series_count = $6::integer)
+          AND sr.temporary_storage_ref = $7::uuid
+          AND sr.temporary_payload_state = 'AVAILABLE'
+          AND sr.temporary_payload_purged_at IS NULL
+          AND sr.temporary_payload_expires_at = $8::timestamptz
+          AND sr.temporary_payload_expires_at > $9::timestamptz
+          AND ie.integrity_id = $10::uuid
+          AND ie.exchange_session_id = $11::uuid
+          AND ie.package_id = sr.package_id
+          AND ie.verification_stage = 'SOURCE_CAPTURE'
+          AND ie.status = 'PENDING'
+          AND ie.verified_at IS NULL
+          AND ie.algorithm = $12
+          AND ie.source_digest = $13
+          AND ie.source_object_count = $5
+          AND pr.exchange_session_id = $11::uuid
+          AND pr.package_id = sr.package_id
+          AND pr.study_ref_id = sr.study_ref_id
+          AND pr.source_hospital_id = sr.source_hospital_id
+          AND pr.destination_hospital_id = $14::uuid
+          AND pr.transfer_type = 'PACS_IMPORT'
+          AND pr.transfer_status = 'PENDING'
+          AND pr.integrity_id IS NULL
+          AND pr.ingested_at IS NULL
+          AND pr.transferred_at IS NULL
+          AND NULLIF(current_setting('mediq.tenant_id', true), '')::uuid = $15::uuid`,
+      [handoff.operationId, handoff.studyRefId, handoff.packageId,
+        handoff.sourceHospitalId, handoff.expectedInstances.length, scope.seriesCount,
+        temporary.storageRef, temporary.expiresAt, now,
+        handoff.sourceEvidence.evidenceId, handoff.exchangeSessionId,
+        handoff.sourceEvidence.algorithm, handoff.sourceEvidence.aggregateDigest,
+        handoff.destinationHospitalId, identity.tenantId],
+    );
+    if (available.rowCount !== 1 || available.rows.length !== 1) {
+      throw new AuthorizationDeniedError();
+    }
+  }
+
   /** Service-owned source provenance plus fresh authority; never accepts a client manifest or verifier. */
   async verifyDestinationIntegrity(input: unknown): Promise<AuthorizedDestinationIntegrityProof> {
     let deadline: CaptureDeadline | undefined;
