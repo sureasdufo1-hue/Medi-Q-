@@ -1,5 +1,9 @@
 # MediQ
 
+> **프로젝트 종료 — 2026-10-08 / FAILED: 일정·전체 P0 제품 완성 목표 미달.**
+> 신규 MediQ 개발은 종료하고 선별 기록을 하이패스로 계승합니다. 아래의 구현·PASS·다음 단계 설명은 종료 전 이력입니다.
+> [종료·실패 회고](docs/PROJECT-CLOSURE-2026-10-08.md) · [하이패스 계승 기록](<C:/Users/user/Documents/New project/docs/inherited/mediq/README.md>)
+
 Patient-Controlled Medical Imaging Mobility SaaS
 
 MediQ는 Synthetic/Test DICOM 환경에서 환자의 요청 또는 동의를 기반으로 의료영상을 기관 간 조회·다운로드·PACS Import할 수 있도록 하는 캡스톤 Technical MVP입니다.

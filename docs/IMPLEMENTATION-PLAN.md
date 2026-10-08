@@ -1,5 +1,12 @@
 # MediQ Implementation Plan
 
+## Current authoritative disposition — 2026-10-08
+
+**FAILED — DELIVERY OBJECTIVE / CLOSED.** 사용자 지시에 따라 일정·전체 P0 제품 목표 미달로 종료했습니다.
+[종료 기록](PROJECT-CLOSURE-2026-10-08.md)이 아래의 개발 착수·Next action·부분 PASS 기록보다 우선합니다.
+MediQ의 기존 보안 기준과 증거는 보존하며, 별도 재개 지시 없이 아래의 후속 구현을 실행하지 않습니다.
+선별 기록은 하이패스의 `docs/inherited/mediq/`에 병합했습니다. 실행 코드·schema 이식 및 하이패스 P0 완료 판정은 하지 않았습니다.
+
 **Latest status (2026-10-05, PACS-001-DEC-031):** the full isolated wrapper exits **0**, with API integration **71/71**, independent operation/Audit/evidence/quota observer PASS, one exact B Study POST, external synthetic identity/byte comparison PASS, exact owned-Study purge, post-run B EMPTY, privacy and cleanup PASS. The quota observer now uses the existing read-only `mediq_quota_owner` Tenant-scoped pattern; no grants changed. This proves the positive dispatch/effect path at a scoped level only. Product destination verification was not called; operation remains `VERIFYING`, source Integrity and Provenance are `PENDING`, and no terminal records/source-payload audited purge were produced. Full Preflight negatives, dispatch races/rollback/idempotency/ambiguous/partial matrix, product destination verification, terminalization, security/E2E remain incomplete. `AT-E2E-003` is 0/1; overall P0 is PARTIAL. See [evidence §155](implementation/MEDIQ-PACS-001/TEST-EVIDENCE.md#155-pacs-001-dec-031--actual-dispatch-integration-attempts-and-scoped-positive-result).
 
 **Current next implementation (2026-10-05):** keep the route/worker unregistered while completing the full Preflight and dispatch fault/race/replay/outcome matrix. Integrate the product destination verifier after STOW acknowledgement, then atomically persist destination Integrity, terminal Provenance/Audit/state and audited encrypted source-payload purge/quota release. Prove ambiguous-result no-resend and complete product security plus A→MediQ→B E2E. The independent external fixture byte check is test evidence, not the product verifier. Source/fault scope: report §119/evidence §152; latest dispatch: report §122/evidence §155.
